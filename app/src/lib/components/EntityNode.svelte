@@ -1,0 +1,234 @@
+<script module lang="ts">
+	import type { Node } from '@xyflow/svelte';
+	import type { XsdDatatype } from '$lib/utils/iri';
+
+	export interface EntityAttributeVM {
+		iri: string;
+		name: string;
+		datatype: XsdDatatype;
+		required: boolean;
+		repeatable: boolean;
+	}
+
+	/** An enumerated class member (STORY-019) — e.g. `core:RelationType`'s `nutzt`. */
+	export interface EntityMemberVM {
+		iri: string;
+		label: string;
+	}
+
+	export interface EntityNodeData extends Record<string, unknown> {
+		classIri: string;
+		name: string;
+		description: string;
+		/** Custom canvas header color (e.g. to visually distinguish association classes from plain
+		 *  entities) — a local display preference, not semantic RDF. `undefined` uses the theme default. */
+		color?: string;
+		attributes: EntityAttributeVM[];
+		/** Always-available, possibly-empty enumerated members list — no separate "is this an
+		 *  enumeration" toggle, matching how attributes/relations already work (Decision 3). Managed
+		 *  via a dedicated modal (STORY-023), not rendered inline in this node. */
+		members: EntityMemberVM[];
+		/** Whether this class carries the `AttributedRelationship` marker (STORY-020) — such classes
+		 *  don't render the manage-instances icon and can't have members added (STORY-023). */
+		isAssociationClass: boolean;
+		onEdit: () => void;
+		onDelete: () => void;
+		onAddAttribute: () => void;
+		onEditAttribute: (attribute: EntityAttributeVM) => void;
+		onDeleteAttribute: (attribute: EntityAttributeVM) => void;
+		onManageInstances: () => void;
+	}
+
+	export type EntityNodeType = Node<EntityNodeData, 'entity'>;
+</script>
+
+<script lang="ts">
+	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
+
+	let { data }: NodeProps<EntityNodeType> = $props();
+</script>
+
+<div
+	class="entity-node"
+	style={`--node-header-bg: ${data.color ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')}`}
+>
+	<!-- A source + target handle stacked at each side lets relations attach anywhere around the
+		box (dragged from or dropped on whichever side is closest to the other node), instead of
+		being pinned to a single left/right pair. The rendered edge path itself is computed as the
+		true geometric intersection with the box in RelationEdge/InheritanceEdge/AttributedLinkEdge
+		(see `getFloatingEdgeParams`), so these handles only need to offer a grab point per side. -->
+	<Handle type="target" position={Position.Top} id="top-target" />
+	<Handle type="source" position={Position.Top} id="top-source" />
+	<Handle type="target" position={Position.Right} id="right-target" />
+	<Handle type="source" position={Position.Right} id="right-source" />
+	<Handle type="target" position={Position.Bottom} id="bottom-target" />
+	<Handle type="source" position={Position.Bottom} id="bottom-source" />
+	<Handle type="target" position={Position.Left} id="left-target" />
+	<Handle type="source" position={Position.Left} id="left-source" />
+	<div class="header">
+		<span class="name" title={data.classIri}>{data.name}</span>
+		<div class="header-actions">
+			{#if !data.isAssociationClass}
+				<button
+					class="icon-button"
+					onclick={data.onManageInstances}
+					aria-label="Manage instances"
+					title="Manage instances"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+				</button>
+			{/if}
+			<button class="icon-button" onclick={data.onEdit} aria-label="Edit entity" title="Edit">
+				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+			</button>
+			<button class="icon-button" onclick={data.onDelete} aria-label="Delete entity" title="Delete">
+				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+			</button>
+		</div>
+	</div>
+	{#if data.description}
+		<p class="description">{data.description}</p>
+	{/if}
+	<ul class="attributes">
+		{#each data.attributes as attribute (attribute.iri)}
+			<li>
+				<span class="attr-name">{attribute.name}</span>
+				<span
+					class="attr-type"
+					title={`${attribute.required ? 'Required (!)' : 'Optional (?)'}${attribute.repeatable ? ', repeatable ([]) — multiple values allowed' : ', single-valued'}`}
+				>
+					{attribute.datatype}{attribute.required ? '!' : '?'}{attribute.repeatable ? '[]' : ''}
+				</span>
+				<span class="attr-actions">
+					<button class="icon-button small" onclick={() => data.onEditAttribute(attribute)} aria-label={`Edit ${attribute.name}`} title="Edit">
+						<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+					</button>
+					<button class="icon-button small" onclick={() => data.onDeleteAttribute(attribute)} aria-label={`Delete ${attribute.name}`} title="Delete">
+						<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+					</button>
+				</span>
+			</li>
+		{/each}
+	</ul>
+	<button class="add-attribute" onclick={data.onAddAttribute}>+ Add attribute</button>
+</div>
+
+<style>
+	.entity-node {
+		min-width: 200px;
+		max-width: 260px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-bg-secondary);
+		font-size: 12px;
+		overflow: hidden;
+	}
+
+	.header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem;
+		background: var(--node-header-bg, var(--color-accent));
+		color: #fff;
+		font-weight: 600;
+		padding: 6px 8px;
+	}
+
+	.name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 2px;
+		flex-shrink: 0;
+	}
+
+	.icon-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		border-radius: 4px;
+		background: transparent;
+		color: inherit;
+		border: none;
+		cursor: pointer;
+		opacity: 0.85;
+	}
+
+	.icon-button:hover {
+		opacity: 1;
+		background: rgba(255, 255, 255, 0.2);
+	}
+
+	.attributes .icon-button {
+		color: var(--color-text-muted);
+	}
+
+	.attributes .icon-button:hover {
+		background: var(--color-hover);
+		color: var(--color-text);
+	}
+
+	.description {
+		margin: 0;
+		padding: 6px 10px 0;
+		color: var(--color-text-muted);
+		font-size: 11px;
+	}
+
+	.attributes {
+		list-style: none;
+		margin: 0;
+		padding: 4px 0;
+	}
+
+	.attributes li {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		padding: 3px 10px;
+		border-top: 1px solid var(--color-border);
+	}
+
+	.attributes li:first-child {
+		border-top: none;
+	}
+
+	.attr-name {
+		flex: 1;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.attr-type {
+		color: var(--color-text-muted);
+		font-size: 10px;
+	}
+
+	.attr-actions {
+		display: flex;
+		gap: 2px;
+		flex-shrink: 0;
+	}
+
+	.add-attribute {
+		width: 100%;
+		padding: 5px 10px;
+		text-align: left;
+		font-size: 11px;
+		color: var(--color-accent);
+		border-top: 1px solid var(--color-border);
+		background: transparent;
+	}
+
+	.add-attribute:hover {
+		background: var(--color-hover);
+	}
+</style>
