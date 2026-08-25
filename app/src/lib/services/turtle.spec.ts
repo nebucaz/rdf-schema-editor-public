@@ -3,12 +3,14 @@ import {
 	parseTurtle,
 	quadsToTurtle,
 	quadsToGroundTriples,
+	quadsToNQuads,
 	bindingToQuad,
 	quadKey,
 	selectScope,
 	partitionQuads,
 	groupSchemaQuads,
 	nestBlankNodes,
+	buildDisplayPrefixes,
 	isRdfType,
 	OWL,
 	RDFS,
@@ -16,7 +18,8 @@ import {
 	type Quad
 } from './turtle';
 import type { SparqlBinding } from './sparql-connector';
-import { classIri, nodeShapeIri, propertyIri, xsdIri } from '$lib/utils/iri';
+import { classIri, nodeShapeIri, propertyIri, xsdIri, SCHEMA_NAMESPACE } from '$lib/utils/iri';
+import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
 
 describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 	it('re-parses serialized Turtle to the same triple set', async () => {
@@ -45,6 +48,95 @@ describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 		const body = await quadsToGroundTriples(quads);
 		expect(body).toContain('_:');
 		expect(body).not.toContain('@prefix');
+	});
+});
+
+describe('buildDisplayPrefixes (STORY-048)', () => {
+	it('adds a schema/shapes prefix pair per registered namespace, keyed by its own prefix', () => {
+		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
+		const coreGraphs = namespaceGraphs(coreBase);
+
+		const prefixes = buildDisplayPrefixes([{ prefix: 'core', baseIri: coreBase }]);
+
+		expect(prefixes.core).toBe(`${coreGraphs.schema}#`);
+		expect(prefixes['core-sh']).toBe(`${coreGraphs.shapes}#`);
+	});
+
+	it('always includes the standard vocabulary prefixes, even with no registered namespaces', () => {
+		const prefixes = buildDisplayPrefixes([]);
+
+		expect(prefixes).toMatchObject({
+			rdf: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#',
+			rdfs: 'http://www.w3.org/2000/01/rdf-schema#',
+			owl: 'http://www.w3.org/2002/07/owl#',
+			sh: 'http://www.w3.org/ns/shacl#'
+		});
+	});
+
+	it('skips a namespace with an empty prefix rather than emitting an unusable `: <iri>` entry', () => {
+		const prefixes = buildDisplayPrefixes([{ prefix: '', baseIri: 'http://example.org/anon' }]);
+
+		expect(prefixes['']).toBeUndefined();
+	});
+
+	it('round-trips a non-default namespace\'s class through quadsToTurtle + parseTurtle using its own prefix', async () => {
+		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
+		const processIri = classIri('BusinessProcess', namespaceGraphs(coreBase).schema);
+		const quads = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			<${processIri}> a owl:Class .
+		`);
+
+		const prefixes = buildDisplayPrefixes([
+			{ prefix: 'rse', baseIri: DEFAULT_NAMESPACE_BASE_IRI },
+			{ prefix: 'core', baseIri: coreBase }
+		]);
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).toContain('core:BusinessProcess');
+		expect(turtle).not.toContain(processIri);
+
+		const reparsed = parseTurtle(turtle);
+		expect(new Set(reparsed.map(quadKey))).toEqual(new Set(quads.map(quadKey)));
+	});
+
+	it('adds one flat prefix per external vocabulary, not a schema/shapes pair (STORY-050)', () => {
+		const prefixes = buildDisplayPrefixes(
+			[],
+			[{ prefix: 'gist', baseIri: 'https://ontologies.semanticarts.com/gist/' }]
+		);
+
+		expect(prefixes.gist).toBe('https://ontologies.semanticarts.com/gist/');
+		expect(prefixes['gist-sh']).toBeUndefined();
+	});
+
+	it('round-trips an external-vocabulary reference (e.g. rdfs:subClassOf gist:System) using its own prefix', async () => {
+		const appIri = classIri('Application');
+		const quads = parseTurtle(`
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+			<${appIri}> rdfs:subClassOf <https://ontologies.semanticarts.com/gist/System> .
+		`);
+
+		const prefixes = buildDisplayPrefixes(
+			[{ prefix: 'rse', baseIri: DEFAULT_NAMESPACE_BASE_IRI }],
+			[{ prefix: 'gist', baseIri: 'https://ontologies.semanticarts.com/gist/' }]
+		);
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).toContain('gist:System');
+		expect(turtle).not.toContain('https://ontologies.semanticarts.com/gist/System');
+
+		const reparsed = parseTurtle(turtle);
+		expect(new Set(reparsed.map(quadKey))).toEqual(new Set(quads.map(quadKey)));
+	});
+
+	it('lets a registered namespace\'s prefix win over a same-named external vocabulary entry', () => {
+		const prefixes = buildDisplayPrefixes(
+			[{ prefix: 'core', baseIri: 'http://ld.pageagent.com/rdf-schema-editor/core' }],
+			[{ prefix: 'core', baseIri: 'https://example.org/unrelated-vocab#' }]
+		);
+
+		expect(prefixes.core).toBe('http://ld.pageagent.com/rdf-schema-editor/core/schema#');
 	});
 });
 
@@ -87,6 +179,55 @@ describe('bindingToQuad', () => {
 		const q = bindingToQuad(binding);
 		expect(q.object.termType).toBe('Literal');
 		expect((q.object as { datatype: { value: string } }).datatype.value).toBe(xsdIri('integer'));
+	});
+
+	it('sets the graph term for a binding from a given graph (STORY-036)', () => {
+		const binding: SparqlBinding = {
+			s: { type: 'uri', value: 'urn:a' },
+			p: { type: 'uri', value: 'urn:b' },
+			o: { type: 'uri', value: 'urn:c' }
+		};
+		const untagged = bindingToQuad(binding);
+		expect(untagged.graph.termType).toBe('DefaultGraph');
+
+		const tagged = bindingToQuad(binding, 'urn:graph/schema');
+		expect(tagged.graph.termType).toBe('NamedNode');
+		expect(tagged.graph.value).toBe('urn:graph/schema');
+	});
+});
+
+describe('quadsToNQuads round-trip (STORY-036)', () => {
+	it('re-parses serialized N-Quads to the same per-graph quad sets as the source', async () => {
+		const schemaGraph = 'urn:ns1/schema';
+		const shapesGraph = 'urn:ns2/shapes';
+
+		const original: Quad[] = [
+			bindingToQuad(
+				{
+					s: { type: 'uri', value: 'urn:a' },
+					p: { type: 'uri', value: 'urn:b' },
+					o: { type: 'uri', value: 'urn:c' }
+				},
+				schemaGraph
+			),
+			bindingToQuad(
+				{
+					s: { type: 'uri', value: 'urn:d' },
+					p: { type: 'uri', value: 'urn:e' },
+					o: { type: 'literal', value: 'hi' }
+				},
+				shapesGraph
+			)
+		];
+
+		const nquads = await quadsToNQuads(original);
+		const reparsed = parseTurtle(nquads);
+
+		const byGraph = (quads: Quad[], graph: string) =>
+			new Set(quads.filter((q) => q.graph.value === graph).map(quadKey));
+
+		expect(byGraph(reparsed, schemaGraph)).toEqual(byGraph(original, schemaGraph));
+		expect(byGraph(reparsed, shapesGraph)).toEqual(byGraph(original, shapesGraph));
 	});
 });
 
@@ -261,6 +402,24 @@ describe('partitionQuads (STORY-014)', () => {
 		const all = makeMixedQuads();
 		const { schema, shapes } = partitionQuads(all);
 		expect(schema.length + shapes.length).toBe(all.length);
+	});
+
+	it('routes a NodeShape\'s own `a sh:NodeShape` triple to shapes even in a non-default namespace (STORY-048 regression)', () => {
+		// This triple has neither an `sh:*` predicate nor a blank-node subject — before the fix, the
+		// old `SHAPES_NAMESPACE`-prefix check only matched the *default* namespace's shapes IRIs, so
+		// this fell through to the schema bucket for any other namespace (reproducing a real
+		// duplicate-triple bug: this quad round-tripped into the wrong namespace's schema graph).
+		const coreShapesBase = 'http://ld.pageagent.com/rdf-schema-editor/core/shapes';
+		const coreShapeIri = nodeShapeIri(classIri('BusinessProcess'), coreShapesBase);
+		const quads = parseTurtle(`
+			@prefix sh: <http://www.w3.org/ns/shacl#> .
+			<${coreShapeIri}> a sh:NodeShape .
+		`);
+
+		const { schema, shapes } = partitionQuads(quads);
+
+		expect(shapes).toHaveLength(1);
+		expect(schema).toHaveLength(0);
 	});
 });
 

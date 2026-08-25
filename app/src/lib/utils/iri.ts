@@ -5,15 +5,43 @@
  */
 
 export { SCHEMA_NAMESPACE, SHAPES_NAMESPACE } from '$lib/config';
-import { SCHEMA_NAMESPACE, SHAPES_NAMESPACE } from '$lib/config';
+import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_NAMESPACE, namespaceGraphs } from '$lib/config';
+
+const DEFAULT_GRAPHS = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+/**
+ * Fallback namespace base IRIs (no trailing `#`) `classIri`/`propertyIri`/`nodeShapeIri`/
+ * `individualIri` mint under when a caller doesn't pass an explicit one — the default namespace's
+ * `/schema` and `/shapes` graphs (STORY-025). A future caller threading a specific namespace
+ * through (STORY-026) passes its base IRI explicitly instead of relying on these.
+ */
+const DEFAULT_SCHEMA_NAMESPACE_BASE = DEFAULT_GRAPHS.schema;
+const DEFAULT_SHAPES_NAMESPACE_BASE = DEFAULT_GRAPHS.shapes;
 
 /**
  * The class marking attributed-relationship (association) classes (STORY-020): every association
  * class is declared `rdfs:subClassOf` this, replacing the old link-count heuristic with a real,
  * persisted fact. `core:AttributedRelationship` in the original request resolves to this app's own
- * `SCHEMA_NAMESPACE` — no separate `core:` prefix is introduced.
+ * default namespace — no separate `core:` prefix is introduced.
  */
 export const ATTRIBUTED_RELATIONSHIP_IRI = `${SCHEMA_NAMESPACE}AttributedRelationship`;
+
+/**
+ * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
+ * own declaration triple, `<base> a <NAMESPACE_CLASS_IRI> ; <NAMESPACE_PREFIX_PREDICATE_IRI>
+ * "prefix" ; rdfs:comment "..."`, stored in the default namespace's own `/schema` graph alongside
+ * `ATTRIBUTED_RELATIONSHIP_IRI` — this app's own self-describing vocabulary kept in one place.
+ */
+export const NAMESPACE_CLASS_IRI = `${SCHEMA_NAMESPACE}Namespace`;
+export const NAMESPACE_PREFIX_PREDICATE_IRI = `${SCHEMA_NAMESPACE}prefix`;
+
+/**
+ * Predicate for a namespace's optional default color (STORY-042) — entities/relations created in
+ * a namespace with no per-node color override render using this, ahead of the app's static theme
+ * default. Stored the same way as `NAMESPACE_PREFIX_PREDICATE_IRI`, on the namespace's own base-IRI
+ * subject.
+ */
+export const NAMESPACE_COLOR_PREDICATE_IRI = `${SCHEMA_NAMESPACE}color`;
 
 /**
  * Split a human-entered name into lowercase word fragments: breaks on non-alphanumeric
@@ -46,28 +74,42 @@ export function camelCase(name: string): string {
 }
 
 /**
- * Derive a class's IRI from its user-entered name. Called once at creation time; the IRI is
- * then stable for the class's lifetime — renaming only updates `rdfs:label` (see `renameClass`).
+ * Derive a class's IRI from its user-entered name under the given namespace base IRI
+ * (`<base>#LocalName`, research.md §12 Decision 2). Called once at creation time; the IRI is then
+ * stable for the class's lifetime — renaming only updates `rdfs:label` (see `renameClass`).
+ * Defaults to the default namespace's `/schema` base when the caller doesn't pass one explicitly.
  */
-export function classIri(name: string): string {
-	return `${SCHEMA_NAMESPACE}${pascalCase(name)}`;
+export function classIri(name: string, namespaceBaseIri: string = DEFAULT_SCHEMA_NAMESPACE_BASE): string {
+	return `${namespaceBaseIri}#${pascalCase(name)}`;
 }
 
 /**
  * Derive a datatype/object property's IRI, scoped by its owning class so that two different
  * classes can each have their own "name" or "description" attribute without an IRI clash
  * (uniqueness only needs to hold "on the same entity", per STORY-005's acceptance criteria).
- * Like `classIri`, this is derived once at creation time and stays stable across renames.
+ * Like `classIri`, this is derived once at creation time, stays stable across renames, and mints
+ * under the given namespace base IRI (defaulting to the default namespace's `/schema` base).
  */
-export function propertyIri(ownerClassIri: string, propName: string): string {
+export function propertyIri(
+	ownerClassIri: string,
+	propName: string,
+	namespaceBaseIri: string = DEFAULT_SCHEMA_NAMESPACE_BASE
+): string {
 	const ownerLocal = extractLocalName(ownerClassIri);
 	const local = camelCase(ownerLocal) + capitalize(camelCase(propName));
-	return `${SCHEMA_NAMESPACE}${local}`;
+	return `${namespaceBaseIri}#${local}`;
 }
 
-/** Deterministic `sh:NodeShape` IRI for a class — no lookup needed, just derived from the class IRI. */
-export function nodeShapeIri(ownerClassIri: string): string {
-	return `${SHAPES_NAMESPACE}${extractLocalName(ownerClassIri)}Shape`;
+/**
+ * Deterministic `sh:NodeShape` IRI for a class — no lookup needed, just derived from the class
+ * IRI — minted under the given namespace base IRI (defaulting to the default namespace's `/shapes`
+ * base).
+ */
+export function nodeShapeIri(
+	ownerClassIri: string,
+	namespaceBaseIri: string = DEFAULT_SHAPES_NAMESPACE_BASE
+): string {
+	return `${namespaceBaseIri}#${extractLocalName(ownerClassIri)}Shape`;
 }
 
 /**
@@ -75,12 +117,17 @@ export function nodeShapeIri(ownerClassIri: string): string {
  * label — e.g. `core:RelationType`'s `nutzt`/`verbucht` members (STORY-019). Scoped by owning
  * class the same way `propertyIri` is, so two different classes can each have a member with the
  * same label without an IRI clash. Derived once at creation time; stable across renames (renaming
- * only updates `rdfs:label`, mirroring `classIri`/`propertyIri`).
+ * only updates `rdfs:label`, mirroring `classIri`/`propertyIri`). Mints under the given namespace
+ * base IRI (defaulting to the default namespace's `/schema` base).
  */
-export function individualIri(ownerClassIri: string, label: string): string {
+export function individualIri(
+	ownerClassIri: string,
+	label: string,
+	namespaceBaseIri: string = DEFAULT_SCHEMA_NAMESPACE_BASE
+): string {
 	const ownerLocal = extractLocalName(ownerClassIri);
 	const local = camelCase(ownerLocal) + capitalize(camelCase(label));
-	return `${SCHEMA_NAMESPACE}${local}`;
+	return `${namespaceBaseIri}#${local}`;
 }
 
 /** Extract the local name (fragment or last path segment) from an IRI. */
@@ -138,6 +185,16 @@ export const EXTERNAL_PREFIXES: Record<string, string> = {
 	skos: 'http://www.w3.org/2004/02/skos/core#'
 };
 
+/**
+ * Marker class for a registered external vocabulary (STORY-046) — `<baseIri> a
+ * <SCHEMA_NAMESPACE>ExternalVocabulary ; <SCHEMA_NAMESPACE>prefix "gist"`, stored the same way as
+ * `NAMESPACE_CLASS_IRI`/`ATTRIBUTED_RELATIONSHIP_IRI`, in the default namespace's own `/schema`
+ * graph, reusing `NAMESPACE_PREFIX_PREDICATE_IRI` rather than introducing a second prefix predicate.
+ * Distinct from `NAMESPACE_CLASS_IRI`: a namespace is a domain this app owns and mints IRIs/graphs
+ * under, an external vocabulary is only ever referenced, never written to.
+ */
+export const EXTERNAL_VOCABULARY_CLASS_IRI = `${SCHEMA_NAMESPACE}ExternalVocabulary`;
+
 export interface ResolvedPrefixedName {
 	iri: string;
 	prefix: string;
@@ -145,15 +202,19 @@ export interface ResolvedPrefixedName {
 }
 
 /**
- * Resolve a user-typed prefixed name (e.g. "schema:Organization") to a full IRI using
- * `EXTERNAL_PREFIXES`. Returns `null` for anything that isn't `prefix:LocalName` shaped, or whose
- * prefix isn't one of the known external vocabularies.
+ * Resolve a user-typed prefixed name (e.g. "schema:Organization") to a full IRI using `prefixes`
+ * (defaults to the three built-in `EXTERNAL_PREFIXES`; callers with GraphDB-registered vocabularies,
+ * STORY-046, pass a merged map instead). Returns `null` for anything that isn't `prefix:LocalName`
+ * shaped, or whose prefix isn't in `prefixes`.
  */
-export function resolvePrefixedName(input: string): ResolvedPrefixedName | null {
+export function resolvePrefixedName(
+	input: string,
+	prefixes: Record<string, string> = EXTERNAL_PREFIXES
+): ResolvedPrefixedName | null {
 	const match = input.trim().match(/^([a-zA-Z][\w-]*):([^\s:][\w.-]*)$/);
 	if (!match) return null;
 	const [, prefix, localName] = match;
-	const namespace = EXTERNAL_PREFIXES[prefix];
+	const namespace = prefixes[prefix];
 	if (!namespace) return null;
 	return { iri: `${namespace}${localName}`, prefix, localName };
 }
@@ -161,11 +222,12 @@ export function resolvePrefixedName(input: string): ResolvedPrefixedName | null 
 /**
  * Reverse of `resolvePrefixedName`, used when reconstructing external-vocabulary stub nodes from
  * GraphDB (STORY-009): given a full IRI, recover its `prefix:LocalName` display form if it falls
- * under one of `EXTERNAL_PREFIXES`. Falls back to the raw IRI for anything else (e.g. a vocabulary
- * this app doesn't know the prefix for) rather than guessing.
+ * under one of `prefixes` (defaults to the three built-in `EXTERNAL_PREFIXES`; STORY-046 callers
+ * pass a merged map instead). Falls back to the raw IRI for anything else (e.g. a vocabulary this
+ * app doesn't know the prefix for) rather than guessing.
  */
-export function iriToPrefixedName(iri: string): string {
-	for (const [prefix, namespace] of Object.entries(EXTERNAL_PREFIXES)) {
+export function iriToPrefixedName(iri: string, prefixes: Record<string, string> = EXTERNAL_PREFIXES): string {
+	for (const [prefix, namespace] of Object.entries(prefixes)) {
 		if (iri.startsWith(namespace)) {
 			return `${prefix}:${iri.slice(namespace.length)}`;
 		}

@@ -1,20 +1,42 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
+	import type { FetchedNamespace } from '$lib/services/sparql-connector';
 
 	interface Props {
+		mode?: 'create' | 'edit';
+		iri?: string;
 		initialName?: string;
 		initialDescription?: string;
 		initialColor?: string;
+		namespaceOptions?: FetchedNamespace[];
+		initialNamespaceBaseIri?: string;
 		submitLabel: string;
-		onSubmit: (name: string, description: string, color: string | undefined) => Promise<void>;
+		onSubmit: (
+			name: string,
+			description: string,
+			color: string | undefined,
+			namespaceBaseIri?: string
+		) => Promise<void>;
 		onCancel: () => void;
 	}
 
-	let { initialName = '', initialDescription = '', initialColor, submitLabel, onSubmit, onCancel }: Props = $props();
+	let {
+		mode = 'create',
+		iri,
+		initialName = '',
+		initialDescription = '',
+		initialColor,
+		namespaceOptions = [],
+		initialNamespaceBaseIri = '',
+		submitLabel,
+		onSubmit,
+		onCancel
+	}: Props = $props();
 
 	let name = $state(initialName);
 	let description = $state(initialDescription);
 	let color = $state<string | undefined>(initialColor);
+	let namespaceBaseIri = $state(initialNamespaceBaseIri);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
@@ -27,7 +49,7 @@
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(name.trim(), description.trim(), color);
+			await onSubmit(name.trim(), description.trim(), color, mode === 'create' ? namespaceBaseIri : undefined);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -37,6 +59,12 @@
 </script>
 
 <form onsubmit={handleSubmit}>
+	{#if mode === 'edit' && iri}
+		<label>
+			IRI
+			<input type="text" class="iri" value={iri} readonly title={iri} />
+		</label>
+	{/if}
 	<label>
 		Name
 		<input type="text" bind:value={name} placeholder="e.g. Person" />
@@ -49,6 +77,16 @@
 		Color
 		<ColorSwatchPicker {color} onChange={(c) => (color = c)} />
 	</label>
+	{#if mode === 'create' && namespaceOptions.length > 0}
+		<label>
+			Namespace
+			<select bind:value={namespaceBaseIri}>
+				{#each namespaceOptions as ns (ns.baseIri)}
+					<option value={ns.baseIri}>{ns.prefix}</option>
+				{/each}
+			</select>
+		</label>
+	{/if}
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
@@ -74,13 +112,21 @@
 	}
 
 	input,
-	textarea {
+	textarea,
+	select {
 		font-size: 0.95rem;
 		color: var(--color-text);
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 0.5rem 0.65rem;
+	}
+
+	input.iri {
+		font-family: 'SF Mono', Menlo, Consolas, monospace;
+		font-size: 0.8rem;
+		color: var(--color-text-muted);
+		background: var(--color-bg-secondary);
 	}
 
 	.error {

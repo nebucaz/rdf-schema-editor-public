@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { sparqlConnector } from '$lib/services/sparql-connector';
+	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
 	import type { Partition } from '$lib/services/turtle';
 	import { SchemaValidationError, type ValidationIssue } from '$lib/services/validation';
 	import { extractLocalName } from '$lib/utils/iri';
@@ -8,12 +8,20 @@
 	interface Props {
 		/** `null` means "whole schema graph"; otherwise the IRI of the selected entity/relation. */
 		selectedIri: string | null;
+		/** Every registered namespace (STORY-027's `fetchNamespaces()`), for the panel's selector. */
+		namespaces: FetchedNamespace[];
+		/** Base IRI the selector defaults to (STORY-031's active namespace) when the panel opens. */
+		initialNamespaceBaseIri: string;
 		onClose: () => void;
 		/** Called after a successful save so the canvas can reflect the edit without a page reload. */
 		onSaved: () => void;
 	}
 
-	let { selectedIri, onClose, onSaved }: Props = $props();
+	let { selectedIri, namespaces, initialNamespaceBaseIri, onClose, onSaved }: Props = $props();
+
+	// Set once from `initialNamespaceBaseIri` when the panel mounts; the user's own selection then
+	// persists across `selectedIri` changes (canvas selection) without resetting to the default.
+	let selectedNamespace = $state(initialNamespaceBaseIri);
 
 	/** `'all'` never appears here — STORY-018's tabs are always exactly one of these two. */
 	type TabPartition = Exclude<Partition, 'all'>;
@@ -50,7 +58,7 @@
 		highlightEl.scrollLeft = textareaEl.scrollLeft;
 	}
 
-	async function load(iri: string | null) {
+	async function load(iri: string | null, namespaceBaseIri: string) {
 		loading = true;
 		loadError = null;
 		schemaTab.issues = [];
@@ -58,7 +66,7 @@
 		shapesTab.issues = [];
 		shapesTab.editing = false;
 		try {
-			const pair = await sparqlConnector.fetchScopedTurtlePair(iri);
+			const pair = await sparqlConnector.fetchScopedTurtlePair(iri, namespaceBaseIri);
 			schemaTab.savedText = pair.schema;
 			schemaTab.draftText = pair.schema;
 			shapesTab.savedText = pair.shapes;
@@ -70,9 +78,9 @@
 		}
 	}
 
-	// Re-fetches whenever the canvas selection changes while the panel is open.
+	// Re-fetches whenever the canvas selection or the chosen namespace changes while the panel is open.
 	$effect(() => {
-		void load(selectedIri);
+		void load(selectedIri, selectedNamespace);
 	});
 
 	function startEdit() {
@@ -92,10 +100,15 @@
 		currentTab.saving = true;
 		currentTab.issues = [];
 		try {
-			await sparqlConnector.saveScopedTurtle(selectedIri, currentTab.draftText, partition);
+			await sparqlConnector.saveScopedTurtle(
+				selectedIri,
+				currentTab.draftText,
+				partition,
+				selectedNamespace
+			);
 			currentTab.editing = false;
 			onSaved();
-			await load(selectedIri);
+			await load(selectedIri, selectedNamespace);
 		} catch (err) {
 			currentTab.issues =
 				err instanceof SchemaValidationError ? err.issues : [{ layer: 'syntax', message: String(err) }];
@@ -149,6 +162,18 @@
 				{tabLabel[tab]}
 			</button>
 		{/each}
+		<div class="spacer"></div>
+		{#if namespaces.length > 0}
+			<select
+				class="namespace-select"
+				aria-label="Namespace"
+				bind:value={selectedNamespace}
+			>
+				{#each namespaces as ns (ns.baseIri)}
+					<option value={ns.baseIri}>{ns.prefix}</option>
+				{/each}
+			</select>
+		{/if}
 	</div>
 
 	<div class="panel-body">
@@ -241,8 +266,18 @@
 
 	.tab-switch {
 		display: flex;
+		align-items: center;
 		gap: 0.25rem;
 		padding: 0.6rem 1.25rem 0;
+	}
+
+	.namespace-select {
+		padding: 0.3rem 0.5rem;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text);
+		font-size: 0.8rem;
 	}
 
 	.tab-button {

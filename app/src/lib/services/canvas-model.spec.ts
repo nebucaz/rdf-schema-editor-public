@@ -1,9 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import { buildCanvasModel } from './canvas-model';
-import type { FetchedSchema, FetchedProperty } from './sparql-connector';
+import type { FetchedSchema, FetchedClass, FetchedProperty, FetchedSubClassOf, FetchedIndividual } from './sparql-connector';
 import { classIri, propertyIri, xsdIri, ATTRIBUTED_RELATIONSHIP_IRI, type XsdDatatype } from '$lib/utils/iri';
 
 const NS = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
+const NS_A = 'http://example.com/ns-a#';
+const NS_B = 'http://example.com/ns-b#';
+
+function fetchedClass(iri: string, label: string, comment: string | null = null, namespaceBaseIri = NS): FetchedClass {
+	return { iri, label, comment, namespaceBaseIri };
+}
 
 function objectProp(domain: string, range: string, name: string, overrides: Partial<FetchedProperty> = {}): FetchedProperty {
 	return {
@@ -13,6 +19,7 @@ function objectProp(domain: string, range: string, name: string, overrides: Part
 		range,
 		required: false,
 		repeatable: true,
+		namespaceBaseIri: NS,
 		...overrides
 	};
 }
@@ -25,8 +32,17 @@ function datatypeProp(domain: string, name: string, datatype: XsdDatatype, overr
 		range: xsdIri(datatype),
 		required: false,
 		repeatable: false,
+		namespaceBaseIri: NS,
 		...overrides
 	};
+}
+
+function subClassOf(sub: string, superIri: string, namespaceBaseIri = NS): FetchedSubClassOf {
+	return { sub, super: superIri, namespaceBaseIri };
+}
+
+function individual(iri: string, label: string, classIriValue: string, namespaceBaseIri = NS): FetchedIndividual {
+	return { iri, label, classIri: classIriValue, namespaceBaseIri };
 }
 
 function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
@@ -44,7 +60,7 @@ describe('buildCanvasModel', () => {
 	it('renders one entity node per class, with datatype attributes attached', () => {
 		const person = classIri('Person');
 		const schema = emptySchema({
-			classes: [{ iri: person, label: 'Person', comment: 'A person' }],
+			classes: [fetchedClass(person, 'Person', 'A person')],
 			datatypeProperties: [datatypeProp(person, 'nickname', 'string', { required: false, repeatable: false })]
 		});
 		const model = buildCanvasModel(schema);
@@ -54,6 +70,7 @@ describe('buildCanvasModel', () => {
 		if (node.kind === 'entity') {
 			expect(node.name).toBe('Person');
 			expect(node.description).toBe('A person');
+			expect(node.namespace).toBe(NS);
 			expect(node.attributes).toEqual([
 				{ iri: propertyIri(person, 'nickname'), name: 'nickname', datatype: 'string', required: false, repeatable: false }
 			]);
@@ -64,10 +81,7 @@ describe('buildCanvasModel', () => {
 		const person = classIri('Person');
 		const car = classIri('Car');
 		const schema = emptySchema({
-			classes: [
-				{ iri: person, label: 'Person', comment: null },
-				{ iri: car, label: 'Car', comment: null }
-			],
+			classes: [fetchedClass(person, 'Person'), fetchedClass(car, 'Car')],
 			objectProperties: [objectProp(person, car, 'owns', { required: false, repeatable: true })]
 		});
 		const model = buildCanvasModel(schema);
@@ -79,7 +93,8 @@ describe('buildCanvasModel', () => {
 				target: car,
 				name: 'owns',
 				required: false,
-				repeatable: true
+				repeatable: true,
+				namespace: NS
 			}
 		]);
 	});
@@ -89,16 +104,12 @@ describe('buildCanvasModel', () => {
 		const person = classIri('Person');
 		const company = classIri('Company');
 		const schema = emptySchema({
-			classes: [
-				{ iri: assoc, label: 'EmploymentAssignment', comment: null },
-				{ iri: person, label: 'Person', comment: null },
-				{ iri: company, label: 'Company', comment: null }
-			],
+			classes: [fetchedClass(assoc, 'EmploymentAssignment'), fetchedClass(person, 'Person'), fetchedClass(company, 'Company')],
 			objectProperties: [
 				objectProp(assoc, person, 'employee', { required: true, repeatable: false }),
 				objectProp(assoc, company, 'employer', { required: true, repeatable: false })
 			],
-			subClassOf: [{ sub: assoc, super: ATTRIBUTED_RELATIONSHIP_IRI }]
+			subClassOf: [subClassOf(assoc, ATTRIBUTED_RELATIONSHIP_IRI)]
 		});
 		const model = buildCanvasModel(schema);
 		expect(model.associationClassIris).toEqual(new Set([assoc]));
@@ -125,7 +136,7 @@ describe('buildCanvasModel', () => {
 		const person = classIri('Person');
 		const schema = emptySchema({
 			objectProperties: [objectProp(almostAssoc, person, 'assignee')],
-			subClassOf: [{ sub: almostAssoc, super: ATTRIBUTED_RELATIONSHIP_IRI }]
+			subClassOf: [subClassOf(almostAssoc, ATTRIBUTED_RELATIONSHIP_IRI)]
 		});
 		const model = buildCanvasModel(schema);
 		expect(model.associationClassIris.has(almostAssoc)).toBe(true);
@@ -137,12 +148,12 @@ describe('buildCanvasModel', () => {
 		const person = classIri('Person');
 		const schema = emptySchema({
 			classes: [
-				{ iri: ATTRIBUTED_RELATIONSHIP_IRI, label: 'AttributedRelationship', comment: null },
-				{ iri: assoc, label: 'EmploymentAssignment', comment: null },
-				{ iri: person, label: 'Person', comment: null }
+				fetchedClass(ATTRIBUTED_RELATIONSHIP_IRI, 'AttributedRelationship'),
+				fetchedClass(assoc, 'EmploymentAssignment'),
+				fetchedClass(person, 'Person')
 			],
 			objectProperties: [objectProp(assoc, person, 'employee')],
-			subClassOf: [{ sub: assoc, super: ATTRIBUTED_RELATIONSHIP_IRI }]
+			subClassOf: [subClassOf(assoc, ATTRIBUTED_RELATIONSHIP_IRI)]
 		});
 		const model = buildCanvasModel(schema);
 		expect(model.nodes.some((n) => n.iri === ATTRIBUTED_RELATIONSHIP_IRI)).toBe(false);
@@ -152,22 +163,27 @@ describe('buildCanvasModel', () => {
 	it('renders an external stub node + inheritance edge for a subClassOf target not on the canvas', () => {
 		const company = classIri('Company');
 		const schema = emptySchema({
-			classes: [{ iri: company, label: 'Company', comment: null }],
-			subClassOf: [{ sub: company, super: 'https://schema.org/Organization' }]
+			classes: [fetchedClass(company, 'Company')],
+			subClassOf: [subClassOf(company, 'https://schema.org/Organization')]
 		});
 		const model = buildCanvasModel(schema);
 		const external = model.nodes.find((n) => n.kind === 'external');
 		expect(external).toEqual({ kind: 'external', iri: 'https://schema.org/Organization', prefixedName: 'schema:Organization' });
-		expect(model.edges).toContainEqual({ kind: 'inheritance', source: company, target: 'https://schema.org/Organization' });
+		expect(model.edges).toContainEqual({
+			kind: 'inheritance',
+			source: company,
+			target: 'https://schema.org/Organization',
+			namespace: NS
+		});
 	});
 
 	it('supports multiple inheritance (two subClassOf targets for the same class)', () => {
 		const person = classIri('Person');
 		const schema = emptySchema({
-			classes: [{ iri: person, label: 'Person', comment: null }],
+			classes: [fetchedClass(person, 'Person')],
 			subClassOf: [
-				{ sub: person, super: 'http://xmlns.com/foaf/0.1/Person' },
-				{ sub: person, super: 'https://schema.org/Person' }
+				subClassOf(person, 'http://xmlns.com/foaf/0.1/Person'),
+				subClassOf(person, 'https://schema.org/Person')
 			]
 		});
 		const model = buildCanvasModel(schema);
@@ -181,10 +197,10 @@ describe('buildCanvasModel', () => {
 		const nutztIri = `${NS}relationTypeNutzt`;
 		const verbuchtIri = `${NS}relationTypeVerbucht`;
 		const schema = emptySchema({
-			classes: [{ iri: relationType, label: 'RelationType', comment: null }],
+			classes: [fetchedClass(relationType, 'RelationType')],
 			individuals: [
-				{ iri: nutztIri, label: 'nutzt', classIri: relationType },
-				{ iri: verbuchtIri, label: 'verbucht', classIri: relationType }
+				individual(nutztIri, 'nutzt', relationType),
+				individual(verbuchtIri, 'verbucht', relationType)
 			]
 		});
 		const model = buildCanvasModel(schema);
@@ -200,7 +216,7 @@ describe('buildCanvasModel', () => {
 
 	it('gives every class an empty members list by default (no enumeration toggle)', () => {
 		const person = classIri('Person');
-		const schema = emptySchema({ classes: [{ iri: person, label: 'Person', comment: null }] });
+		const schema = emptySchema({ classes: [fetchedClass(person, 'Person')] });
 		const model = buildCanvasModel(schema);
 		const node = model.nodes[0];
 		expect(node.kind === 'entity' && node.members).toEqual([]);
@@ -212,14 +228,33 @@ describe('buildCanvasModel', () => {
 		expect(model.edges).toEqual([]);
 	});
 
+	it('carries each node/edge\'s own namespace through from the fetched schema (STORY-033)', () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person', null, NS_A), fetchedClass(car, 'Car', null, NS_B)],
+			objectProperties: [objectProp(person, car, 'owns', { namespaceBaseIri: NS_A })],
+			subClassOf: [subClassOf(car, 'https://schema.org/Product', NS_B)]
+		});
+		const model = buildCanvasModel(schema);
+
+		const personNode = model.nodes.find((n) => n.iri === person);
+		const carNode = model.nodes.find((n) => n.iri === car);
+		expect(personNode?.kind === 'entity' && personNode.namespace).toBe(NS_A);
+		expect(carNode?.kind === 'entity' && carNode.namespace).toBe(NS_B);
+
+		const relationEdge = model.edges.find((e) => e.kind === 'relation');
+		expect(relationEdge?.namespace).toBe(NS_A);
+
+		const inheritanceEdge = model.edges.find((e) => e.kind === 'inheritance');
+		expect(inheritanceEdge?.namespace).toBe(NS_B);
+	});
+
 	it('is idempotent: building twice from the same schema produces an identical model', () => {
 		const person = classIri('Person');
 		const car = classIri('Car');
 		const schema = emptySchema({
-			classes: [
-				{ iri: person, label: 'Person', comment: null },
-				{ iri: car, label: 'Car', comment: null }
-			],
+			classes: [fetchedClass(person, 'Person'), fetchedClass(car, 'Car')],
 			objectProperties: [objectProp(person, car, 'owns')]
 		});
 		const first = buildCanvasModel(schema);

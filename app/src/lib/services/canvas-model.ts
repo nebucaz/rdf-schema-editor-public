@@ -1,4 +1,10 @@
-import { xsdDatatypeFromIri, iriToPrefixedName, ATTRIBUTED_RELATIONSHIP_IRI, type XsdDatatype } from '$lib/utils/iri';
+import {
+	xsdDatatypeFromIri,
+	iriToPrefixedName,
+	EXTERNAL_PREFIXES,
+	ATTRIBUTED_RELATIONSHIP_IRI,
+	type XsdDatatype
+} from '$lib/utils/iri';
 import type { FetchedSchema } from './sparql-connector';
 
 export interface CanvasAttributeSpec {
@@ -24,6 +30,9 @@ export interface EntityNodeSpec {
 	/** Always-available, possibly-empty list of this class's enumerated members — no separate
 	 *  "is this an enumeration" flag, consistent with how attributes/relations work (Decision 3). */
 	members: CanvasMemberSpec[];
+	/** Base IRI of the namespace this class belongs to (STORY-033) — lets the workbench's
+	 *  namespace filter hide/show this node client-side, without re-querying GraphDB. */
+	namespace: string;
 }
 
 export interface ExternalNodeSpec {
@@ -42,6 +51,10 @@ export interface RelationEdgeSpec {
 	name: string;
 	required: boolean;
 	repeatable: boolean;
+	/** See `EntityNodeSpec.namespace` (STORY-033) — the source class's own namespace, since a
+	 *  relationship's `owl:ObjectProperty` triple lives in its source class's `/schema` graph
+	 *  (Decision 8), even when it crosses into another namespace's class as its range. */
+	namespace: string;
 }
 
 export interface AttributedLinkEdgeSpec {
@@ -52,12 +65,17 @@ export interface AttributedLinkEdgeSpec {
 	propName: string;
 	required: boolean;
 	repeatable: boolean;
+	/** See `RelationEdgeSpec.namespace` (STORY-033). */
+	namespace: string;
 }
 
 export interface InheritanceEdgeSpec {
 	kind: 'inheritance';
 	source: string;
 	target: string;
+	/** See `RelationEdgeSpec.namespace` (STORY-033) — the `sub` class's own namespace, since the
+	 *  `rdfs:subClassOf` triple lives in `sub`'s own `/schema` graph. */
+	namespace: string;
 }
 
 export type EdgeSpec = RelationEdgeSpec | AttributedLinkEdgeSpec | InheritanceEdgeSpec;
@@ -85,7 +103,16 @@ export interface CanvasModel {
  * per STORY-007 — they have their own attributes too); the association/non-association distinction
  * only changes how a class's *outgoing* object properties are classified as edges.
  */
-export function buildCanvasModel(schema: FetchedSchema): CanvasModel {
+/**
+ * `externalPrefixes` (STORY-046, defaults to the three built-in `EXTERNAL_PREFIXES`) is threaded in
+ * explicitly rather than fetched here — this function stays a pure, GraphDB-free reconstruction of
+ * the canvas model, so the caller resolves the merged built-in ∪ GraphDB-registered map once
+ * (`external-vocab-store.ts`) and passes it in.
+ */
+export function buildCanvasModel(
+	schema: FetchedSchema,
+	externalPrefixes: Record<string, string> = EXTERNAL_PREFIXES
+): CanvasModel {
 	const associationClassIris = new Set(
 		schema.subClassOf.filter((r) => r.super === ATTRIBUTED_RELATIONSHIP_IRI).map((r) => r.sub)
 	);
@@ -120,7 +147,8 @@ export function buildCanvasModel(schema: FetchedSchema): CanvasModel {
 		name: c.label,
 		description: c.comment ?? '',
 		attributes: attributesByClass.get(c.iri) ?? [],
-		members: membersByClass.get(c.iri) ?? []
+		members: membersByClass.get(c.iri) ?? [],
+		namespace: c.namespaceBaseIri
 	}));
 
 	const edges: EdgeSpec[] = [];
@@ -133,7 +161,8 @@ export function buildCanvasModel(schema: FetchedSchema): CanvasModel {
 				target: op.range,
 				propName: op.label,
 				required: op.required,
-				repeatable: op.repeatable
+				repeatable: op.repeatable,
+				namespace: op.namespaceBaseIri
 			});
 		} else {
 			edges.push({
@@ -143,21 +172,22 @@ export function buildCanvasModel(schema: FetchedSchema): CanvasModel {
 				target: op.range,
 				name: op.label,
 				required: op.required,
-				repeatable: op.repeatable
+				repeatable: op.repeatable,
+				namespace: op.namespaceBaseIri
 			});
 		}
 	}
 
 	const externalNodes = new Map<string, ExternalNodeSpec>();
-	for (const { sub, super: superIri } of inheritanceTriples) {
+	for (const { sub, super: superIri, namespaceBaseIri } of inheritanceTriples) {
 		if (!localClassIris.has(superIri) && !externalNodes.has(superIri)) {
 			externalNodes.set(superIri, {
 				kind: 'external',
 				iri: superIri,
-				prefixedName: iriToPrefixedName(superIri)
+				prefixedName: iriToPrefixedName(superIri, externalPrefixes)
 			});
 		}
-		edges.push({ kind: 'inheritance', source: sub, target: superIri });
+		edges.push({ kind: 'inheritance', source: sub, target: superIri, namespace: namespaceBaseIri });
 	}
 
 	return {

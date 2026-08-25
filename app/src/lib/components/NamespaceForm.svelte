@@ -1,41 +1,56 @@
 <script lang="ts">
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
+	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
 
 	interface Props {
-		mode?: 'create' | 'edit';
-		initialLabel?: string;
-		namespaceOptions?: FetchedNamespace[];
-		initialNamespaceBaseIri?: string;
+		mode: 'create' | 'edit';
+		initialPrefix?: string;
+		initialBaseIri?: string;
+		initialDescription?: string;
+		initialColor?: string;
 		submitLabel: string;
-		onSubmit: (label: string, namespaceBaseIri?: string) => Promise<void>;
+		onSubmit: (values: {
+			prefix: string;
+			baseIri: string;
+			description: string;
+			color: string | undefined;
+		}) => Promise<void>;
 		onCancel: () => void;
 	}
 
 	let {
-		mode = 'create',
-		initialLabel = '',
-		namespaceOptions = [],
-		initialNamespaceBaseIri = '',
+		mode,
+		initialPrefix = '',
+		initialBaseIri = '',
+		initialDescription = '',
+		initialColor,
 		submitLabel,
 		onSubmit,
 		onCancel
 	}: Props = $props();
 
-	let label = $state(initialLabel);
-	let namespaceBaseIri = $state(initialNamespaceBaseIri);
+	let prefix = $state(initialPrefix);
+	let baseIri = $state(initialBaseIri);
+	let description = $state(initialDescription);
+	let color = $state<string | undefined>(initialColor);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!label.trim()) {
-			error = 'Name must not be empty';
-			return;
+		if (mode === 'create') {
+			if (!prefix.trim()) {
+				error = 'Prefix must not be empty';
+				return;
+			}
+			if (!baseIri.trim()) {
+				error = 'Base IRI must not be empty';
+				return;
+			}
 		}
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(label.trim(), mode === 'create' ? namespaceBaseIri : undefined);
+			await onSubmit({ prefix: prefix.trim(), baseIri: baseIri.trim(), description: description.trim(), color });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -46,19 +61,29 @@
 
 <form onsubmit={handleSubmit}>
 	<label>
-		Name
-		<input type="text" bind:value={label} placeholder="e.g. nutzt" />
+		Prefix
+		{#if mode === 'create'}
+			<input type="text" bind:value={prefix} placeholder="e.g. gov" />
+		{:else}
+			<input type="text" value={prefix} readonly disabled />
+		{/if}
 	</label>
-	{#if mode === 'create' && namespaceOptions.length > 0}
-		<label>
-			Namespace
-			<select bind:value={namespaceBaseIri}>
-				{#each namespaceOptions as ns (ns.baseIri)}
-					<option value={ns.baseIri}>{ns.prefix}</option>
-				{/each}
-			</select>
-		</label>
-	{/if}
+	<label>
+		Base IRI
+		{#if mode === 'create'}
+			<input type="text" bind:value={baseIri} placeholder="e.g. http://example.com/gov" />
+		{:else}
+			<input type="text" value={baseIri} readonly disabled />
+		{/if}
+	</label>
+	<label>
+		Description
+		<textarea bind:value={description} placeholder="Optional description" rows="3"></textarea>
+	</label>
+	<label>
+		Default color
+		<ColorSwatchPicker {color} onChange={(c) => (color = c)} />
+	</label>
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
@@ -84,13 +109,18 @@
 	}
 
 	input,
-	select {
+	textarea {
 		font-size: 0.95rem;
 		color: var(--color-text);
 		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 0.5rem 0.65rem;
+	}
+
+	input:disabled {
+		opacity: 0.7;
+		cursor: default;
 	}
 
 	.error {

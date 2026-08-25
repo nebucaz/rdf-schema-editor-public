@@ -23,6 +23,10 @@
 		/** Custom canvas header color (e.g. to visually distinguish association classes from plain
 		 *  entities) — a local display preference, not semantic RDF. `undefined` uses the theme default. */
 		color?: string;
+		/** The owning namespace's default color (STORY-042), used when there's no per-node `color`
+		 *  override. Ranks between `color` and the static association/plain theme default in the
+		 *  fallback chain below. `undefined` when the namespace has no default color configured. */
+		namespaceColor?: string;
 		attributes: EntityAttributeVM[];
 		/** Always-available, possibly-empty enumerated members list — no separate "is this an
 		 *  enumeration" toggle, matching how attributes/relations already work (Decision 3). Managed
@@ -37,6 +41,8 @@
 		onEditAttribute: (attribute: EntityAttributeVM) => void;
 		onDeleteAttribute: (attribute: EntityAttributeVM) => void;
 		onManageInstances: () => void;
+		/** STORY-043: opens the Triples panel scoped to this entity's own triples. */
+		onViewTriples: () => void;
 	}
 
 	export type EntityNodeType = Node<EntityNodeData, 'entity'>;
@@ -45,12 +51,13 @@
 <script lang="ts">
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 
-	let { data }: NodeProps<EntityNodeType> = $props();
+	let { data, selected }: NodeProps<EntityNodeType> = $props();
 </script>
 
 <div
 	class="entity-node"
-	style={`--node-header-bg: ${data.color ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')}`}
+	class:selected
+	style={`--node-header-bg: ${data.color ?? data.namespaceColor ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')}`}
 >
 	<!-- A source + target handle stacked at each side lets relations attach anywhere around the
 		box (dragged from or dropped on whichever side is closest to the other node), instead of
@@ -78,6 +85,14 @@
 					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
 				</button>
 			{/if}
+			<button
+				class="icon-button"
+				onclick={data.onViewTriples}
+				aria-label="View triples"
+				title="View triples"
+			>
+				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+			</button>
 			<button class="icon-button" onclick={data.onEdit} aria-label="Edit entity" title="Edit">
 				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 			</button>
@@ -122,6 +137,10 @@
 		background: var(--color-bg-secondary);
 		font-size: 12px;
 		overflow: hidden;
+	}
+
+	.entity-node.selected {
+		box-shadow: 0 0 0 2px var(--color-accent);
 	}
 
 	.header {

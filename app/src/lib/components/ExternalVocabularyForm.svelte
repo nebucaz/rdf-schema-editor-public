@@ -1,41 +1,31 @@
 <script lang="ts">
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
-
 	interface Props {
-		mode?: 'create' | 'edit';
-		initialLabel?: string;
-		namespaceOptions?: FetchedNamespace[];
-		initialNamespaceBaseIri?: string;
 		submitLabel: string;
-		onSubmit: (label: string, namespaceBaseIri?: string) => Promise<void>;
+		onSubmit: (values: { prefix: string; baseIri: string }) => Promise<void>;
 		onCancel: () => void;
 	}
 
-	let {
-		mode = 'create',
-		initialLabel = '',
-		namespaceOptions = [],
-		initialNamespaceBaseIri = '',
-		submitLabel,
-		onSubmit,
-		onCancel
-	}: Props = $props();
+	let { submitLabel, onSubmit, onCancel }: Props = $props();
 
-	let label = $state(initialLabel);
-	let namespaceBaseIri = $state(initialNamespaceBaseIri);
+	let prefix = $state('');
+	let baseIri = $state('');
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
-		if (!label.trim()) {
-			error = 'Name must not be empty';
+		if (!prefix.trim()) {
+			error = 'Prefix must not be empty';
+			return;
+		}
+		if (!baseIri.trim()) {
+			error = 'Base IRI must not be empty';
 			return;
 		}
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(label.trim(), mode === 'create' ? namespaceBaseIri : undefined);
+			await onSubmit({ prefix: prefix.trim(), baseIri: baseIri.trim() });
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -46,19 +36,13 @@
 
 <form onsubmit={handleSubmit}>
 	<label>
-		Name
-		<input type="text" bind:value={label} placeholder="e.g. nutzt" />
+		Prefix
+		<input type="text" bind:value={prefix} placeholder="e.g. gist" />
 	</label>
-	{#if mode === 'create' && namespaceOptions.length > 0}
-		<label>
-			Namespace
-			<select bind:value={namespaceBaseIri}>
-				{#each namespaceOptions as ns (ns.baseIri)}
-					<option value={ns.baseIri}>{ns.prefix}</option>
-				{/each}
-			</select>
-		</label>
-	{/if}
+	<label>
+		Base IRI
+		<input type="text" bind:value={baseIri} placeholder="e.g. https://ontologies.semanticarts.com/gist/" />
+	</label>
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
@@ -83,8 +67,7 @@
 		color: var(--color-text-muted);
 	}
 
-	input,
-	select {
+	input {
 		font-size: 0.95rem;
 		color: var(--color-text);
 		background: var(--color-bg);

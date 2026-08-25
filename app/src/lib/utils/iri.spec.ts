@@ -35,9 +35,26 @@ describe('pascalCase / camelCase', () => {
 });
 
 describe('classIri', () => {
-	it('derives a PascalCase local name under the schema namespace', () => {
+	it('derives a PascalCase local name under the default schema namespace when no namespace is passed', () => {
 		expect(classIri('Person')).toBe(`${SCHEMA_NAMESPACE}Person`);
 		expect(classIri('employment assignment')).toBe(`${SCHEMA_NAMESPACE}EmploymentAssignment`);
+	});
+
+	it('mints under an explicitly passed namespace base IRI (STORY-025)', () => {
+		expect(classIri('Person', 'http://example.org/gov/schema')).toBe(
+			'http://example.org/gov/schema#Person'
+		);
+	});
+
+	it('reproduces the exact default-namespace IRI when its base IRI is passed explicitly', () => {
+		const defaultSchemaBase = SCHEMA_NAMESPACE.slice(0, -1); // strip trailing '#'
+		expect(classIri('Person', defaultSchemaBase)).toBe(classIri('Person'));
+	});
+
+	it('does not bleed a resource minted under one namespace into another', () => {
+		const gov = classIri('Person', 'http://example.org/gov/schema');
+		const core = classIri('Person', 'http://example.org/core/schema');
+		expect(gov).not.toBe(core);
 	});
 });
 
@@ -49,11 +66,25 @@ describe('propertyIri', () => {
 		expect(propertyIri(company, 'name')).toBe(`${SCHEMA_NAMESPACE}companyName`);
 		expect(propertyIri(person, 'name')).not.toBe(propertyIri(company, 'name'));
 	});
+
+	it('mints under an explicitly passed namespace base IRI, with no cross-namespace bleed', () => {
+		const person = classIri('Person');
+		const govIri = propertyIri(person, 'name', 'http://example.org/gov/schema');
+		const coreIri = propertyIri(person, 'name', 'http://example.org/core/schema');
+		expect(govIri).toBe('http://example.org/gov/schema#personName');
+		expect(govIri).not.toBe(coreIri);
+	});
 });
 
 describe('nodeShapeIri', () => {
-	it('derives a deterministic shape IRI under the shapes namespace', () => {
+	it('derives a deterministic shape IRI under the default shapes namespace when no namespace is passed', () => {
 		expect(nodeShapeIri(classIri('Person'))).toBe(`${SHAPES_NAMESPACE}PersonShape`);
+	});
+
+	it('mints under an explicitly passed namespace base IRI', () => {
+		expect(nodeShapeIri(classIri('Person'), 'http://example.org/gov/shapes')).toBe(
+			'http://example.org/gov/shapes#PersonShape'
+		);
 	});
 });
 
@@ -68,6 +99,14 @@ describe('individualIri (STORY-019)', () => {
 	it('is stable for the same class + label', () => {
 		const relationType = classIri('RelationType');
 		expect(individualIri(relationType, 'verbucht')).toBe(individualIri(relationType, 'verbucht'));
+	});
+
+	it('mints under an explicitly passed namespace base IRI, with no cross-namespace bleed', () => {
+		const relationType = classIri('RelationType');
+		const govIri = individualIri(relationType, 'nutzt', 'http://example.org/gov/schema');
+		const coreIri = individualIri(relationType, 'nutzt', 'http://example.org/core/schema');
+		expect(govIri).toBe('http://example.org/gov/schema#relationTypeNutzt');
+		expect(govIri).not.toBe(coreIri);
 	});
 });
 
@@ -117,6 +156,19 @@ describe('resolvePrefixedName', () => {
 	it('returns null for a bare IRI (not prefix:LocalName shaped)', () => {
 		expect(resolvePrefixedName('http://example.org/Thing')).toBeNull();
 	});
+
+	it('resolves a non-built-in prefix when an explicit prefixes map is passed (STORY-046)', () => {
+		const prefixes = { gist: 'https://ontologies.semanticarts.com/gist/' };
+		expect(resolvePrefixedName('gist:System', prefixes)).toEqual({
+			iri: 'https://ontologies.semanticarts.com/gist/System',
+			prefix: 'gist',
+			localName: 'System'
+		});
+	});
+
+	it('still resolves the built-in prefixes when no map is passed (default-parameter regression)', () => {
+		expect(resolvePrefixedName('schema:Organization')).not.toBeNull();
+	});
 });
 
 describe('iriToPrefixedName', () => {
@@ -133,6 +185,15 @@ describe('iriToPrefixedName', () => {
 
 	it('falls back to the raw IRI for an unknown vocabulary', () => {
 		expect(iriToPrefixedName('http://example.org/Thing')).toBe('http://example.org/Thing');
+	});
+
+	it('reverses a non-built-in IRI when an explicit prefixes map is passed (STORY-046)', () => {
+		const prefixes = { gist: 'https://ontologies.semanticarts.com/gist/' };
+		expect(iriToPrefixedName('https://ontologies.semanticarts.com/gist/System', prefixes)).toBe('gist:System');
+	});
+
+	it('still reverses the built-in prefixes when no map is passed (default-parameter regression)', () => {
+		expect(iriToPrefixedName('https://schema.org/Organization')).toBe('schema:Organization');
 	});
 });
 

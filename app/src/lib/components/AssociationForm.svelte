@@ -1,4 +1,6 @@
 <script lang="ts">
+	import type { FetchedNamespace } from '$lib/services/sparql-connector';
+
 	interface EntityOption {
 		iri: string;
 		name: string;
@@ -13,16 +15,25 @@
 
 	interface Props {
 		entityOptions: EntityOption[];
-		onSubmit: (name: string, description: string, links: LinkRow[]) => Promise<void>;
+		namespaceOptions?: FetchedNamespace[];
+		initialNamespaceBaseIri?: string;
+		onSubmit: (name: string, description: string, links: LinkRow[], namespaceBaseIri: string) => Promise<void>;
 		onCancel: () => void;
 	}
 
-	let { entityOptions, onSubmit, onCancel }: Props = $props();
+	let {
+		entityOptions,
+		namespaceOptions = [],
+		initialNamespaceBaseIri = '',
+		onSubmit,
+		onCancel
+	}: Props = $props();
 
 	const defaultTarget = entityOptions[0]?.iri ?? '';
 
 	let name = $state('');
 	let description = $state('');
+	let namespaceBaseIri = $state(initialNamespaceBaseIri);
 	let links = $state<LinkRow[]>([
 		{ propName: '', targetClassIri: defaultTarget, required: true, maxOne: true },
 		{ propName: '', targetClassIri: defaultTarget, required: true, maxOne: true }
@@ -58,7 +69,8 @@
 			await onSubmit(
 				name.trim(),
 				description.trim(),
-				links.map((l) => ({ ...l, propName: l.propName.trim() }))
+				links.map((l) => ({ ...l, propName: l.propName.trim() })),
+				namespaceBaseIri
 			);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
@@ -77,6 +89,16 @@
 		Description
 		<textarea bind:value={description} placeholder="Optional description" rows="2"></textarea>
 	</label>
+	{#if namespaceOptions.length > 0}
+		<label>
+			Namespace
+			<select bind:value={namespaceBaseIri}>
+				{#each namespaceOptions as ns (ns.baseIri)}
+					<option value={ns.baseIri}>{ns.prefix}</option>
+				{/each}
+			</select>
+		</label>
+	{/if}
 
 	<div class="links-section">
 		<span class="links-title">Links to related entities</span>

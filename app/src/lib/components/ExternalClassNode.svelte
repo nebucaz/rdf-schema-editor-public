@@ -13,10 +13,10 @@
 <script lang="ts">
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 
-	let { data }: NodeProps<ExternalClassNodeType> = $props();
+	let { data, selected }: NodeProps<ExternalClassNodeType> = $props();
 </script>
 
-<div class="stub-node">
+<div class="stub-node" class:selected>
 	<!-- Target-only handle at each side: external classes only ever receive inheritance edges
 		(see EntityNode.svelte for why there's one per side instead of a single left handle). -->
 	<Handle type="target" position={Position.Top} id="top-target" />
@@ -41,6 +41,10 @@
 		font-size: 11px;
 		font-style: italic;
 		color: var(--color-text-muted, #666);
+	}
+
+	.stub-node.selected {
+		box-shadow: 0 0 0 2px var(--color-accent);
 	}
 
 	.remove {

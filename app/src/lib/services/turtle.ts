@@ -7,6 +7,7 @@
  */
 import { Parser, Writer, DataFactory, type Quad, type Quad_Object, type Term } from 'n3';
 import { nodeShapeIri, SCHEMA_NAMESPACE, SHAPES_NAMESPACE, XSD_NAMESPACE } from '$lib/utils/iri';
+import { namespaceGraphs } from '$lib/config';
 import type { SparqlBinding } from './sparql-connector';
 
 export type { Quad };
@@ -39,7 +40,9 @@ export const SH = {
 };
 
 /** Prefixes for the human-facing Turtle view (STORY-011) — matches `semantic-crm`'s
- *  `gcrm-shema.ttl`/`gcrm-shapes.ttl` style, including a hyphenated shapes prefix. */
+ *  `gcrm-shema.ttl`/`gcrm-shapes.ttl` style, including a hyphenated shapes prefix. Used as the
+ *  default when no registered-namespace list is available; `buildDisplayPrefixes` (STORY-048)
+ *  supersedes this with one `rse`/`rse-sh`-shaped pair per registered namespace. */
 const DISPLAY_PREFIXES = {
 	rdf: RDF_NS,
 	rdfs: RDFS_NS,
@@ -49,6 +52,44 @@ const DISPLAY_PREFIXES = {
 	rse: SCHEMA_NAMESPACE,
 	'rse-sh': SHAPES_NAMESPACE
 };
+
+/**
+ * Builds the full display-prefix map (STORY-048): standard vocabulary prefixes plus, for every
+ * registered namespace, two prefixes mirroring the default namespace's own `rse`/`rse-sh` pair —
+ * `<prefix>` for its schema vocabulary IRI, `<prefix>-sh` for its shapes vocabulary IRI — so the
+ * raw Turtle view can show and accept e.g. `core:BusinessProcess` for any registered namespace,
+ * not just the default one. The default namespace is expected to already be among `namespaces`
+ * (`fetchNamespaces()` includes it), so no separate `rse`/`rse-sh` entry is added here.
+ *
+ * `externalVocabularies` (STORY-050) adds one flat prefix per entry — unlike a registered
+ * namespace, an external vocabulary (e.g. `gist`, STORY-046) is only ever *referenced* (as an
+ * `rdfs:subClassOf` target, say), never a graph this app writes to, so there's no schema/shapes
+ * split to mirror. A namespace's own prefix always wins over a same-named external vocabulary
+ * entry, since namespaces are this app's authoritative, locally-owned data.
+ */
+export function buildDisplayPrefixes(
+	namespaces: { prefix: string; baseIri: string }[],
+	externalVocabularies: { prefix: string; baseIri: string }[] = []
+): Record<string, string> {
+	const prefixes: Record<string, string> = {
+		rdf: RDF_NS,
+		rdfs: RDFS_NS,
+		owl: OWL_NS,
+		xsd: XSD_NAMESPACE,
+		sh: SH_NS
+	};
+	for (const vocab of externalVocabularies) {
+		if (!vocab.prefix) continue;
+		prefixes[vocab.prefix] = vocab.baseIri;
+	}
+	for (const ns of namespaces) {
+		if (!ns.prefix) continue;
+		const graphs = namespaceGraphs(ns.baseIri);
+		prefixes[ns.prefix] = `${graphs.schema}#`;
+		prefixes[`${ns.prefix}-sh`] = `${graphs.shapes}#`;
+	}
+	return prefixes;
+}
 
 export function isRdfType(q: Quad, typeIri: string): boolean {
 	return q.predicate.value === RDF.type && q.object.value === typeIri;
@@ -60,10 +101,12 @@ export function parseTurtle(text: string): Quad[] {
 	return new Parser().parse(text);
 }
 
-/** Serializes quads as human-facing Turtle with standard prefixes (STORY-011's view). */
-export function quadsToTurtle(quads: Quad[]): Promise<string> {
+/** Serializes quads as human-facing Turtle with standard prefixes (STORY-011's view), plus
+ *  whichever registered-namespace prefixes `prefixes` supplies (STORY-048's `buildDisplayPrefixes`)
+ *  — defaults to the static `rse`/`rse-sh`-only map when no registered-namespace list is available. */
+export function quadsToTurtle(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const writer = new Writer({ prefixes: DISPLAY_PREFIXES });
+		const writer = new Writer({ prefixes });
 		writer.addQuads(quads);
 		writer.end((err, result) => (err ? reject(err) : resolve(result)));
 	});
@@ -79,13 +122,30 @@ export function quadsToGroundTriples(quads: Quad[]): Promise<string> {
 	});
 }
 
+/** Serializes quads as N-Quads (STORY-036's "Export quads" download) — each quad's graph term
+ *  (set by `bindingToQuad`'s `graph` argument) is written out per line, unlike
+ *  `quadsToGroundTriples`'s N-Triples which drops it. */
+export function quadsToNQuads(quads: Quad[]): Promise<string> {
+	return new Promise((resolve, reject) => {
+		const writer = new Writer({ format: 'N-Quads' });
+		writer.addQuads(quads);
+		writer.end((err, result) => (err ? reject(err) : resolve(result)));
+	});
+}
+
 // -- Schema/shapes partitioning (STORY-014) -----------------------------------------------------
 
 /**
  * Splits a mixed `Quad[]` into the schema (`owl:Class`/`owl:*Property`/individuals) and shapes
- * (`sh:NodeShape`/`sh:property`) buckets, per `research.md` §4.1: namespace-based, with a
- * predicate-based override so a hand-edited `sh:*` predicate always lands in shapes even if its
- * subject's namespace is wrong. Every input quad appears in exactly one output bucket.
+ * (`sh:NodeShape`/`sh:property`) buckets, per `research.md` §4.1: predicate-based (any `sh:*`
+ * predicate), blank-node-based (every `sh:property` shape is a blank node), or an explicit `a
+ * sh:NodeShape` type declaration — the last of these catches a `NodeShape` subject's own `rdf:type`
+ * triple regardless of which namespace it was minted under (STORY-048 fix: the old
+ * `SHAPES_NAMESPACE`-prefix check only matched the *default* namespace's shapes IRIs, so a
+ * non-default namespace's `<...core/shapes#FooShape> a sh:NodeShape` triple fell through to the
+ * schema bucket — and, once round-tripped through a scoped save, got written into that namespace's
+ * *schema* graph instead of its shapes graph). Every input quad appears in exactly one output
+ * bucket.
  */
 export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[] } {
 	const schema: Quad[] = [];
@@ -94,7 +154,7 @@ export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[] 
 		const isShapesBucket =
 			q.predicate.value.startsWith(SH_NS) ||
 			q.subject.termType === 'BlankNode' ||
-			q.subject.value.startsWith(SHAPES_NAMESPACE);
+			isRdfType(q, SH.NodeShape);
 		(isShapesBucket ? shapes : schema).push(q);
 	}
 	return { schema, shapes };
@@ -193,8 +253,11 @@ export function groupSchemaQuads(schemaQuads: Quad[]): Quad[] {
  * `n3.Writer.end()`'s callback fires synchronously when writing to a string (no stream target) —
  * confirmed against the installed `n3@1.26.0` — so this can return `string` directly rather than a
  * `Promise`, unlike `quadsToTurtle`.
+ *
+ * `prefixes` mirrors `quadsToTurtle`'s parameter (STORY-048) — defaults to the static
+ * `rse`/`rse-sh`-only map when no registered-namespace list is available.
  */
-export function nestBlankNodes(quads: Quad[]): string {
+export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): string {
 	const bySubject = new Map<string, Quad[]>();
 	for (const q of quads) {
 		const key = `${q.subject.termType}|${q.subject.value}`;
@@ -210,7 +273,7 @@ export function nestBlankNodes(quads: Quad[]): string {
 		}
 	}
 
-	const writer = new Writer({ prefixes: DISPLAY_PREFIXES });
+	const writer = new Writer({ prefixes });
 	const isNestable = (blankValue: string) => (blankRefCount.get(blankValue) ?? 0) === 1;
 
 	function buildObject(term: Quad_Object): Quad_Object {
@@ -252,8 +315,10 @@ export function quadKey(q: Quad): string {
 }
 
 /** Converts one SPARQL-JSON `?s ?p ?o` result row into a quad, using the plain SPARQL 1.1 results
- *  JSON term types (`uri`/`literal`/`bnode`). */
-export function bindingToQuad(b: SparqlBinding): Quad {
+ *  JSON term types (`uri`/`literal`/`bnode`). `graph` (STORY-036) tags the quad with its originating
+ *  named graph IRI — omitted (the default), the quad carries `DefaultGraph`, preserving every
+ *  pre-existing call site's behavior (scope-selection/validation never look at the graph term). */
+export function bindingToQuad(b: SparqlBinding, graph?: string): Quad {
 	const s = b.s,
 		p = b.p,
 		o = b.o;
@@ -269,7 +334,7 @@ export function bindingToQuad(b: SparqlBinding): Quad {
 	} else {
 		object = DataFactory.namedNode(o.value);
 	}
-	return DataFactory.quad(subject, predicate, object);
+	return DataFactory.quad(subject, predicate, object, graph ? DataFactory.namedNode(graph) : undefined);
 }
 
 /** Which bucket of a scope's triples to select/save — `'all'` (default) preserves STORY-012/013's

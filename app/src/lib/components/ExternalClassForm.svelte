@@ -2,21 +2,25 @@
 	import { resolvePrefixedName, EXTERNAL_PREFIXES } from '$lib/utils/iri';
 
 	interface Props {
+		/** Merged built-in + GraphDB-registered prefixes (STORY-046); defaults to the three built-ins
+		 *  so existing callers/tests keep working unchanged. */
+		prefixes?: Record<string, string>;
+		onManageVocabularies?: () => void;
 		onSubmit: (prefixedName: string, iri: string) => void;
 		onCancel: () => void;
 	}
 
-	let { onSubmit, onCancel }: Props = $props();
+	let { prefixes = EXTERNAL_PREFIXES, onManageVocabularies, onSubmit, onCancel }: Props = $props();
 
 	let value = $state('');
 	let error = $state<string | null>(null);
 
-	const resolved = $derived(resolvePrefixedName(value));
-	const knownPrefixes = Object.keys(EXTERNAL_PREFIXES).join(', ');
+	const resolved = $derived(resolvePrefixedName(value, prefixes));
+	const knownPrefixes = $derived(Object.keys(prefixes).join(', '));
 
 	function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
-		const result = resolvePrefixedName(value);
+		const result = resolvePrefixedName(value, prefixes);
 		if (!result) {
 			error = `Enter a prefixed name using a known prefix (${knownPrefixes}), e.g. "schema:Organization"`;
 			return;
@@ -38,6 +42,9 @@
 	{/if}
 	{#if error}
 		<p class="error">{error}</p>
+	{/if}
+	{#if onManageVocabularies}
+		<button type="button" class="manage-link" onclick={onManageVocabularies}>Manage vocabularies →</button>
 	{/if}
 	<div class="actions">
 		<button type="button" class="secondary" onclick={onCancel}>Cancel</button>
@@ -78,6 +85,20 @@
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
+	}
+
+	.manage-link {
+		align-self: flex-start;
+		font-size: 0.8rem;
+		color: var(--color-accent);
+		background: transparent;
+		border: none;
+		padding: 0;
+		margin: -0.5rem 0 0;
+	}
+
+	.manage-link:hover {
+		text-decoration: underline;
 	}
 
 	.actions {

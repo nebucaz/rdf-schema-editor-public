@@ -1,15 +1,18 @@
 <script lang="ts">
 	import MemberForm from './MemberForm.svelte';
 	import type { EntityMemberVM } from './EntityNode.svelte';
+	import type { FetchedNamespace } from '$lib/services/sparql-connector';
 
 	interface Props {
 		members: EntityMemberVM[];
-		onAdd: (label: string) => Promise<void>;
+		namespaceOptions?: FetchedNamespace[];
+		initialNamespaceBaseIri?: string;
+		onAdd: (label: string, namespaceBaseIri?: string) => Promise<void>;
 		onEdit: (member: EntityMemberVM, label: string) => Promise<void>;
 		onDelete: (member: EntityMemberVM) => Promise<void>;
 	}
 
-	let { members, onAdd, onEdit, onDelete }: Props = $props();
+	let { members, namespaceOptions = [], initialNamespaceBaseIri = '', onAdd, onEdit, onDelete }: Props = $props();
 
 	/** `MemberForm` (per Decision 5) is wrapped inline here rather than opened as a second stacked
 	 *  `Modal` — exactly one of `showAddForm`/`editTarget` is truthy while the add/edit form is
@@ -20,8 +23,8 @@
 	let deleteBusy = $state(false);
 	let error = $state<string | null>(null);
 
-	async function handleAddSubmit(label: string) {
-		await onAdd(label);
+	async function handleAddSubmit(label: string, namespaceBaseIri?: string) {
+		await onAdd(label, namespaceBaseIri);
 		showAddForm = false;
 	}
 
@@ -46,10 +49,18 @@
 </script>
 
 {#if showAddForm}
-	<MemberForm submitLabel="Add" onCancel={() => (showAddForm = false)} onSubmit={handleAddSubmit} />
+	<MemberForm
+		mode="create"
+		{namespaceOptions}
+		{initialNamespaceBaseIri}
+		submitLabel="Add"
+		onCancel={() => (showAddForm = false)}
+		onSubmit={handleAddSubmit}
+	/>
 {:else if editTarget}
 	{@const target = editTarget}
 	<MemberForm
+		mode="edit"
 		initialLabel={target.label}
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
