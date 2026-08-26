@@ -5,6 +5,14 @@
 		name: string;
 		required: boolean;
 		repeatable: boolean;
+		/** 'generic' for a shared relation with no rdfs:domain/rdfs:range (STORY-051/052, defaults
+		 *  to 'specific' for attributed-link edges, which never offer the generic choice). */
+		kind: 'specific' | 'generic';
+		/** The underlying `owl:ObjectProperty` IRI (STORY-054) — kept separate from the Svelte Flow
+		 *  edge `id` because a *generic* relation's property IRI is shared across every source class
+		 *  reusing it, so it alone can't serve as a unique per-edge id (two edges reusing the same
+		 *  generic relation from different source classes would otherwise collide on `id`). */
+		propIri: string;
 		onEdit: () => void;
 		onDelete: () => void;
 	}
@@ -14,7 +22,13 @@
 
 <script lang="ts">
 	import { BaseEdge, EdgeLabel, useInternalNode, useEdges, type EdgeProps } from '@xyflow/svelte';
-	import { getFloatingEdgeParams, getParallelSmoothStepPath, computeParallelOffset } from '$lib/utils/floating-edge';
+	import {
+		getFloatingEdgeParams,
+		getParallelSmoothStepPath,
+		computeParallelOffset,
+		computeSelfLoopIndex,
+		getSelfLoopPath
+	} from '$lib/utils/floating-edge';
 
 	let { id, source, target, data: rawData }: EdgeProps<RelationEdgeType> = $props();
 
@@ -31,6 +45,10 @@
 
 	const path = $derived.by(() => {
 		if (!sourceNode.current || !targetNode.current) return ['', 0, 0] as const;
+		if (source === target) {
+			const loopIndex = computeSelfLoopIndex(edges.current, id, source);
+			return getSelfLoopPath(sourceNode.current, loopIndex);
+		}
 		const offset = computeParallelOffset(edges.current, id, source, target);
 		const { sx, sy, tx, ty, sourcePos, targetPos, labelOffsetX, labelOffsetY } = getFloatingEdgeParams(
 			sourceNode.current,
@@ -56,8 +74,8 @@
 	<div class="relation-label">
 		<span
 			class="name"
-			title={`${data.required ? 'Required (!)' : 'Optional (?)'}${data.repeatable ? ', repeatable ([]) — multiple values allowed' : ', single-valued'}`}
-		>{data.name}{data.required ? '!' : '?'}{data.repeatable ? '[]' : ''}</span>
+			title={`${data.kind === 'generic' ? 'Generic relation (shared, no rdfs:domain/rdfs:range) — ' : ''}${data.required ? 'Required (!)' : 'Optional (?)'}${data.repeatable ? ', repeatable ([]) — multiple values allowed' : ', single-valued'}`}
+		>{data.kind === 'generic' ? '⇄ ' : ''}{data.name}{data.required ? '!' : '?'}{data.repeatable ? '[]' : ''}</span>
 		<button class="icon-button" onclick={data.onEdit} aria-label={`Edit relation ${data.name}`} title="Edit">
 			<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 		</button>

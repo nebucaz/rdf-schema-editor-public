@@ -7,7 +7,7 @@
  */
 import { Parser, Writer, DataFactory, type Quad, type Quad_Object, type Term } from 'n3';
 import { nodeShapeIri, SCHEMA_NAMESPACE, SHAPES_NAMESPACE, XSD_NAMESPACE } from '$lib/utils/iri';
-import { namespaceGraphs } from '$lib/config';
+import { namespaceGraphs, DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
 import type { SparqlBinding } from './sparql-connector';
 
 export type { Quad };
@@ -42,7 +42,9 @@ export const SH = {
 /** Prefixes for the human-facing Turtle view (STORY-011) — matches `semantic-crm`'s
  *  `gcrm-shema.ttl`/`gcrm-shapes.ttl` style, including a hyphenated shapes prefix. Used as the
  *  default when no registered-namespace list is available; `buildDisplayPrefixes` (STORY-048)
- *  supersedes this with one `rse`/`rse-sh`-shaped pair per registered namespace. */
+ *  supersedes this with one `rse`/`rse-sh`/`rse-i`-shaped triple per registered namespace.
+ *  `rse-i` (STORY-062) is the plain instances base individuals mint under — without it, a
+ *  correctly-minted individual IRI has no matching prefix and falls back to a full absolute IRI. */
 const DISPLAY_PREFIXES = {
 	rdf: RDF_NS,
 	rdfs: RDFS_NS,
@@ -50,16 +52,20 @@ const DISPLAY_PREFIXES = {
 	xsd: XSD_NAMESPACE,
 	sh: SH_NS,
 	rse: SCHEMA_NAMESPACE,
-	'rse-sh': SHAPES_NAMESPACE
+	'rse-sh': SHAPES_NAMESPACE,
+	'rse-i': `${DEFAULT_NAMESPACE_BASE_IRI}#`
 };
 
 /**
  * Builds the full display-prefix map (STORY-048): standard vocabulary prefixes plus, for every
  * registered namespace, two prefixes mirroring the default namespace's own `rse`/`rse-sh` pair —
- * `<prefix>` for its schema vocabulary IRI, `<prefix>-sh` for its shapes vocabulary IRI — so the
- * raw Turtle view can show and accept e.g. `core:BusinessProcess` for any registered namespace,
- * not just the default one. The default namespace is expected to already be among `namespaces`
- * (`fetchNamespaces()` includes it), so no separate `rse`/`rse-sh` entry is added here.
+ * `<prefix>` for its schema vocabulary IRI, `<prefix>-sh` for its shapes vocabulary IRI, and
+ * `<prefix>-i` for its plain instances-base vocabulary IRI (STORY-062, individuals mint under the
+ * namespace's plain base — without this entry they'd have no matching prefix and would render as
+ * full absolute IRIs) — so the raw Turtle view can show and accept e.g. `core:BusinessProcess` for
+ * any registered namespace, not just the default one. The default namespace is expected to already
+ * be among `namespaces` (`fetchNamespaces()` includes it), so no separate `rse`/`rse-sh`/`rse-i`
+ * entry is added here.
  *
  * `externalVocabularies` (STORY-050) adds one flat prefix per entry — unlike a registered
  * namespace, an external vocabulary (e.g. `gist`, STORY-046) is only ever *referenced* (as an
@@ -87,6 +93,7 @@ export function buildDisplayPrefixes(
 		const graphs = namespaceGraphs(ns.baseIri);
 		prefixes[ns.prefix] = `${graphs.schema}#`;
 		prefixes[`${ns.prefix}-sh`] = `${graphs.shapes}#`;
+		prefixes[`${ns.prefix}-i`] = `${graphs.instances}#`;
 	}
 	return prefixes;
 }

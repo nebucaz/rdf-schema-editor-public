@@ -27,6 +27,7 @@
 	},
 	"dependencies": {
 		"@xyflow/svelte": "^1.6.3",
+		"html-to-image": "^1.11.13",
 		"mode-watcher": "^1.1.0",
 		"n3": "1.26.0"
 	}

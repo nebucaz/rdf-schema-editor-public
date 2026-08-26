@@ -9,7 +9,8 @@
 		BackgroundVariant,
 		type Edge,
 		type Connection,
-		type Node
+		type Node,
+		type OnConnectEnd
 	} from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
 	import EntityNode, {
@@ -34,7 +35,6 @@
 	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
-	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
 	import { sparqlConnector, type AssociationLink } from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
@@ -46,6 +46,7 @@
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
 	import { extractLocalName, type XsdDatatype } from '$lib/utils/iri';
+	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType;
 
@@ -64,6 +65,54 @@
 	let viewport = $state({ x: 0, y: 0, zoom: 1 });
 	let canvasWidth = $state(0);
 	let canvasHeight = $state(0);
+	let canvasWrapEl = $state<HTMLDivElement | undefined>();
+
+	/** Converts a screen/client coordinate (e.g. `MouseEvent.clientX/clientY`) into flow-space,
+	 *  for placements the user pinpoints directly (STORY-066's Option/Alt-drag-drop position) rather than
+	 *  `nextPosition()`'s viewport-centered grid slot. Mirrors `@xyflow/svelte`'s own
+	 *  `screenToFlowPosition` math (subtract the pane's screen offset and the viewport's pan, then
+	 *  undo its zoom) — reimplemented locally since `useSvelteFlow()` requires a `<SvelteFlowProvider>`
+	 *  ancestor this page doesn't have. */
+	function screenToFlowPosition(clientX: number, clientY: number) {
+		const rect = canvasWrapEl?.getBoundingClientRect();
+		return {
+			x: (clientX - (rect?.left ?? 0) - viewport.x) / viewport.zoom,
+			y: (clientY - (rect?.top ?? 0) - viewport.y) / viewport.zoom
+		};
+	}
+
+	// -- Export as SVG (STORY-067) ------------------------------------------------------------------
+
+	let exportingSvg = $state(false);
+
+	/** Browser-native download — same Blob+`<a download>` pattern as `TriplesPanel`'s `downloadTurtle`
+	 *  (STORY-067 AC: no new download mechanism). */
+	function downloadFile(filename: string, text: string, mimeType: string) {
+		const blob = new Blob([text], { type: mimeType });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	async function handleExportSvg() {
+		const viewportEl = canvasWrapEl?.querySelector<HTMLElement>('.svelte-flow__viewport');
+		if (!viewportEl) return;
+		exportingSvg = true;
+		errorMessage = null;
+		try {
+			const selectedNodeIds = new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+			const svg = await exportCanvasAsSvg(viewportEl, nodes, edges, selectedNodeIds);
+			const filename = selectedNodeIds.size > 0 ? 'schema-selection.svg' : 'schema-diagram.svg';
+			downloadFile(filename, svg, 'image/svg+xml');
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to export SVG';
+		} finally {
+			exportingSvg = false;
+		}
+	}
 
 	// -- Namespace assignment on entry forms (STORY-032) ------------------------------------------
 
@@ -74,14 +123,31 @@
 	// -- Namespace filter in the workbench (STORY-033, persisted per STORY-040) --------------------
 	// Client-side view filter only (Decision 6): toggling never re-queries GraphDB, it just flips
 	// each already-loaded node/edge's `hidden` flag based on the namespace it was tagged with by
-	// `loadSchemaFromGraphDB` below. `nodeNamespaces`/`edgeNamespaces` record that tag per id so a
-	// later toggle can recompute `hidden` without needing `buildCanvasModel`'s output again.
+	// `loadSchemaFromGraphDB` below. `nodeNamespaces` records that tag per node id so a later toggle
+	// can recompute `hidden` without needing `buildCanvasModel`'s output again.
 	// The hidden set itself is backed by `namespaceVisibilityStore` (localStorage), which also seeds
 	// the app's own built-in default namespace as hidden on first use.
+	//
+	// An edge's own `namespace` tag (STORY-061) is deliberately *not* used for edge visibility — it's
+	// write-path/graph-selection metadata (Decision 8, the source class's namespace), not a
+	// visibility signal. An edge is hidden whenever *either* endpoint's node namespace is hidden,
+	// computed via `isEndpointVisible` below against the same `nodeNamespaces` map node visibility
+	// already uses — so the two can never drift apart.
 
 	let hiddenNamespaces = $state<Set<string>>(namespaceVisibilityStore.getHidden());
 	let nodeNamespaces = new Map<string, string>();
-	let edgeNamespaces = new Map<string, string>();
+
+	/** A node id with no `nodeNamespaces` entry is an external stub (`ExternalNodeSpec` carries no
+	 *  `namespace` field) — always treated as visible, matching its existing node-visibility
+	 *  behavior (STORY-061 AC). */
+	function isEndpointVisible(nodeId: string, namespaces: Map<string, string>, hidden: Set<string>): boolean {
+		const ns = namespaces.get(nodeId);
+		return ns === undefined || !hidden.has(ns);
+	}
+
+	function isEdgeHidden(source: string, target: string, namespaces: Map<string, string>, hidden: Set<string>): boolean {
+		return !isEndpointVisible(source, namespaces, hidden) || !isEndpointVisible(target, namespaces, hidden);
+	}
 
 	function toggleNamespaceVisibility(baseIri: string) {
 		const next = new Set(hiddenNamespaces);
@@ -97,10 +163,7 @@
 			const ns = nodeNamespaces.get(n.id);
 			return ns === undefined ? n : { ...n, hidden: next.has(ns) };
 		});
-		edges = edges.map((e) => {
-			const ns = edgeNamespaces.get(e.id);
-			return ns === undefined ? e : { ...e, hidden: next.has(ns) };
-		});
+		edges = edges.map((e) => ({ ...e, hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, next) }));
 	}
 
 	// -- Raw triples view (STORY-011/012/013) ----------------------------------------------------
@@ -146,6 +209,27 @@
 	// -- Entities (STORY-004) -------------------------------------------------------------------
 
 	let showAddEntity = $state(false);
+	/** STORY-066: Option/Alt+drag a connection from an entity's handle onto empty canvas — captures the
+	 *  drag's origin node and drop position while the "Create Entity" dialog it opens is pending, so
+	 *  the entity created from it can chain straight into `pendingRelationCreate` on submit. */
+	let pendingEntityFromConnection = $state<{ sourceNodeId: string; position: { x: number; y: number } } | null>(
+		null
+	);
+	/** Plain (no-modifier) drag-release onto empty canvas: shows a small context menu offering the
+	 *  same "Add Entity" fast-path Option/Alt+drag opens, plus "Add External Class". `screenPosition`
+	 *  positions the menu itself; `flowPosition` is where the eventual new node lands. */
+	let pendingConnectionContextMenu = $state<{
+		sourceNodeId: string;
+		screenPosition: { x: number; y: number };
+		flowPosition: { x: number; y: number };
+	} | null>(null);
+	/** "Add External Class" chosen from that context menu — mirrors `pendingEntityFromConnection`,
+	 *  but the submitted node is an external stub placed at the drop position, linked back to the
+	 *  drag's origin with an inheritance edge (matching `handleConnect`'s existing rule that any
+	 *  connection landing on an external class node is always "is-a", never a plain relation). */
+	let pendingExternalClassFromConnection = $state<{ sourceNodeId: string; position: { x: number; y: number } } | null>(
+		null
+	);
 	let editEntityId = $state<string | null>(null);
 	let deleteEntityId = $state<string | null>(null);
 	let deleteEntityWarning = $state<{ externalReferences: string[]; subClassReferences: string[] } | null>(
@@ -230,6 +314,36 @@
 		};
 		nodes = [...nodes, newNode];
 		showAddEntity = false;
+	}
+
+	/** STORY-066: submit handler for the "Create Entity" dialog opened by an Option/Alt-drag-to-empty-canvas
+	 *  gesture — places the entity at the exact drop position (not `nextPosition()`'s grid slot), then
+	 *  immediately chains into the existing "Add Relation" dialog (`pendingRelationCreate`,
+	 *  `handleCreateRelationSubmit` unmodified) linking it back to the drag's origin node. Per this
+	 *  plan's ADR, cancelling that relation dialog afterwards leaves the entity on canvas unlinked —
+	 *  no rollback of the already-committed `insertClass`. */
+	async function handleCreateEntityFromConnectionSubmit(
+		name: string,
+		description: string,
+		color: string | undefined,
+		namespaceBaseIri?: string
+	) {
+		if (!pendingEntityFromConnection) return;
+		const { sourceNodeId, position } = pendingEntityFromConnection;
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
+		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
+		if (color) nodeColorStore.setColor(iri, color);
+		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
+		const newNode: EntityNodeType = {
+			id: iri,
+			type: 'entity',
+			position,
+			data: makeNodeData(iri, name, description, [], resolvedNamespaceBaseIri, color)
+		};
+		nodes = [...nodes, newNode];
+		pendingEntityFromConnection = null;
+		pendingRelationCreate = { source: sourceNodeId, target: iri, sourceHandle: null, targetHandle: null };
+		void loadGenericRelationOptions(sourceNodeId);
 	}
 
 	async function handleEditEntitySubmit(name: string, description: string, color: string | undefined) {
@@ -418,13 +532,61 @@
 	let deleteLinkEdgeId = $state<string | null>(null);
 	let deleteLinkBusy = $state(false);
 
-	function makeRelationEdgeData(edgeId: string, name: string, required: boolean, repeatable: boolean): RelationEdgeData {
+	/** Existing generic relations (STORY-051/053) in the source class's namespace, refreshed
+	 *  whenever the "Add/Edit Relation" dialog opens — feeds `RelationForm`'s "reuse an existing
+	 *  generic relation" autocomplete. */
+	let genericRelationOptions = $state<{ iri: string; label: string }[]>([]);
+
+	async function loadGenericRelationOptions(sourceClassIri: string) {
+		const namespaceBaseIri = nodeNamespaces.get(sourceClassIri) ?? activeNamespaceBaseIri();
+		try {
+			genericRelationOptions = await sparqlConnector.listGenericObjectProperties(namespaceBaseIri);
+		} catch (err) {
+			// Every call site fires this with `void` (fire-and-forget, so the dialog can open without
+			// waiting on the network round-trip) — without a catch here, a failed fetch would silently
+			// leave `genericRelationOptions` at its last value with no user-visible sign anything went
+			// wrong, indistinguishable from "this namespace genuinely has no generic relations yet".
+			genericRelationOptions = [];
+			errorMessage =
+				err instanceof Error ? `Failed to load existing generic relations: ${err.message}` : 'Failed to load existing generic relations';
+		}
+	}
+
+	/**
+	 * The Svelte Flow edge `id` for a relation edge (STORY-054). A *specific* relation's property
+	 * IRI is already unique per source class (`propertyIri()`'s owner-class-scoped scheme), but a
+	 * *generic* relation's property IRI (STORY-051/052) is shared across every source class reusing
+	 * it — so `propIri` alone can't serve as the id once two edges reuse the same generic relation
+	 * from different source classes (drawing a second one, or reloading from GraphDB, would produce
+	 * two edges with the same id). A generic relation can also fan out to *several* targets from the
+	 * *same* source class (merged into one `sh:or`-constrained `sh:property` entry rather than
+	 * rejected as a duplicate — see `sparql-connector.ts`'s `rewriteGenericPropertyShapeTargets`),
+	 * so `sourceClassIri` alone isn't enough either once two edges share both `propIri` and source.
+	 * Composing with `targetClassIri` too keeps it unique in every case; a space is a safe separator
+	 * since `assertSafeSparqlIri` rejects whitespace in any IRI.
+	 */
+	function relationEdgeId(propIri: string, sourceClassIri: string, targetClassIri: string): string {
+		return `${propIri} ${sourceClassIri} ${targetClassIri}`;
+	}
+
+	function makeRelationEdgeData(
+		edgeId: string,
+		propIri: string,
+		sourceClassIri: string,
+		name: string,
+		required: boolean,
+		repeatable: boolean,
+		kind: 'specific' | 'generic' = 'specific'
+	): RelationEdgeData {
 		return {
 			name,
 			required,
 			repeatable,
+			kind,
+			propIri,
 			onEdit: () => {
 				editRelationEdgeId = edgeId;
+				void loadGenericRelationOptions(sourceClassIri);
 			},
 			onDelete: () => {
 				deleteRelationEdgeId = edgeId;
@@ -449,10 +611,88 @@
 		}
 	}
 
+	/** STORY-066: Option/Alt+drag a connection from an entity's handle onto empty canvas space to
+	 *  create a new entity there and chain straight into relation creation. `toNode === null` is
+	 *  Svelte Flow's own signal for "dropped on the pane, not on a handle" — no heuristic needed —
+	 *  and this is mouse-only (`event instanceof MouseEvent`) since touch drags carry no modifier
+	 *  keys. `altKey` (not `ctrlKey`) so the gesture doesn't collide with macOS's Ctrl+click ->
+	 *  context-menu behavior. A plain (no-modifier) drop on empty canvas opens a small context menu
+	 *  instead (`pendingConnectionContextMenu`) offering the same "Add Entity" fast-path plus "Add
+	 *  External Class" — Option/Alt+drag remains a shortcut straight to the former. Dropping onto an
+	 *  existing node falls through untouched, leaving `handleConnect`'s modal-choice flow as-is. */
+	const handleConnectEnd: OnConnectEnd = (event, connectionState) => {
+		if (connectionState.toNode !== null) return;
+		if (!connectionState.fromNode) return;
+		if (!(event instanceof MouseEvent)) return;
+		const sourceNodeId = connectionState.fromNode.id;
+		const flowPosition = screenToFlowPosition(event.clientX, event.clientY);
+		if (event.altKey) {
+			pendingEntityFromConnection = { sourceNodeId, position: flowPosition };
+			return;
+		}
+		pendingConnectionContextMenu = {
+			sourceNodeId,
+			screenPosition: { x: event.clientX, y: event.clientY },
+			flowPosition
+		};
+	};
+
+	/** "Add Entity" chosen from the plain-drop context menu — same destination state as the
+	 *  Option/Alt+drag fast-path, so `EntityForm`'s existing chained-into-`RelationForm` submit
+	 *  handler (`handleCreateEntityFromConnectionSubmit`) needs no changes. */
+	function chooseAddEntityFromContextMenu() {
+		if (!pendingConnectionContextMenu) return;
+		pendingEntityFromConnection = {
+			sourceNodeId: pendingConnectionContextMenu.sourceNodeId,
+			position: pendingConnectionContextMenu.flowPosition
+		};
+		pendingConnectionContextMenu = null;
+	}
+
+	/** "Add External Class" chosen from the plain-drop context menu. */
+	function chooseAddExternalClassFromContextMenu() {
+		if (!pendingConnectionContextMenu) return;
+		pendingExternalClassFromConnection = {
+			sourceNodeId: pendingConnectionContextMenu.sourceNodeId,
+			position: pendingConnectionContextMenu.flowPosition
+		};
+		pendingConnectionContextMenu = null;
+	}
+
+	/** Submit handler for `pendingExternalClassFromConnection`'s `ExternalClassForm`: places the
+	 *  external stub at the drag's drop position (mirroring `handleCreateEntityFromConnectionSubmit`,
+	 *  unlike the stand-alone "+ Add External Class" flow's `nextPosition()`), then immediately links
+	 *  it back to the drag's origin with an inheritance edge — no relation-kind dialog, matching
+	 *  `handleConnect`'s existing rule that any connection landing on an external class is "is-a". */
+	function handleAddExternalClassFromConnectionSubmit(prefixedName: string, iri: string) {
+		if (!pendingExternalClassFromConnection) return;
+		const { sourceNodeId, position } = pendingExternalClassFromConnection;
+		if (nodes.some((n) => n.id === iri)) {
+			errorMessage = `${prefixedName} is already on the canvas`;
+			pendingExternalClassFromConnection = null;
+			return;
+		}
+		const newNode: ExternalClassNodeType = {
+			id: iri,
+			type: 'external',
+			position,
+			data: {
+				prefixedName,
+				onRemove: () => {
+					void handleRemoveExternalStub(iri);
+				}
+			} satisfies ExternalClassNodeData
+		};
+		nodes = [...nodes, newNode];
+		pendingExternalClassFromConnection = null;
+		void createInheritanceEdge(sourceNodeId, iri);
+	}
+
 	function chooseRelation() {
-		if (!pendingConnectionChoice) return;
+		if (!pendingConnectionChoice?.source) return;
 		pendingRelationCreate = pendingConnectionChoice;
 		pendingConnectionChoice = null;
+		void loadGenericRelationOptions(pendingRelationCreate.source);
 	}
 
 	function chooseAttributedLink() {
@@ -497,31 +737,59 @@
 		}
 	}
 
-	async function handleCreateRelationSubmit(name: string, targetIri: string, required: boolean, repeatable: boolean) {
+	async function handleCreateRelationSubmit(
+		name: string,
+		targetIri: string,
+		required: boolean,
+		repeatable: boolean,
+		kind: 'specific' | 'generic'
+	) {
 		if (!pendingRelationCreate?.source || !pendingRelationCreate?.target) return;
 		const { source, target } = pendingRelationCreate;
-		const { iri } = await sparqlConnector.insertObjectProperty(source, target, name, required, repeatable);
+		const { iri } = await sparqlConnector.insertObjectProperty(source, target, name, required, repeatable, {
+			kind
+		});
+		const edgeId = relationEdgeId(iri, source, target);
 		edges = [
 			...edges,
-			{ id: iri, source, target, type: 'relation', data: makeRelationEdgeData(iri, name, required, repeatable) }
+			{
+				id: edgeId,
+				source,
+				target,
+				type: 'relation',
+				data: makeRelationEdgeData(edgeId, iri, source, name, required, repeatable, kind)
+			}
 		];
 		pendingRelationCreate = null;
 	}
 
-	async function handleEditRelationSubmit(name: string, targetIri: string, required: boolean, repeatable: boolean) {
+	async function handleEditRelationSubmit(
+		name: string,
+		targetIri: string,
+		required: boolean,
+		repeatable: boolean,
+		kind: 'specific' | 'generic'
+	) {
 		if (!editRelationEdgeId) return;
-		const edge = findEdge(editRelationEdgeId);
+		const edge = findEdge(editRelationEdgeId) as (Edge & { data: RelationEdgeData }) | undefined;
 		if (!edge) return;
-		const propIri = edge.id;
-		await sparqlConnector.updateObjectProperty(edge.source, propIri, {
-			name,
-			targetClassIri: targetIri,
-			required,
-			repeatable
-		});
+		const propIri = edge.data.propIri;
+		const oldTargetClassIri = edge.target;
+		await sparqlConnector.updateObjectProperty(
+			edge.source,
+			propIri,
+			{ name, targetClassIri: targetIri, required, repeatable },
+			{ kind, oldTargetClassIri }
+		);
+		const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
 		edges = edges.map((e) =>
 			e.id === editRelationEdgeId
-				? { ...e, target: targetIri, data: makeRelationEdgeData(propIri, name, required, repeatable) }
+				? {
+						...e,
+						id: newEdgeId,
+						target: targetIri,
+						data: makeRelationEdgeData(newEdgeId, propIri, edge.source, name, required, repeatable, kind)
+					}
 				: e
 		);
 		editRelationEdgeId = null;
@@ -529,12 +797,12 @@
 
 	async function handleDeleteRelationConfirm() {
 		if (!deleteRelationEdgeId) return;
-		const edge = findEdge(deleteRelationEdgeId);
+		const edge = findEdge(deleteRelationEdgeId) as (Edge & { data: RelationEdgeData }) | undefined;
 		if (!edge) return;
 		deleteRelationBusy = true;
 		errorMessage = null;
 		try {
-			await sparqlConnector.deleteObjectProperty(edge.id, edge.source);
+			await sparqlConnector.deleteObjectProperty(edge.data.propIri, edge.source, edge.target);
 			edges = edges.filter((e) => e.id !== deleteRelationEdgeId);
 			deleteRelationEdgeId = null;
 		} catch (err) {
@@ -846,7 +1114,6 @@
 			);
 
 			const newNodeNamespaces = new Map<string, string>();
-			const newEdgeNamespaces = new Map<string, string>();
 
 			const newNodes: CanvasNode[] = model.nodes.map((spec) => {
 				const position = positions.get(spec.iri)!;
@@ -883,35 +1150,41 @@
 
 			const newEdges: Edge[] = model.edges.map((spec) => {
 				if (spec.kind === 'relation') {
-					newEdgeNamespaces.set(spec.iri, spec.namespace);
+					const edgeId = relationEdgeId(spec.iri, spec.source, spec.target);
 					return {
-						id: spec.iri,
+						id: edgeId,
 						source: spec.source,
 						target: spec.target,
 						type: 'relation',
-						hidden: hiddenNamespaces.has(spec.namespace),
-						data: makeRelationEdgeData(spec.iri, spec.name, spec.required, spec.repeatable)
+						hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
+						data: makeRelationEdgeData(
+							edgeId,
+							spec.iri,
+							spec.source,
+							spec.name,
+							spec.required,
+							spec.repeatable,
+							spec.relationKind
+						)
 					};
 				}
 				if (spec.kind === 'attributedLink') {
-					newEdgeNamespaces.set(spec.iri, spec.namespace);
 					return {
 						id: spec.iri,
 						source: spec.source,
 						target: spec.target,
 						type: 'attributedLink',
-						hidden: hiddenNamespaces.has(spec.namespace),
+						hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
 						data: makeAttributedLinkEdgeData(spec.iri, spec.propName, spec.required, spec.repeatable)
 					};
 				}
 				const edgeId = `subclassof-${spec.source}-${spec.target}`;
-				newEdgeNamespaces.set(edgeId, spec.namespace);
 				return {
 					id: edgeId,
 					source: spec.source,
 					target: spec.target,
 					type: 'inheritance',
-					hidden: hiddenNamespaces.has(spec.namespace),
+					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
 					data: {
 						onDelete: () => {
 							deleteInheritanceEdgeId = edgeId;
@@ -921,7 +1194,6 @@
 			});
 
 			nodeNamespaces = newNodeNamespaces;
-			edgeNamespaces = newEdgeNamespaces;
 			nodes = newNodes;
 			edges = newEdges;
 		} catch (err) {
@@ -961,6 +1233,12 @@
 	$effect(() => {
 		workbenchActions.triplesOpen = showTriplesPanel;
 	});
+	$effect(() => {
+		workbenchActions.exportingSvg = exportingSvg;
+	});
+	$effect(() => {
+		workbenchActions.hiddenNamespaces = hiddenNamespaces;
+	});
 
 	onMount(() => {
 		workbenchActions.registerReload(() => void loadSchemaFromGraphDB());
@@ -970,6 +1248,8 @@
 			}
 			showTriplesPanel = !showTriplesPanel;
 		});
+		workbenchActions.registerExportSvg(() => void handleExportSvg());
+		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
 		void loadSchemaFromGraphDB();
 	});
 </script>
@@ -1019,12 +1299,11 @@
 		<button class="add-entity secondary-action" onclick={() => (showAddExternalClass = true)}>
 			+ Add External Class
 		</button>
-		<NamespaceFilter namespaces={namespaceStore.namespaces} {hiddenNamespaces} onToggle={toggleNamespaceVisibility} />
 		{#if errorMessage}
 			<span class="error-banner">{errorMessage}</span>
 		{/if}
 	</div>
-	<div class="canvas-wrap" bind:clientWidth={canvasWidth} bind:clientHeight={canvasHeight}>
+	<div class="canvas-wrap" bind:this={canvasWrapEl} bind:clientWidth={canvasWidth} bind:clientHeight={canvasHeight}>
 		<SvelteFlow
 			bind:nodes
 			bind:edges
@@ -1033,6 +1312,7 @@
 			{edgeTypes}
 			deleteKey={null}
 			onconnect={handleConnect}
+			onconnectend={handleConnectEnd}
 			onnodedragstop={handleNodeDragStop}
 			fitView
 			colorMode={mode.current}
@@ -1053,6 +1333,32 @@
 	{/if}
 </div>
 
+{#if pendingConnectionContextMenu}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div
+		class="connection-context-menu-backdrop"
+		onclick={() => (pendingConnectionContextMenu = null)}
+		role="presentation"
+		tabindex="-1"
+	></div>
+	<div
+		class="connection-context-menu"
+		role="menu"
+		style="left: {pendingConnectionContextMenu.screenPosition.x}px; top: {pendingConnectionContextMenu.screenPosition.y}px;"
+	>
+		<button type="button" class="menu-item" onclick={chooseAddEntityFromContextMenu}>+ Add Entity</button>
+		<button type="button" class="menu-item" onclick={chooseAddExternalClassFromContextMenu}>
+			+ Add External Class
+		</button>
+	</div>
+{/if}
+
+<svelte:window
+	onkeydown={(event) => {
+		if (event.key === 'Escape' && pendingConnectionContextMenu) pendingConnectionContextMenu = null;
+	}}
+/>
+
 <Modal isOpen={showAddEntity} title="Add Entity" onClose={() => (showAddEntity = false)}>
 	<EntityForm
 		mode="create"
@@ -1061,6 +1367,34 @@
 		submitLabel="Create"
 		onCancel={() => (showAddEntity = false)}
 		onSubmit={handleCreateEntity}
+	/>
+</Modal>
+
+<Modal
+	isOpen={pendingEntityFromConnection !== null}
+	title="Create Entity"
+	onClose={() => (pendingEntityFromConnection = null)}
+>
+	<EntityForm
+		mode="create"
+		namespaceOptions={namespaceStore.namespaces}
+		initialNamespaceBaseIri={activeNamespaceBaseIri()}
+		submitLabel="Create"
+		onCancel={() => (pendingEntityFromConnection = null)}
+		onSubmit={handleCreateEntityFromConnectionSubmit}
+	/>
+</Modal>
+
+<Modal
+	isOpen={pendingExternalClassFromConnection !== null}
+	title="Add External Class"
+	onClose={() => (pendingExternalClassFromConnection = null)}
+>
+	<ExternalClassForm
+		prefixes={externalVocabStore.asPrefixMap()}
+		onManageVocabularies={() => workbenchActions.openExternalVocabManagement()}
+		onCancel={() => (pendingExternalClassFromConnection = null)}
+		onSubmit={handleAddExternalClassFromConnectionSubmit}
 	/>
 </Modal>
 
@@ -1211,6 +1545,8 @@
 			targetOptions={entityOptions}
 			allowRetarget={false}
 			submitLabel="Create"
+			allowGeneric={true}
+			{genericRelationOptions}
 			onCancel={() => (pendingRelationCreate = null)}
 			onSubmit={handleCreateRelationSubmit}
 		/>
@@ -1227,6 +1563,9 @@
 			targetOptions={entityOptions}
 			allowRetarget={true}
 			submitLabel="Save"
+			allowGeneric={true}
+			{genericRelationOptions}
+			initialKind={editingRelationEdge.data.kind}
 			onCancel={() => (editRelationEdgeId = null)}
 			onSubmit={handleEditRelationSubmit}
 		/>
@@ -1439,6 +1778,45 @@
 		padding: 0.5rem 1rem;
 		border-radius: 6px;
 		font-size: 0.9rem;
+	}
+
+	.connection-context-menu-backdrop {
+		position: fixed;
+		top: 0;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		background: transparent;
+		z-index: 1000;
+	}
+
+	.connection-context-menu {
+		position: fixed;
+		min-width: 180px;
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+		padding: 0.5rem;
+		z-index: 1001;
+	}
+
+	.connection-context-menu .menu-item {
+		display: block;
+		width: 100%;
+		text-align: left;
+		padding: 0.5rem 0.75rem;
+		border-radius: 6px;
+		background: transparent;
+		border: none;
+		color: var(--color-text);
+		font-size: 0.875rem;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+
+	.connection-context-menu .menu-item:hover {
+		background: var(--color-hover);
 	}
 
 	.primary {

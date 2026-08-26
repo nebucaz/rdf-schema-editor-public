@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { buildCanvasModel } from './canvas-model';
-import type { FetchedSchema, FetchedClass, FetchedProperty, FetchedSubClassOf, FetchedIndividual } from './sparql-connector';
+import type { FetchedSchema, FetchedClass, FetchedProperty, FetchedObjectProperty, FetchedSubClassOf, FetchedIndividual } from './sparql-connector';
 import { classIri, propertyIri, xsdIri, ATTRIBUTED_RELATIONSHIP_IRI, type XsdDatatype } from '$lib/utils/iri';
 
 const NS = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
@@ -11,7 +11,12 @@ function fetchedClass(iri: string, label: string, comment: string | null = null,
 	return { iri, label, comment, namespaceBaseIri };
 }
 
-function objectProp(domain: string, range: string, name: string, overrides: Partial<FetchedProperty> = {}): FetchedProperty {
+function objectProp(
+	domain: string,
+	range: string,
+	name: string,
+	overrides: Partial<FetchedObjectProperty> = {}
+): FetchedObjectProperty {
 	return {
 		iri: propertyIri(domain, name),
 		label: name,
@@ -20,6 +25,7 @@ function objectProp(domain: string, range: string, name: string, overrides: Part
 		required: false,
 		repeatable: true,
 		namespaceBaseIri: NS,
+		relationKind: 'specific',
 		...overrides
 	};
 }
@@ -94,9 +100,88 @@ describe('buildCanvasModel', () => {
 				name: 'owns',
 				required: false,
 				repeatable: true,
+				relationKind: 'specific',
 				namespace: NS
 			}
 		]);
+	});
+
+	it('renders a relation edge for a generic relation reconstructed from the shapes graph (STORY-054), tagged relationKind: generic', () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const usesIri = `${NS}uses`;
+		const schema = emptySchema({
+			classes: [fetchedClass(project, 'Project'), fetchedClass(tool, 'Tool')],
+			objectProperties: [
+				{
+					iri: usesIri,
+					label: 'uses',
+					domain: project,
+					range: tool,
+					required: false,
+					repeatable: true,
+					namespaceBaseIri: NS,
+					relationKind: 'generic'
+				}
+			]
+		});
+		const model = buildCanvasModel(schema);
+		expect(model.edges).toEqual([
+			{
+				kind: 'relation',
+				iri: usesIri,
+				source: project,
+				target: tool,
+				name: 'uses',
+				required: false,
+				repeatable: true,
+				relationKind: 'generic',
+				namespace: NS
+			}
+		]);
+	});
+
+	it('renders two edges for the same generic relation reused from two different source classes, without merging or confusing them', () => {
+		const project = classIri('Project');
+		const recipe = classIri('Recipe');
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const usesIri = `${NS}uses`;
+		const schema = emptySchema({
+			classes: [
+				fetchedClass(project, 'Project'),
+				fetchedClass(recipe, 'Recipe'),
+				fetchedClass(tool, 'Tool'),
+				fetchedClass(ingredient, 'Ingredient')
+			],
+			objectProperties: [
+				{
+					iri: usesIri,
+					label: 'uses',
+					domain: project,
+					range: tool,
+					required: false,
+					repeatable: true,
+					namespaceBaseIri: NS,
+					relationKind: 'generic'
+				},
+				{
+					iri: usesIri,
+					label: 'uses',
+					domain: recipe,
+					range: ingredient,
+					required: false,
+					repeatable: true,
+					namespaceBaseIri: NS,
+					relationKind: 'generic'
+				}
+			]
+		});
+		const model = buildCanvasModel(schema);
+		const relationEdges = model.edges.filter((e) => e.kind === 'relation');
+		expect(relationEdges).toHaveLength(2);
+		expect(relationEdges).toContainEqual(expect.objectContaining({ source: project, target: tool }));
+		expect(relationEdges).toContainEqual(expect.objectContaining({ source: recipe, target: ingredient }));
 	});
 
 	it('renders attributedLink edges (not relation edges) for a class carrying the AttributedRelationship marker (STORY-020)', () => {

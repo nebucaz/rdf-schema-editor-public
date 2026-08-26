@@ -143,6 +143,34 @@
 		box-shadow: 0 0 0 2px var(--color-accent);
 	}
 
+	/* STORY-065: square, hollow connection handles (default is a small filled circle). This is
+		CSS-only — `floating-edge.ts`'s boundary-intersection math never reads handle DOM/CSS, only
+		each node's bounding box, so edge anchor points are unaffected. The source and target handle
+		stacked on each side (see the template comment above) are left at their default identical
+		position — deliberately rendering as one square per side, not two — since a connection can
+		still be dragged from or dropped on either one at that spot. */
+	:global(.entity-node .svelte-flow__handle) {
+		width: 9px;
+		height: 9px;
+		min-width: 9px;
+		min-height: 9px;
+		background: transparent;
+		border: 1px solid var(--color-text-muted, #888);
+		border-radius: 2px;
+		opacity: 0;
+		transition: opacity 0.1s ease;
+	}
+
+	/* Hidden until the node is hovered, so the handle outline doesn't clutter every entity on a busy
+		canvas. Also shown while a connection is actively being dragged from/to this handle
+		(`.connectingfrom`/`.connectingto`, classes @xyflow/svelte already applies) — otherwise the
+		origin handle would vanish mid-drag the moment the pointer leaves the node. */
+	:global(.entity-node:hover .svelte-flow__handle),
+	:global(.entity-node .svelte-flow__handle.connectingfrom),
+	:global(.entity-node .svelte-flow__handle.connectingto) {
+		opacity: 1;
+	}
+
 	.header {
 		display: flex;
 		align-items: center;

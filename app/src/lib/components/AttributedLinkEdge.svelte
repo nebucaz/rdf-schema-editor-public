@@ -14,7 +14,13 @@
 
 <script lang="ts">
 	import { BaseEdge, EdgeLabel, useInternalNode, useEdges, type EdgeProps } from '@xyflow/svelte';
-	import { getFloatingEdgeParams, getParallelSmoothStepPath, computeParallelOffset } from '$lib/utils/floating-edge';
+	import {
+		getFloatingEdgeParams,
+		getParallelSmoothStepPath,
+		computeParallelOffset,
+		computeSelfLoopIndex,
+		getSelfLoopPath
+	} from '$lib/utils/floating-edge';
 
 	let { id, source, target, markerEnd, data: rawData }: EdgeProps<AttributedLinkEdgeType> = $props();
 
@@ -30,6 +36,10 @@
 
 	const path = $derived.by(() => {
 		if (!sourceNode.current || !targetNode.current) return ['', 0, 0] as const;
+		if (source === target) {
+			const loopIndex = computeSelfLoopIndex(edges.current, id, source);
+			return getSelfLoopPath(sourceNode.current, loopIndex);
+		}
 		const offset = computeParallelOffset(edges.current, id, source, target);
 		const { sx, sy, tx, ty, sourcePos, targetPos, labelOffsetX, labelOffsetY } = getFloatingEdgeParams(
 			sourceNode.current,

@@ -52,7 +52,7 @@ describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 });
 
 describe('buildDisplayPrefixes (STORY-048)', () => {
-	it('adds a schema/shapes prefix pair per registered namespace, keyed by its own prefix', () => {
+	it('adds a schema/shapes/instances prefix triple per registered namespace, keyed by its own prefix', () => {
 		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
 		const coreGraphs = namespaceGraphs(coreBase);
 
@@ -60,6 +60,26 @@ describe('buildDisplayPrefixes (STORY-048)', () => {
 
 		expect(prefixes.core).toBe(`${coreGraphs.schema}#`);
 		expect(prefixes['core-sh']).toBe(`${coreGraphs.shapes}#`);
+		expect(prefixes['core-i']).toBe(`${coreGraphs.instances}#`);
+	});
+
+	it('round-trips an individual IRI (plain instances base, STORY-062) through its own -i prefix', async () => {
+		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
+		const coreGraphs = namespaceGraphs(coreBase);
+		const individualIri = `${coreGraphs.instances}#SomeIndividual`;
+		const quads = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			<${individualIri}> a owl:Class .
+		`);
+
+		const prefixes = buildDisplayPrefixes([{ prefix: 'core', baseIri: coreBase }]);
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).toContain('core-i:SomeIndividual');
+		expect(turtle).not.toContain(individualIri);
+
+		const reparsed = parseTurtle(turtle);
+		expect(new Set(reparsed.map(quadKey))).toEqual(new Set(quads.map(quadKey)));
 	});
 
 	it('always includes the standard vocabulary prefixes, even with no registered namespaces', () => {

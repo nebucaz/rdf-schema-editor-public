@@ -51,6 +51,11 @@ export interface RelationEdgeSpec {
 	name: string;
 	required: boolean;
 	repeatable: boolean;
+	/** 'generic' for a shared relation with no `rdfs:domain`/`rdfs:range` (STORY-051/052/054),
+	 *  reconstructed from the shapes graph rather than `rdfs:domain`/`rdfs:range` directly — needed
+	 *  so an edge reloaded from GraphDB still edits/deletes through the correct (reference-counted)
+	 *  path instead of defaulting back to 'specific' and corrupting the shared property. */
+	relationKind: 'specific' | 'generic';
 	/** See `EntityNodeSpec.namespace` (STORY-033) — the source class's own namespace, since a
 	 *  relationship's `owl:ObjectProperty` triple lives in its source class's `/schema` graph
 	 *  (Decision 8), even when it crosses into another namespace's class as its range. */
@@ -173,6 +178,7 @@ export function buildCanvasModel(
 				name: op.label,
 				required: op.required,
 				repeatable: op.repeatable,
+				relationKind: op.relationKind,
 				namespace: op.namespaceBaseIri
 			});
 		}

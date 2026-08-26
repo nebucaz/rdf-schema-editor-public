@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
 	classIri,
 	propertyIri,
+	genericPropertyIri,
 	individualIri,
 	nodeShapeIri,
 	extractLocalName,
@@ -14,6 +15,7 @@ import {
 	SCHEMA_NAMESPACE,
 	SHAPES_NAMESPACE
 } from './iri';
+import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
 
 describe('pascalCase / camelCase', () => {
 	it('converts a multi-word name to PascalCase', () => {
@@ -76,6 +78,28 @@ describe('propertyIri', () => {
 	});
 });
 
+describe('genericPropertyIri (STORY-051)', () => {
+	it('mints an owner-class-independent IRI under the default schema namespace', () => {
+		expect(genericPropertyIri('uses')).toBe(`${SCHEMA_NAMESPACE}uses`);
+	});
+
+	it('resolves to the same IRI regardless of which source class draws the relation', () => {
+		// unlike propertyIri, genericPropertyIri takes no owner class at all
+		expect(genericPropertyIri('uses')).toBe(genericPropertyIri('uses'));
+	});
+
+	it('mints under an explicitly passed namespace base IRI, with no cross-namespace bleed', () => {
+		const govIri = genericPropertyIri('uses', 'http://example.org/gov/schema');
+		const coreIri = genericPropertyIri('uses', 'http://example.org/core/schema');
+		expect(govIri).toBe('http://example.org/gov/schema#uses');
+		expect(govIri).not.toBe(coreIri);
+	});
+
+	it('camelCases a multi-word name the same way propertyIri does', () => {
+		expect(genericPropertyIri('depends on')).toBe(`${SCHEMA_NAMESPACE}dependsOn`);
+	});
+});
+
 describe('nodeShapeIri', () => {
 	it('derives a deterministic shape IRI under the default shapes namespace when no namespace is passed', () => {
 		expect(nodeShapeIri(classIri('Person'))).toBe(`${SHAPES_NAMESPACE}PersonShape`);
@@ -92,8 +116,13 @@ describe('individualIri (STORY-019)', () => {
 	it('scopes the member local name by its owning class, avoiding cross-class collisions', () => {
 		const relationType = classIri('RelationType');
 		const externalSystem = classIri('ExternalSystem');
-		expect(individualIri(relationType, 'nutzt')).toBe(`${SCHEMA_NAMESPACE}relationTypeNutzt`);
+		expect(individualIri(relationType, 'nutzt')).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#relationTypeNutzt`);
 		expect(individualIri(externalSystem, 'nutzt')).not.toBe(individualIri(relationType, 'nutzt'));
+	});
+
+	it('mints under the namespace plain base, not the schema base (STORY-062)', () => {
+		const relationType = classIri('RelationType');
+		expect(individualIri(relationType, 'nutzt')).not.toBe(`${SCHEMA_NAMESPACE}relationTypeNutzt`);
 	});
 
 	it('is stable for the same class + label', () => {

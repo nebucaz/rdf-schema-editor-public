@@ -101,6 +101,20 @@ export function propertyIri(
 }
 
 /**
+ * Derive a *generic* (shared) relation's IRI (STORY-051, `spec/modelling-restrictions/plan.md`) —
+ * unlike `propertyIri`, deliberately **not** scoped by an owning class: a generic relation is meant
+ * to resolve to the same IRI regardless of which source class draws it, so it can be reused across
+ * any number of unrelated class pairs without owner-class-scoped collisions. Mints under the given
+ * namespace base IRI (defaulting to the default namespace's `/schema` base).
+ */
+export function genericPropertyIri(
+	propName: string,
+	namespaceBaseIri: string = DEFAULT_SCHEMA_NAMESPACE_BASE
+): string {
+	return `${namespaceBaseIri}#${camelCase(propName)}`;
+}
+
+/**
  * Deterministic `sh:NodeShape` IRI for a class — no lookup needed, just derived from the class
  * IRI — minted under the given namespace base IRI (defaulting to the default namespace's `/shapes`
  * base).
@@ -117,13 +131,15 @@ export function nodeShapeIri(
  * label — e.g. `core:RelationType`'s `nutzt`/`verbucht` members (STORY-019). Scoped by owning
  * class the same way `propertyIri` is, so two different classes can each have a member with the
  * same label without an IRI clash. Derived once at creation time; stable across renames (renaming
- * only updates `rdfs:label`, mirroring `classIri`/`propertyIri`). Mints under the given namespace
- * base IRI (defaulting to the default namespace's `/schema` base).
+ * only updates `rdfs:label`, mirroring `classIri`/`propertyIri`). Unlike `classIri`/`propertyIri`/
+ * `nodeShapeIri` (TBox resources, minted under the schema/shapes base), an individual is an ABox
+ * resource and mints under the given namespace's plain instances base (STORY-062) — defaulting to
+ * `DEFAULT_NAMESPACE_BASE_IRI`, not the schema base.
  */
 export function individualIri(
 	ownerClassIri: string,
 	label: string,
-	namespaceBaseIri: string = DEFAULT_SCHEMA_NAMESPACE_BASE
+	namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
 ): string {
 	const ownerLocal = extractLocalName(ownerClassIri);
 	const local = camelCase(ownerLocal) + capitalize(camelCase(label));

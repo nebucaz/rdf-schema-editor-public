@@ -3,6 +3,7 @@ import { SparqlConnector, type SparqlBinding } from './sparql-connector';
 import {
 	classIri,
 	propertyIri,
+	genericPropertyIri,
 	individualIri,
 	nodeShapeIri,
 	SCHEMA_NAMESPACE,
@@ -442,6 +443,287 @@ describe('SparqlConnector — relation edges (STORY-006)', () => {
 		expect(updates[0]).toContain(
 			`DELETE WHERE { ${inGraph(`<${propIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
 		);
+	});
+});
+
+describe('SparqlConnector — generic relations (STORY-052)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** Dedicated fixture-driven mock for the generic-relation flow: `findNamespaceOfClass`'s
+	 *  `GRAPH ?g` lookup, `findGenericObjectProperty`'s `FILTER NOT EXISTS { ?p rdfs:domain ?d }`
+	 *  lookup, the "already used from this source class" `sh:property [ sh:path ... ]` ASK,
+	 *  `ensureNodeShape`'s `sh:NodeShape` ASK, and `propertyExists`'s `owl:DatatypeProperty`/
+	 *  `owl:ObjectProperty` ASK. Kept separate from `mockGraphFetch` above: that helper's
+	 *  `q.includes('rdfs:domain')` branch (for `findOwnProperties`) would otherwise misroute
+	 *  `findGenericObjectProperty`'s query, which also contains the substring `rdfs:domain` as part
+	 *  of its `FILTER NOT EXISTS` clause. */
+	function mockGenericFetch(
+		fixture: {
+			existingGenericIri?: string;
+			/** Current target class(es) already on this source class's property shape for the
+			 *  existing generic relation, if any — answers `fetchGenericPropertyShapeDetails`'s query.
+			 *  Empty/omitted means this source class doesn't use the relation yet. */
+			currentTargets?: string[];
+			currentName?: string;
+			currentMinCount?: number;
+			currentMaxCount?: number;
+			propertyExists?: boolean;
+			shapeExists?: boolean;
+			classGraph?: Record<string, string>;
+		} = {}
+	) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				const match = q.match(/GRAPH \?g \{ <([^>]+)> a owl:Class \}/);
+				const classIriValue = match?.[1];
+				const graph = (classIriValue && fixture.classGraph?.[classIriValue]) ?? DEFAULT_GRAPHS.schema;
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: graph } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('FILTER NOT EXISTS')) {
+				const bindings = fixture.existingGenericIri
+					? [{ p: { type: 'uri', value: fixture.existingGenericIri } }]
+					: [];
+				return new Response(JSON.stringify({ head: { vars: ['p'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			if (q.includes('SELECT ?class ?name ?minCount ?maxCount')) {
+				const targets = fixture.currentTargets ?? [];
+				const bindings = targets.map((t) => ({
+					class: { type: 'uri', value: t },
+					...(fixture.currentName ? { name: { type: 'literal', value: fixture.currentName } } : {}),
+					...(fixture.currentMinCount !== undefined
+						? { minCount: { type: 'literal', value: String(fixture.currentMinCount) } }
+						: {}),
+					...(fixture.currentMaxCount !== undefined
+						? { maxCount: { type: 'literal', value: String(fixture.currentMaxCount) } }
+						: {})
+				}));
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			}
+			if (q.includes('ASK') && q.includes('sh:NodeShape')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.shapeExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('ASK') && q.includes('owl:DatatypeProperty')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.propertyExists ?? false }), {
+					status: 200
+				});
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('findGenericObjectProperty returns the matching property IRI when one exists', async () => {
+		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const { fn } = mockGenericFetch({ existingGenericIri: existingIri });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.findGenericObjectProperty('uses')).resolves.toBe(existingIri);
+	});
+
+	it('findGenericObjectProperty returns undefined when no generic property matches the label (e.g. only a specific relation shares it)', async () => {
+		const { fn } = mockGenericFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.findGenericObjectProperty('owns')).resolves.toBeUndefined();
+	});
+
+	it('creates a new generic relation with no rdfs:domain/rdfs:range', async () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const { fn, updates } = mockGenericFetch({ shapeExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(person, car, 'uses', false, true, {
+			kind: 'generic'
+		});
+
+		const expectedIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		expect(result.iri).toBe(expectedIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${expectedIri}> a owl:ObjectProperty`);
+		expect(updates[0]).not.toContain('rdfs:domain');
+		expect(updates[0]).not.toContain('rdfs:range');
+		expect(updates[0]).toContain(`sh:class <${car}>`);
+	});
+
+	it('reuses an existing generic relation from a different source class, adding only a new sh:property entry', async () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const { fn, updates } = mockGenericFetch({
+			existingGenericIri: existingIri,
+			currentTargets: [],
+			shapeExists: true
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(project, tool, 'uses', false, true, {
+			kind: 'generic'
+		});
+
+		expect(result.iri).toBe(existingIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain('owl:ObjectProperty');
+		expect(updates[0]).not.toContain('rdfs:label');
+		expect(updates[0]).toContain(`sh:path <${existingIri}>`);
+		expect(updates[0]).toContain(`sh:class <${tool}>`);
+	});
+
+	it('rejects reusing a generic relation with the same name *and* target from the same source class (an exact duplicate edge)', async () => {
+		const project = classIri('Project');
+		const ingredient = classIri('Ingredient');
+		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const { fn } = mockGenericFetch({
+			existingGenericIri: existingIri,
+			currentTargets: [ingredient],
+			shapeExists: true
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.insertObjectProperty(project, ingredient, 'uses', false, true, {
+				kind: 'generic'
+			})
+		).rejects.toThrow(/already exists/);
+	});
+
+	it('merges a second, different target into the same source class\'s existing generic-relation property shape as an sh:or union', async () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const { fn, updates } = mockGenericFetch({
+			existingGenericIri: existingIri,
+			currentTargets: [tool],
+			currentName: 'uses',
+			shapeExists: true
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(project, ingredient, 'uses', false, true, {
+			kind: 'generic'
+		});
+
+		expect(result.iri).toBe(existingIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`sh:path <${existingIri}>`);
+		expect(updates[0]).toContain('sh:or');
+		expect(updates[0]).toContain(`sh:class <${tool}>`);
+		expect(updates[0]).toContain(`sh:class <${ingredient}>`);
+		// The old single-target/list-cell structure is cleared before the fresh union is written.
+		expect(updates[0]).toContain('DELETE');
+		expect(updates[0]).toContain('rdf:first');
+	});
+
+	it('updateObjectProperty on a generic relation retargets only sh:class, leaving the shared property untouched', async () => {
+		const project = classIri('Project');
+		const propIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const newTarget = classIri('Ingredient');
+		const { fn, updates } = mockGenericFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateObjectProperty(
+			project,
+			propIri,
+			{ name: 'uses', targetClassIri: newTarget, required: false, repeatable: true },
+			{ kind: 'generic' }
+		);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain('rdfs:domain');
+		expect(updates[0]).not.toContain('rdfs:range');
+		expect(updates[0]).not.toContain('rdfs:label');
+		expect(updates[0]).toContain(`sh:class <${newTarget}>`);
+	});
+
+	it('updateObjectProperty on a generic relation with several targets (an sh:or union) retargets only the given old target, leaving the others untouched', async () => {
+		const project = classIri('Project');
+		const propIri = genericPropertyIri('supports', DEFAULT_GRAPHS.schema);
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const recipe = classIri('Recipe');
+		const { fn, updates } = mockGenericFetch({
+			currentTargets: [tool, ingredient],
+			currentName: 'supports'
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateObjectProperty(
+			project,
+			propIri,
+			{ name: 'supports', targetClassIri: recipe, required: false, repeatable: true },
+			{ kind: 'generic', oldTargetClassIri: ingredient }
+		);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('sh:or');
+		expect(updates[0]).toContain(`sh:class <${tool}>`);
+		expect(updates[0]).toContain(`sh:class <${recipe}>`);
+		expect(updates[0]).not.toContain(`sh:class <${ingredient}>`);
+	});
+
+	it('listGenericObjectProperties returns label+iri pairs for properties with no rdfs:domain', async () => {
+		const usesIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['p', 'label'] },
+					results: {
+						bindings: [
+							{ p: { type: 'uri', value: usesIri }, label: { type: 'literal', value: 'uses' } }
+						]
+					}
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.listGenericObjectProperties();
+
+		expect(result).toEqual([{ iri: usesIri, label: 'uses' }]);
+	});
+
+	it('specific-relation insertObjectProperty is unchanged when no kind option is passed', async () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const { fn, updates } = mockGenericFetch({ propertyExists: false, shapeExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(person, car, 'owns', false, true);
+
+		const expectedIri = propertyIri(person, 'owns');
+		expect(result.iri).toBe(expectedIri);
+		expect(updates[0]).toContain(`rdfs:domain <${person}>`);
+		expect(updates[0]).toContain(`rdfs:range <${car}>`);
 	});
 });
 
@@ -1045,7 +1327,9 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 		const connector = new SparqlConnector('/api/sparql');
 		const result = await connector.insertIndividual(relationType, 'nutzt');
 
-		expect(result.iri).toBe(individualIri(relationType, 'nutzt'));
+		// Independently computed expected IRI (STORY-062) — not derived from `individualIri`'s own
+		// default, so this assertion actually catches a regression to the old `/schema#` minting bug.
+		expect(result.iri).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#relationTypeNutzt`);
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.instances}>`);
 		expect(updates[0]).toContain(`<${result.iri}> a <${relationType}>`);
@@ -1108,6 +1392,111 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 			{ iri: nutztIri, label: 'nutzt' },
 			{ iri: verbuchtIri, label: 'verbucht' }
 		]);
+	});
+});
+
+/** Mocks the `SELECT ?s ?p ?o` scan `migrateIndividualNamespaceIris` (STORY-063) issues against
+ *  `graphs.instances`, plus recorded update bodies. */
+function mockMigrateIndividualFetch(fixture: { legacyBindings?: Array<Record<'s' | 'p' | 'o', SparqlBinding[string]>> } = {}) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (q.includes('SELECT ?s ?p ?o')) {
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['s', 'p', 'o'] },
+					results: { bindings: fixture.legacyBindings ?? [] }
+				}),
+				{ status: 200 }
+			);
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn, updates };
+}
+
+describe('SparqlConnector — migrate mis-minted individual IRIs (STORY-063)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const relationType = classIri('RelationType');
+	const legacyIri = `${DEFAULT_GRAPHS.schema}#relationTypeNutzt`;
+	const correctIri = `${DEFAULT_NAMESPACE_BASE_IRI}#relationTypeNutzt`;
+
+	function legacyBindingsFor(iri: string) {
+		return [
+			{
+				s: { type: 'uri' as const, value: iri },
+				p: { type: 'uri' as const, value: RDF.type },
+				o: { type: 'uri' as const, value: relationType }
+			},
+			{
+				s: { type: 'uri' as const, value: iri },
+				p: { type: 'uri' as const, value: RDFS.label },
+				o: { type: 'literal' as const, value: 'nutzt' }
+			}
+		];
+	}
+
+	it('dry-run reports the affected old->new IRI pairs without issuing any writes', async () => {
+		const { fn, updates } = mockMigrateIndividualFetch({ legacyBindings: legacyBindingsFor(legacyIri) });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.migrateIndividualNamespaceIris(DEFAULT_NAMESPACE_BASE_IRI, { dryRun: true });
+
+		expect(result.migrated).toEqual([{ oldIri: legacyIri, newIri: correctIri }]);
+		expect(updates).toHaveLength(0);
+	});
+
+	it('a real run rewrites the subject IRI within graphs.instances and any inbound object references', async () => {
+		const { fn, updates } = mockMigrateIndividualFetch({ legacyBindings: legacyBindingsFor(legacyIri) });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.migrateIndividualNamespaceIris(DEFAULT_NAMESPACE_BASE_IRI, { dryRun: false });
+
+		expect(result.migrated).toEqual([{ oldIri: legacyIri, newIri: correctIri }]);
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.instances}>`);
+		expect(updates[0]).toContain(`DELETE { <${legacyIri}> ?p ?o }`);
+		expect(updates[0]).toContain(`INSERT { <${correctIri}> ?p ?o }`);
+		expect(updates[1]).toContain(`DELETE { GRAPH ?g { ?s ?p <${legacyIri}> } }`);
+		expect(updates[1]).toContain(`INSERT { GRAPH ?g { ?s ?p <${correctIri}> } }`);
+	});
+
+	it('does not classify a non-individual (a class/property declaration) as affected', async () => {
+		const legacyClassIri = `${DEFAULT_GRAPHS.schema}#SomeClass`;
+		const { fn, updates } = mockMigrateIndividualFetch({
+			legacyBindings: [
+				{
+					s: { type: 'uri', value: legacyClassIri },
+					p: { type: 'uri', value: RDF.type },
+					o: { type: 'uri', value: OWL.Class }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.migrateIndividualNamespaceIris(DEFAULT_NAMESPACE_BASE_IRI, { dryRun: false });
+
+		expect(result.migrated).toEqual([]);
+		expect(updates).toHaveLength(0);
+	});
+
+	it('is idempotent — reports nothing affected once no subject still starts with the legacy prefix', async () => {
+		const { fn } = mockMigrateIndividualFetch({ legacyBindings: [] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.migrateIndividualNamespaceIris(DEFAULT_NAMESPACE_BASE_IRI, { dryRun: false });
+
+		expect(result.migrated).toEqual([]);
 	});
 });
 
@@ -2100,5 +2489,395 @@ describe('SparqlConnector — deleteClass subClassOf reference check (STORY-047)
 		const classDeleteIndex = updates.findIndex((u) => u.includes(`<${superIri}> ?p ?o`));
 		expect(subClassOfDeleteIndex).toBeGreaterThanOrEqual(0);
 		expect(subClassOfDeleteIndex).toBeLessThan(classDeleteIndex);
+	});
+});
+
+describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY-054)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** Routes `fetchFullSchema`'s Promise.all'd queries by their distinguishing patterns:
+	 *  `fetchGenericObjectPropertyEdges`'s `FILTER NOT EXISTS { ?p rdfs:domain ?anyDomain }` (unique
+	 *  to it) vs. `fetchAllObjectProperties`'s `owl:ObjectProperty ; rdfs:domain ?domain` (unique to
+	 *  it — the generic query never asserts `rdfs:domain` on the *matched* variable). Every other
+	 *  query (classes, datatype properties, shapes/constraints, subClassOf, individuals) defaults to
+	 *  empty bindings — these tests only assert on `objectProperties`. */
+	function mockFullSchemaFetch(
+		fixture: {
+			genericEdges?: Array<{ p: string; label: string; domain: string; range: string; minCount?: number; maxCount?: number }>;
+			specificObjectProps?: Array<{ p: string; label: string; domain: string; range: string }>;
+		} = {}
+	) {
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('FILTER NOT EXISTS { ?p rdfs:domain ?anyDomain }')) {
+				const bindings = (fixture.genericEdges ?? []).map((e) => ({
+					p: { type: 'uri', value: e.p },
+					label: { type: 'literal', value: e.label },
+					domain: { type: 'uri', value: e.domain },
+					range: { type: 'uri', value: e.range },
+					...(e.minCount !== undefined ? { minCount: { type: 'literal', value: String(e.minCount) } } : {}),
+					...(e.maxCount !== undefined ? { maxCount: { type: 'literal', value: String(e.maxCount) } } : {})
+				}));
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			}
+			if (q.includes('owl:ObjectProperty') && q.includes('rdfs:domain ?domain')) {
+				const bindings = (fixture.specificObjectProps ?? []).map((e) => ({
+					p: { type: 'uri', value: e.p },
+					label: { type: 'literal', value: e.label },
+					domain: { type: 'uri', value: e.domain },
+					range: { type: 'uri', value: e.range }
+				}));
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return fn;
+	}
+
+	it('fetchFullSchema merges a generic relation (no rdfs:domain/range) into objectProperties, tagged relationKind: generic', async () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const fn = mockFullSchemaFetch({ genericEdges: [{ p: usesIri, label: 'uses', domain: project, range: tool }] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+
+		expect(schema.objectProperties).toContainEqual({
+			iri: usesIri,
+			label: 'uses',
+			domain: project,
+			range: tool,
+			namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI,
+			required: false,
+			repeatable: true,
+			relationKind: 'generic'
+		});
+	});
+
+	it('emits one edge per source class for a generic relation reused from two different source classes, each with its own cardinality', async () => {
+		const project = classIri('Project');
+		const recipe = classIri('Recipe');
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const fn = mockFullSchemaFetch({
+			genericEdges: [
+				{ p: usesIri, label: 'uses', domain: project, range: tool, minCount: 1 },
+				{ p: usesIri, label: 'uses', domain: recipe, range: ingredient }
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+
+		const genericEdges = schema.objectProperties.filter((op) => op.relationKind === 'generic');
+		expect(genericEdges).toHaveLength(2);
+		expect(genericEdges.find((e) => e.domain === project)).toMatchObject({
+			range: tool,
+			required: true,
+			repeatable: true
+		});
+		expect(genericEdges.find((e) => e.domain === recipe)).toMatchObject({
+			range: ingredient,
+			required: false,
+			repeatable: true
+		});
+	});
+
+	it('emits one edge per target for a generic relation drawn to several targets from the *same* source class (an sh:or union in the shapes graph)', async () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const fn = mockFullSchemaFetch({
+			genericEdges: [
+				{ p: usesIri, label: 'uses', domain: project, range: tool },
+				{ p: usesIri, label: 'uses', domain: project, range: ingredient }
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+
+		const genericEdges = schema.objectProperties.filter((op) => op.relationKind === 'generic');
+		expect(genericEdges).toHaveLength(2);
+		expect(genericEdges.map((e) => e.range).sort()).toEqual([ingredient, tool].sort());
+		expect(genericEdges.every((e) => e.domain === project && e.iri === usesIri)).toBe(true);
+	});
+
+	it('does not confuse a specific relation with a generic one drawn between the same two classes', async () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const ownsIri = propertyIri(person, 'owns');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const fn = mockFullSchemaFetch({
+			specificObjectProps: [{ p: ownsIri, label: 'owns', domain: person, range: car }],
+			genericEdges: [{ p: usesIri, label: 'uses', domain: person, range: car }]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+
+		expect(schema.objectProperties).toContainEqual(
+			expect.objectContaining({ iri: ownsIri, relationKind: 'specific' })
+		);
+		expect(schema.objectProperties).toContainEqual(
+			expect.objectContaining({ iri: usesIri, relationKind: 'generic' })
+		);
+	});
+});
+
+describe('SparqlConnector — own-properties / external-references shapes-graph equivalents (STORY-055)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("findOwnProperties includes a generic relation's property IRI used from this class's own NodeShape, alongside rdfs:domain-scoped properties", async () => {
+		const project = classIri('Project');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const attrIri = propertyIri(project, 'name');
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			expect(q).toContain('UNION');
+			expect(q).toContain('sh:targetClass');
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['p'] },
+					results: {
+						bindings: [
+							{ p: { type: 'uri', value: attrIri } },
+							{ p: { type: 'uri', value: usesIri } }
+						]
+					}
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.findOwnProperties(project);
+
+		expect(result).toEqual([attrIri, usesIri]);
+	});
+
+	it('findExternalReferences includes a generic relation\'s property IRI when any NodeShape targets this class via sh:class', async () => {
+		const tool = classIri('Tool');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			expect(q).toContain('UNION');
+			expect(q).toContain('sh:class');
+			return new Response(
+				JSON.stringify({ head: { vars: ['p'] }, results: { bindings: [{ p: { type: 'uri', value: usesIri } }] } }),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.findExternalReferences(tool);
+
+		expect(result).toEqual([usesIri]);
+	});
+
+	it('deleteClass refuses to delete a class targeted by a generic relation, without writing anything, unless force: true', async () => {
+		const tool = classIri('Tool');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const { fn, updates } = mockGraphFetch({ externalReferences: [usesIri] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteClass(tool);
+
+		expect(result).toEqual({ deleted: false, externalReferences: [usesIri], subClassReferences: [] });
+		expect(updates).toHaveLength(0);
+	});
+});
+
+describe('SparqlConnector — reference-counted deletion for generic relations (STORY-056)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** Fixture-driven mock for `deleteObjectProperty`'s internal `findNamespaceOfClass` lookup (a
+	 *  bare `GRAPH ?g` query, answered with the default namespace's schema graph), plus
+	 *  `deletePropertyTriples`'s two new ASK checks (STORY-056): "does the property have an
+	 *  `rdfs:domain`" (`hasDomain` — false only for a generic relation) and, only when it doesn't,
+	 *  "does any *other* NodeShape still reference this property's `sh:path`" (`usedElsewhere`). */
+	function mockDeleteFetch(fixture: { hasDomain: boolean; usedElsewhere?: boolean }) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:domain ?d')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.hasDomain }), { status: 200 });
+			}
+			if (q.includes('sh:property [ sh:path')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.usedElsewhere ?? false }), { status: 200 });
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it("deleting a generic relation's edge that is still used by another class removes only this class's sh:property entry, leaving the shared declaration untouched", async () => {
+		const project = classIri('Project');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const { fn, updates } = mockDeleteFetch({ hasDomain: false, usedElsewhere: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(usesIri, project);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`sh:path <${usesIri}>`);
+		expect(updates[0]).not.toContain(`<${usesIri}> ?p ?o`);
+	});
+
+	it("deleting a generic relation's last remaining edge removes both the sh:property entry and the shared owl:ObjectProperty/rdfs:label declaration", async () => {
+		const project = classIri('Project');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const { fn, updates } = mockDeleteFetch({ hasDomain: false, usedElsewhere: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(usesIri, project);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`sh:path <${usesIri}>`);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${usesIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it('specific-relation deletion is unchanged: always deletes the property declaration, no reference-counting applied', async () => {
+		const person = classIri('Person');
+		const propIri = propertyIri(person, 'owns');
+		const { fn, updates } = mockDeleteFetch({ hasDomain: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(propIri, person);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${propIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it("deleting one target of a generic relation's sh:or union (multiple targets from the same source class) only drops that target, leaving the shape and the other target(s) untouched", async () => {
+		const project = classIri('Project');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?class ?name ?minCount ?maxCount')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: [] },
+						results: {
+							bindings: [
+								{ class: { type: 'uri', value: tool }, name: { type: 'literal', value: 'uses' } },
+								{ class: { type: 'uri', value: ingredient }, name: { type: 'literal', value: 'uses' } }
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(usesIri, project, ingredient);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`sh:class <${tool}>`);
+		expect(updates[0]).not.toContain(`sh:class <${ingredient}>`);
+		expect(updates[0]).not.toContain(`<${usesIri}> ?p ?o`);
+	});
+
+	it("deleting a generic relation's target when it's the union's last remaining target falls through to full removal (reference-counted as usual)", async () => {
+		const project = classIri('Project');
+		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
+		const tool = classIri('Tool');
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?class ?name ?minCount ?maxCount')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: [] },
+						results: { bindings: [{ class: { type: 'uri', value: tool }, name: { type: 'literal', value: 'uses' } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:domain ?d')) {
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			if (q.includes('sh:property [ sh:path')) {
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(usesIri, project, tool);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${usesIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
 	});
 });

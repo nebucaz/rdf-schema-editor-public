@@ -173,6 +173,15 @@ const PARALLEL_EDGE_SPACING = 36;
  * they'd otherwise draw the exact same line. Ordering within a group is by edge id, which is stable
  * and available without any extra bookkeeping, so the same edge always lands at the same offset
  * across re-renders regardless of array order.
+ *
+ * The returned sign is canonicalized to the unordered pair, not to this edge's own `source`/
+ * `target` order: `getFloatingEdgeParams` derives its perpendicular vector from *this edge's own*
+ * source→target direction, which negates for an opposite-direction edge — without the negation
+ * here, that negation would exactly cancel the id-order sign, making an A→B and a B→A edge in the
+ * same 2-member group compute the identical perpendicular vector (issue: bidirectional overlap).
+ * Negating whenever `source` isn't the lexicographically-smaller id of the pair keeps every edge's
+ * offset expressed relative to a single canonical (smaller→larger) direction, so it survives being
+ * combined with that edge's own (possibly reversed) direction vector undiminished.
  */
 export function computeParallelOffset(edges: Edge[], id: string, source: string, target: string): number {
 	const pairKey = [source, target].sort().join('|');
@@ -182,5 +191,60 @@ export function computeParallelOffset(edges: Edge[], id: string, source: string,
 		.sort();
 	const index = group.indexOf(id);
 	if (index === -1 || group.length <= 1) return 0;
-	return (index - (group.length - 1) / 2) * PARALLEL_EDGE_SPACING;
+	const rawOffset = (index - (group.length - 1) / 2) * PARALLEL_EDGE_SPACING;
+	return source <= target ? rawOffset : -rawOffset;
+}
+
+/** Pixel growth in loop radius between successive self-relations fanned out on the same node —
+ *  see `getSelfLoopPath`. */
+const SELF_LOOP_RADIUS_STEP = 28;
+
+/** Base loop radius (pixels) for a node's first self-relation. */
+const SELF_LOOP_BASE_RADIUS = 90;
+
+/**
+ * A self-relation's (`source === target`) position within that node's group of self-relations,
+ * ordered by edge id for the same cross-render stability as `computeParallelOffset`. `dx = dy = 0`
+ * always holds when source and target are the same node, so `computeParallelOffset`'s
+ * perpendicular-vector math is a no-op here (STORY-060) — self-loops fan out via `getSelfLoopPath`'s
+ * growing radius instead, keyed off this index.
+ */
+export function computeSelfLoopIndex(edges: Edge[], id: string, nodeId: string): number {
+	const group = edges
+		.filter((e) => e.source === nodeId && e.target === nodeId)
+		.map((e) => e.id)
+		.sort();
+	const index = group.indexOf(id);
+	return index === -1 ? 0 : index;
+}
+
+/**
+ * Dedicated geometry for a relation whose source and target are the same node (STORY-060) — the
+ * boundary-intersection algebra in `getNodeIntersection` is undefined when the aim point is the
+ * node's own center, degenerating to a zero-length path hidden behind the node. Instead of routing
+ * through the node, this bows a loop out from the node's right edge: it exits above the vertical
+ * center, arcs out to `radius` pixels past the node's boundary, and re-enters below the vertical
+ * center — always outside the node's bounding box, so the loop and its label are never hidden
+ * behind the node's own DOM box. `loopIndex` (see `computeSelfLoopIndex`) grows the radius so
+ * multiple self-relations on the same node fan out to distinct, non-overlapping loops.
+ */
+export function getSelfLoopPath(
+	node: InternalNode,
+	loopIndex = 0
+): readonly [path: string, labelX: number, labelY: number] {
+	const pos = node.internals.positionAbsolute;
+	const w = node.measured.width ?? 0;
+	const h = node.measured.height ?? 0;
+	const radius = SELF_LOOP_BASE_RADIUS + loopIndex * SELF_LOOP_RADIUS_STEP;
+
+	const x = pos.x + w;
+	const exitY = pos.y + h * 0.35;
+	const reentryY = pos.y + h * 0.65;
+
+	const path = `M ${x} ${exitY} C ${x + radius} ${exitY - radius * 0.5}, ${x + radius} ${reentryY + radius * 0.5}, ${x} ${reentryY}`;
+
+	const labelX = x + radius + 12;
+	const labelY = (exitY + reentryY) / 2;
+
+	return [path, labelX, labelY] as const;
 }

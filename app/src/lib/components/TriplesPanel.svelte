@@ -4,6 +4,9 @@
 	import { SchemaValidationError, type ValidationIssue } from '$lib/services/validation';
 	import { extractLocalName } from '$lib/utils/iri';
 	import { highlightTurtle } from '$lib/utils/turtle-highlight';
+	import { buildCanvasModel } from '$lib/services/canvas-model';
+	import { canvasModelToLinkML } from '$lib/services/linkml';
+	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 
 	interface Props {
 		/** `null` means "whole schema graph"; otherwise the IRI of the selected entity/relation. */
@@ -134,6 +137,42 @@
 		downloadTurtle(filename, currentTab.draftText);
 	}
 
+	// -- LinkML export (STORY-070) --------------------------------------------------------------
+	// Unlike the Turtle download above, this isn't scoped down to a single selected entity — a
+	// LinkML schema file naturally represents a whole schema (STORY-068/069's exporter takes a
+	// whole `CanvasModel`, not a triple-level selection), so this always exports the currently
+	// selected namespace's full schema, regardless of `selectedIri`. Available whenever the panel
+	// itself is open, matching the Turtle download's availability.
+
+	let exportingLinkML = $state(false);
+	let linkMLError = $state<string | null>(null);
+
+	function downloadYaml(filename: string, text: string) {
+		const blob = new Blob([text], { type: 'text/yaml' });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = filename;
+		a.click();
+		URL.revokeObjectURL(url);
+	}
+
+	async function handleDownloadLinkML() {
+		exportingLinkML = true;
+		linkMLError = null;
+		try {
+			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+			const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap());
+			const ns = namespaces.find((n) => n.baseIri === selectedNamespace);
+			const yaml = canvasModelToLinkML(model, namespaces, ns?.prefix ?? 'schema');
+			downloadYaml(`${ns?.prefix ?? 'schema'}.linkml.yaml`, yaml);
+		} catch (err) {
+			linkMLError = err instanceof Error ? err.message : 'Failed to export LinkML';
+		} finally {
+			exportingLinkML = false;
+		}
+	}
+
 	const layerLabel: Record<ValidationIssue['layer'], string> = {
 		syntax: 'Syntax',
 		shacl: 'SHACL well-formedness',
@@ -202,8 +241,20 @@
 				></textarea>
 			</div>
 
+			{#if linkMLError}
+				<p class="status error">{linkMLError}</p>
+			{/if}
+
 			<div class="panel-actions">
 				<button class="secondary" onclick={handleDownload}>Download .ttl</button>
+				<button
+					class="secondary"
+					onclick={handleDownloadLinkML}
+					disabled={exportingLinkML}
+					title="Download the current namespace's full schema as a LinkML (https://linkml.io/) YAML file."
+				>
+					{exportingLinkML ? 'Exporting…' : 'Download LinkML'}
+				</button>
 				<div class="spacer"></div>
 				{#if currentTab.editing}
 					<button class="secondary" onclick={cancelEdit} disabled={currentTab.saving}>Cancel</button>

@@ -5,6 +5,7 @@
 	import { ModeWatcher } from 'mode-watcher';
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import HamburgerMenu from '$lib/components/HamburgerMenu.svelte';
+	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
@@ -131,6 +132,11 @@
 					{/each}
 				</select>
 			{/if}
+			<NamespaceFilter
+				namespaces={namespaceStore.namespaces}
+				hiddenNamespaces={workbenchActions.hiddenNamespaces}
+				onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
+			/>
 			<ThemeToggle />
 			<HamburgerMenu>
 				{#snippet children()}
@@ -150,6 +156,15 @@
 					</button>
 					<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
 						{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
+					</button>
+					<button
+						type="button"
+						class="menu-item"
+						onclick={() => workbenchActions.exportSvg()}
+						disabled={workbenchActions.exportingSvg}
+						title="Export the whole canvas as SVG — or, if any entities are selected, just the selection and the relations between them. The exported file embeds HTML (foreignObject) for node visuals, so it may not open correctly in every external vector/PDF tool."
+					>
+						{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
 					</button>
 					<button
 						type="button"

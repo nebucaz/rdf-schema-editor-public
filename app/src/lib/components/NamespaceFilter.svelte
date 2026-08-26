@@ -14,6 +14,8 @@
 	let { namespaces, hiddenNamespaces, onToggle }: Props = $props();
 
 	let isOpen = $state(false);
+	const hiddenCount = $derived(hiddenNamespaces.size);
+	const tooltip = $derived(hiddenCount > 0 ? `${hiddenCount} hidden` : 'Filter namespaces');
 
 	function toggleOpen() {
 		isOpen = !isOpen;
@@ -45,9 +47,25 @@
 		onclick={toggleOpen}
 		aria-haspopup="true"
 		aria-expanded={isOpen}
-		title="Filter namespaces"
+		aria-label="Filter namespaces"
+		title={tooltip}
 	>
-		Filter Namespaces{hiddenNamespaces.size > 0 ? ` (${hiddenNamespaces.size} hidden)` : ''}
+		<svg
+			xmlns="http://www.w3.org/2000/svg"
+			width="18"
+			height="18"
+			viewBox="0 0 24 24"
+			fill="none"
+			stroke="currentColor"
+			stroke-width="2"
+			stroke-linecap="round"
+			stroke-linejoin="round"
+		>
+			<polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+		</svg>
+		{#if hiddenCount > 0}
+			<span class="filter-badge">{hiddenCount}</span>
+		{/if}
 	</button>
 
 	{#if isOpen}
@@ -73,19 +91,38 @@
 	}
 
 	.filter-toggle {
-		padding: 0.4rem 0.9rem;
-		border-radius: 6px;
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 36px;
+		height: 36px;
+		border-radius: 8px;
 		background: transparent;
 		border: 1px solid var(--color-border);
 		color: var(--color-text);
-		font-size: 0.85rem;
-		white-space: nowrap;
 		cursor: pointer;
 		transition: background var(--transition), border-color var(--transition);
 	}
 
 	.filter-toggle:hover {
 		background: var(--color-hover);
+	}
+
+	.filter-badge {
+		position: absolute;
+		top: -4px;
+		right: -4px;
+		min-width: 16px;
+		height: 16px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--color-accent);
+		color: #fff;
+		font-size: 0.65rem;
+		font-weight: 600;
+		line-height: 16px;
+		text-align: center;
 	}
 
 	.filter-backdrop {
@@ -101,7 +138,7 @@
 	.filter-panel {
 		position: absolute;
 		top: calc(100% + 0.5rem);
-		left: 0;
+		right: 0;
 		min-width: 180px;
 		max-height: 320px;
 		overflow-y: auto;
