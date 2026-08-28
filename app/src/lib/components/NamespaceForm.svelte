@@ -1,18 +1,26 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
 
+	import { isWellFormedIri } from '$lib/utils/iri';
+
 	interface Props {
 		mode: 'create' | 'edit';
 		initialPrefix?: string;
 		initialBaseIri?: string;
 		initialDescription?: string;
 		initialColor?: string;
+		/** Default `dct:publisher` (data-catalog Story 011) — a plain literal (organization name). */
+		initialPublisher?: string;
+		/** Default `dct:license` (data-catalog Story 011) — a well-formed IRI. */
+		initialLicense?: string;
 		submitLabel: string;
 		onSubmit: (values: {
 			prefix: string;
 			baseIri: string;
 			description: string;
 			color: string | undefined;
+			publisher: string;
+			license: string;
 		}) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -23,6 +31,8 @@
 		initialBaseIri = '',
 		initialDescription = '',
 		initialColor,
+		initialPublisher = '',
+		initialLicense = '',
 		submitLabel,
 		onSubmit,
 		onCancel
@@ -32,6 +42,8 @@
 	let baseIri = $state(initialBaseIri);
 	let description = $state(initialDescription);
 	let color = $state<string | undefined>(initialColor);
+	let publisher = $state(initialPublisher);
+	let license = $state(initialLicense);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
@@ -47,10 +59,21 @@
 				return;
 			}
 		}
+		if (license.trim() && !isWellFormedIri(license.trim())) {
+			error = 'License must be a well-formed IRI (e.g. https://example.com/license/...)';
+			return;
+		}
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit({ prefix: prefix.trim(), baseIri: baseIri.trim(), description: description.trim(), color });
+			await onSubmit({
+				prefix: prefix.trim(),
+				baseIri: baseIri.trim(),
+				description: description.trim(),
+				color,
+				publisher: publisher.trim(),
+				license: license.trim()
+			});
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -83,6 +106,14 @@
 	<label>
 		Default color
 		<ColorSwatchPicker {color} onChange={(c) => (color = c)} />
+	</label>
+	<label>
+		Default publisher (dct:publisher)
+		<input type="text" bind:value={publisher} placeholder="Optional — organization name" />
+	</label>
+	<label>
+		Default license (dct:license)
+		<input type="text" bind:value={license} placeholder="Optional — a license IRI" />
 	</label>
 	{#if error}
 		<p class="error">{error}</p>

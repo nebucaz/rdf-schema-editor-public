@@ -39,33 +39,88 @@ export const SH = {
 	targetClass: `${SH_NS}targetClass`
 };
 
+/** DCAT/DCT/PROV vocabulary (data-catalog Story 001) — app-authored predicates the catalog
+ *  generator writes as subject-position assertions, structurally like `OWL`/`SH` above rather
+ *  than the reference-only `EXTERNAL_PREFIXES` mechanism (`iri.ts`). The sole source of truth for
+ *  these IRIs across the codebase — no other file should hand-write a `dcat:`/`dct:`/`prov:` IRI
+ *  string literal. Deliberately excluded from `VOCAB_FILTER`/`VOCAB_NAMESPACES` below: DCAT/DCT/PROV
+ *  triples are app-authored data, not reasoner-injected vocabulary axioms, so they stay visible in
+ *  the raw triples view. */
+const DCAT_NS = 'http://www.w3.org/ns/dcat#';
+const DCT_NS = 'http://purl.org/dc/terms/';
+const PROV_NS = 'http://www.w3.org/ns/prov#';
+
+export const DCAT = {
+	Catalog: `${DCAT_NS}Catalog`,
+	Dataset: `${DCAT_NS}Dataset`,
+	Distribution: `${DCAT_NS}Distribution`,
+	dataset: `${DCAT_NS}dataset`,
+	distribution: `${DCAT_NS}distribution`,
+	theme: `${DCAT_NS}theme`,
+	keyword: `${DCAT_NS}keyword`,
+	accessURL: `${DCAT_NS}accessURL`,
+	mediaType: `${DCAT_NS}mediaType`
+};
+export const DCT = {
+	title: `${DCT_NS}title`,
+	description: `${DCT_NS}description`,
+	identifier: `${DCT_NS}identifier`,
+	publisher: `${DCT_NS}publisher`,
+	license: `${DCT_NS}license`,
+	conformsTo: `${DCT_NS}conformsTo`,
+	format: `${DCT_NS}format`,
+	/** Links a split dataset back to its parent entity's default dataset (data-catalog Story 020) —
+	 *  "this dataset is part of that one," the DCT relation this codebase settled on over
+	 *  `dct:hasPart`/`dct:source` for the split-dataset linkage. */
+	isPartOf: `${DCT_NS}isPartOf`
+};
+export const PROV = {
+	Agent: `${PROV_NS}Agent`,
+	SoftwareAgent: `${PROV_NS}SoftwareAgent`,
+	Activity: `${PROV_NS}Activity`,
+	wasAttributedTo: `${PROV_NS}wasAttributedTo`,
+	wasDerivedFrom: `${PROV_NS}wasDerivedFrom`,
+	wasGeneratedBy: `${PROV_NS}wasGeneratedBy`,
+	used: `${PROV_NS}used`,
+	startedAtTime: `${PROV_NS}startedAtTime`,
+	endedAtTime: `${PROV_NS}endedAtTime`
+};
+
 /** Prefixes for the human-facing Turtle view (STORY-011) — matches `semantic-crm`'s
- *  `gcrm-shema.ttl`/`gcrm-shapes.ttl` style, including a hyphenated shapes prefix. Used as the
+ *  `gcrm-shema.ttl`/`gcrm-shapes.ttl` style, including a suffixed shapes prefix. Used as the
  *  default when no registered-namespace list is available; `buildDisplayPrefixes` (STORY-048)
- *  supersedes this with one `rse`/`rse-sh`/`rse-i`-shaped triple per registered namespace.
- *  `rse-i` (STORY-062) is the plain instances base individuals mint under — without it, a
- *  correctly-minted individual IRI has no matching prefix and falls back to a full absolute IRI. */
+ *  supersedes this with one `rse`/`rse_sh`/`rse_i`-shaped triple per registered namespace.
+ *  `rse_i` (STORY-062) is the plain instances base individuals mint under — without it, a
+ *  correctly-minted individual IRI has no matching prefix and falls back to a full absolute IRI.
+ *  Suffix separator is `_`, not `-`: both are valid in a Turtle/SPARQL prefix name, but `-` isn't a
+ *  `\w` word character, so generic identifier-based syntax highlighters (most editors/IDE
+ *  extensions, e.g. VS Code's Stardog RDF Grammars) split a hyphenated prefix into broken tokens —
+ *  this app's own hand-rolled `turtle-highlight.ts` handles `-` fine, but generated Turtle is read
+ *  in plenty of tools that don't. */
 const DISPLAY_PREFIXES = {
 	rdf: RDF_NS,
 	rdfs: RDFS_NS,
 	owl: OWL_NS,
 	xsd: XSD_NAMESPACE,
 	sh: SH_NS,
+	dcat: DCAT_NS,
+	dct: DCT_NS,
+	prov: PROV_NS,
 	rse: SCHEMA_NAMESPACE,
-	'rse-sh': SHAPES_NAMESPACE,
-	'rse-i': `${DEFAULT_NAMESPACE_BASE_IRI}#`
+	rse_sh: SHAPES_NAMESPACE,
+	rse_i: `${DEFAULT_NAMESPACE_BASE_IRI}#`
 };
 
 /**
  * Builds the full display-prefix map (STORY-048): standard vocabulary prefixes plus, for every
- * registered namespace, two prefixes mirroring the default namespace's own `rse`/`rse-sh` pair —
- * `<prefix>` for its schema vocabulary IRI, `<prefix>-sh` for its shapes vocabulary IRI, and
- * `<prefix>-i` for its plain instances-base vocabulary IRI (STORY-062, individuals mint under the
+ * registered namespace, two prefixes mirroring the default namespace's own `rse`/`rse_sh` pair —
+ * `<prefix>` for its schema vocabulary IRI, `<prefix>_sh` for its shapes vocabulary IRI, and
+ * `<prefix>_i` for its plain instances-base vocabulary IRI (STORY-062, individuals mint under the
  * namespace's plain base — without this entry they'd have no matching prefix and would render as
  * full absolute IRIs) — so the raw Turtle view can show and accept e.g. `core:BusinessProcess` for
  * any registered namespace, not just the default one. The default namespace is expected to already
- * be among `namespaces` (`fetchNamespaces()` includes it), so no separate `rse`/`rse-sh`/`rse-i`
- * entry is added here.
+ * be among `namespaces` (`fetchNamespaces()` includes it), so no separate `rse`/`rse_sh`/`rse_i`
+ * entry is added here. Suffix separator is `_`, not `-` — see `DISPLAY_PREFIXES`'s doc comment.
  *
  * `externalVocabularies` (STORY-050) adds one flat prefix per entry — unlike a registered
  * namespace, an external vocabulary (e.g. `gist`, STORY-046) is only ever *referenced* (as an
@@ -82,7 +137,10 @@ export function buildDisplayPrefixes(
 		rdfs: RDFS_NS,
 		owl: OWL_NS,
 		xsd: XSD_NAMESPACE,
-		sh: SH_NS
+		sh: SH_NS,
+		dcat: DCAT_NS,
+		dct: DCT_NS,
+		prov: PROV_NS
 	};
 	for (const vocab of externalVocabularies) {
 		if (!vocab.prefix) continue;
@@ -92,8 +150,8 @@ export function buildDisplayPrefixes(
 		if (!ns.prefix) continue;
 		const graphs = namespaceGraphs(ns.baseIri);
 		prefixes[ns.prefix] = `${graphs.schema}#`;
-		prefixes[`${ns.prefix}-sh`] = `${graphs.shapes}#`;
-		prefixes[`${ns.prefix}-i`] = `${graphs.instances}#`;
+		prefixes[`${ns.prefix}_sh`] = `${graphs.shapes}#`;
+		prefixes[`${ns.prefix}_i`] = `${graphs.instances}#`;
 	}
 	return prefixes;
 }
@@ -110,7 +168,7 @@ export function parseTurtle(text: string): Quad[] {
 
 /** Serializes quads as human-facing Turtle with standard prefixes (STORY-011's view), plus
  *  whichever registered-namespace prefixes `prefixes` supplies (STORY-048's `buildDisplayPrefixes`)
- *  — defaults to the static `rse`/`rse-sh`-only map when no registered-namespace list is available. */
+ *  — defaults to the static `rse`/`rse_sh`-only map when no registered-namespace list is available. */
 export function quadsToTurtle(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): Promise<string> {
 	return new Promise((resolve, reject) => {
 		const writer = new Writer({ prefixes });
@@ -262,7 +320,7 @@ export function groupSchemaQuads(schemaQuads: Quad[]): Quad[] {
  * `Promise`, unlike `quadsToTurtle`.
  *
  * `prefixes` mirrors `quadsToTurtle`'s parameter (STORY-048) — defaults to the static
- * `rse`/`rse-sh`-only map when no registered-namespace list is available.
+ * `rse`/`rse_sh`-only map when no registered-namespace list is available.
  */
 export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): string {
 	const bySubject = new Map<string, Quad[]>();
@@ -305,6 +363,49 @@ export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> =
 		result = res;
 	});
 	return result;
+}
+
+// -- Catalog scope selection (data-catalog Story 008/009) ---------------------------------------
+
+/**
+ * Selects the triples belonging to one `AuthoritativeEntity` subclass's generated catalog entry,
+ * out of a namespace's whole `graphs.catalog` content — the catalog-graph analogue of
+ * `selectScope`'s class-scope selection, but simpler: a dataset's own triples, plus (one hop) the
+ * triples of anything it points at via `dcat:distribution`/`prov:wasGeneratedBy` (its Distribution
+ * and Activity nodes). Deliberately excludes the shared `dcat:Catalog` container and any
+ * `prov:Agent`/`SystemOfWork` individual a `prov:wasAttributedTo`/`wasDerivedFrom` triple points
+ * at — those are either shared across every class in the namespace or owned by another namespace
+ * entirely, not this one dataset's own scope.
+ *
+ * Also pulls in any attribute-level-override split dataset (data-catalog Story 020) — a
+ * `dcat:Dataset` whose `dct:isPartOf` points back at `datasetIriValue` — plus its own one-hop
+ * distribution/activity references, so a split dataset round-trips through the Catalog tab's
+ * generate/edit/save loop the same way its parent dataset does.
+ */
+export function selectCatalogScope(catalogQuads: Quad[], datasetIriValue: string): Quad[] {
+	const ownRefIris = (subject: string): string[] =>
+		catalogQuads
+			.filter(
+				(q) =>
+					q.subject.value === subject &&
+					(q.predicate.value === DCAT.distribution || q.predicate.value === PROV.wasGeneratedBy) &&
+					q.object.termType === 'NamedNode'
+			)
+			.map((q) => q.object.value);
+
+	const own = catalogQuads.filter((q) => q.subject.value === datasetIriValue);
+	const splitDatasetIris = [
+		...new Set(
+			catalogQuads
+				.filter((q) => q.predicate.value === DCT.isPartOf && q.object.value === datasetIriValue)
+				.map((q) => q.subject.value)
+		)
+	];
+	const splitOwn = catalogQuads.filter((q) => splitDatasetIris.includes(q.subject.value));
+
+	const refIris = new Set<string>([...ownRefIris(datasetIriValue), ...splitDatasetIris.flatMap(ownRefIris)]);
+	const refQuads = catalogQuads.filter((q) => refIris.has(q.subject.value));
+	return [...own, ...splitOwn, ...refQuads];
 }
 
 function termKey(term: Term): string {

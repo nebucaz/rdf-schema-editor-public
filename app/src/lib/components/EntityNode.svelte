@@ -35,6 +35,9 @@
 		/** Whether this class carries the `AttributedRelationship` marker (STORY-020) — such classes
 		 *  don't render the manage-instances icon and can't have members added (STORY-023). */
 		isAssociationClass: boolean;
+		/** Whether this class carries the `AuthoritativeEntity` marker (data-catalog Story 003) —
+		 *  opts it into DCAT catalog generation; gates the "View catalog" menu entry (Story 014). */
+		isAuthoritativeEntity: boolean;
 		onEdit: () => void;
 		onDelete: () => void;
 		onAddAttribute: () => void;
@@ -43,6 +46,9 @@
 		onManageInstances: () => void;
 		/** STORY-043: opens the Triples panel scoped to this entity's own triples. */
 		onViewTriples: () => void;
+		/** Data-catalog Story 014: opens the Triples panel with the Catalog tab active. Only ever
+		 *  invoked when `isAuthoritativeEntity` is true (the menu entry is hidden otherwise). */
+		onViewCatalog: () => void;
 	}
 
 	export type EntityNodeType = Node<EntityNodeData, 'entity'>;
@@ -50,14 +56,57 @@
 
 <script lang="ts">
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
+	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
+	import { descriptionVisibilityStore } from '$lib/stores/description-visibility-store.svelte';
 
 	let { data, selected }: NodeProps<EntityNodeType> = $props();
+
+	const showDescriptions = $derived(descriptionVisibilityStore.getShowDescriptions());
+
+	const menuEntries: NodeMenuEntry[] = $derived([
+		{
+			label: 'Manage instances',
+			icon: manageInstancesIcon,
+			onClick: data.onManageInstances,
+			hidden: data.isAssociationClass
+		},
+		{ label: 'View triples', icon: viewTriplesIcon, onClick: data.onViewTriples },
+		{
+			label: 'View catalog',
+			icon: viewCatalogIcon,
+			onClick: data.onViewCatalog,
+			hidden: !data.isAuthoritativeEntity
+		},
+		{ label: 'Edit', icon: editIcon, onClick: data.onEdit },
+		{ label: 'Delete', icon: deleteIcon, onClick: data.onDelete }
+	]);
 </script>
+
+{#snippet manageInstancesIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+{/snippet}
+
+{#snippet viewTriplesIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+{/snippet}
+
+{#snippet viewCatalogIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+{/snippet}
+
+{#snippet editIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+{/snippet}
+
+{#snippet deleteIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+{/snippet}
 
 <div
 	class="entity-node"
 	class:selected
 	style={`--node-header-bg: ${data.color ?? data.namespaceColor ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')}`}
+	title={!showDescriptions && data.description ? data.description : undefined}
 >
 	<!-- A source + target handle stacked at each side lets relations attach anywhere around the
 		box (dragged from or dropped on whichever side is closest to the other node), instead of
@@ -75,33 +124,10 @@
 	<div class="header">
 		<span class="name" title={data.classIri}>{data.name}</span>
 		<div class="header-actions">
-			{#if !data.isAssociationClass}
-				<button
-					class="icon-button"
-					onclick={data.onManageInstances}
-					aria-label="Manage instances"
-					title="Manage instances"
-				>
-					<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-				</button>
-			{/if}
-			<button
-				class="icon-button"
-				onclick={data.onViewTriples}
-				aria-label="View triples"
-				title="View triples"
-			>
-				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
-			</button>
-			<button class="icon-button" onclick={data.onEdit} aria-label="Edit entity" title="Edit">
-				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-			</button>
-			<button class="icon-button" onclick={data.onDelete} aria-label="Delete entity" title="Delete">
-				<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-			</button>
+			<NodeMenu entries={menuEntries} />
 		</div>
 	</div>
-	{#if data.description}
+	{#if showDescriptions && data.description}
 		<p class="description">{data.description}</p>
 	{/if}
 	<ul class="attributes">

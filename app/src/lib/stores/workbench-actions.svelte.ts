@@ -14,10 +14,12 @@ function createWorkbenchActionsStore() {
 	let externalVocabManagementOpen = $state(false);
 	let exportingSvg = $state(false);
 	let hiddenNamespaces = $state<Set<string>>(new Set());
+	let viewMode = $state<'schema' | 'instances'>('schema');
 	let onReload: () => void = () => {};
 	let onToggleTriples: () => void = () => {};
 	let onExportSvg: () => void = () => {};
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
+	let onSetViewMode: (mode: 'schema' | 'instances') => void = () => {};
 
 	return {
 		get loading() {
@@ -55,6 +57,15 @@ function createWorkbenchActionsStore() {
 		set hiddenNamespaces(value: Set<string>) {
 			hiddenNamespaces = value;
 		},
+		/** Schema/Instances view mode (data-catalog Story 007): `+page.svelte` owns the canvas
+		 *  rebuild, the header's segmented toggle (`+layout.svelte`) only displays the current value
+		 *  and triggers changes — same bridge shape as `hiddenNamespaces`/`toggleNamespaceVisibility`. */
+		get viewMode() {
+			return viewMode;
+		},
+		set viewMode(value: 'schema' | 'instances') {
+			viewMode = value;
+		},
 		registerReload(fn: () => void) {
 			onReload = fn;
 		},
@@ -67,6 +78,9 @@ function createWorkbenchActionsStore() {
 		registerToggleNamespaceVisibility(fn: (baseIri: string) => void) {
 			onToggleNamespaceVisibility = fn;
 		},
+		registerSetViewMode(fn: (mode: 'schema' | 'instances') => void) {
+			onSetViewMode = fn;
+		},
 		reload() {
 			onReload();
 		},
@@ -78,6 +92,9 @@ function createWorkbenchActionsStore() {
 		},
 		toggleNamespaceVisibility(baseIri: string) {
 			onToggleNamespaceVisibility(baseIri);
+		},
+		setViewMode(mode: 'schema' | 'instances') {
+			onSetViewMode(mode);
 		},
 		openExternalVocabManagement() {
 			externalVocabManagementOpen = true;

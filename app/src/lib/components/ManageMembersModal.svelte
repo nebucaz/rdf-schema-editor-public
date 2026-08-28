@@ -1,7 +1,12 @@
 <script lang="ts">
 	import MemberForm from './MemberForm.svelte';
 	import type { EntityMemberVM } from './EntityNode.svelte';
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
+	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '$lib/services/sparql-connector';
+
+	interface PredicateOption {
+		iri: string;
+		label: string;
+	}
 
 	interface Props {
 		members: EntityMemberVM[];
@@ -10,9 +15,29 @@
 		onAdd: (label: string, namespaceBaseIri?: string) => Promise<void>;
 		onEdit: (member: EntityMemberVM, label: string) => Promise<void>;
 		onDelete: (member: EntityMemberVM) => Promise<void>;
+		/** data-catalog Story 019: an enumerated member is an individual too, so it gets the same
+		 *  Assertions section as a standalone `IndividualNode` — falls out of both entry points
+		 *  sharing `MemberForm`, not a separate implementation. */
+		predicateOptions?: PredicateOption[];
+		objectOptions?: NameableEntity[];
+		onLoadAssertions?: (individualIri: string) => Promise<FetchedAssertion[]>;
+		onAddAssertion?: (individualIri: string, predicateLabel: string, objectIri: string) => Promise<void>;
+		onDeleteAssertion?: (individualIri: string, predicateIri: string, objectIri: string) => Promise<void>;
 	}
 
-	let { members, namespaceOptions = [], initialNamespaceBaseIri = '', onAdd, onEdit, onDelete }: Props = $props();
+	let {
+		members,
+		namespaceOptions = [],
+		initialNamespaceBaseIri = '',
+		onAdd,
+		onEdit,
+		onDelete,
+		predicateOptions = [],
+		objectOptions = [],
+		onLoadAssertions,
+		onAddAssertion,
+		onDeleteAssertion
+	}: Props = $props();
 
 	/** `MemberForm` (per Decision 5) is wrapped inline here rather than opened as a second stacked
 	 *  `Modal` — exactly one of `showAddForm`/`editTarget` is truthy while the add/edit form is
@@ -22,6 +47,20 @@
 	let deleteTarget = $state<EntityMemberVM | null>(null);
 	let deleteBusy = $state(false);
 	let error = $state<string | null>(null);
+	let assertions = $state<FetchedAssertion[]>([]);
+
+	async function reloadAssertions(individualIri: string) {
+		if (!onLoadAssertions) return;
+		assertions = await onLoadAssertions(individualIri);
+	}
+
+	$effect(() => {
+		if (editTarget && onLoadAssertions) {
+			void reloadAssertions(editTarget.iri);
+		} else {
+			assertions = [];
+		}
+	});
 
 	async function handleAddSubmit(label: string, namespaceBaseIri?: string) {
 		await onAdd(label, namespaceBaseIri);
@@ -65,6 +104,22 @@
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
 		onSubmit={(label) => handleEditSubmit(target, label)}
+		individualIri={target.iri}
+		{assertions}
+		{predicateOptions}
+		{objectOptions}
+		onAddAssertion={onAddAssertion
+			? async (predicateLabel, objectIri) => {
+					await onAddAssertion(target.iri, predicateLabel, objectIri);
+					await reloadAssertions(target.iri);
+				}
+			: undefined}
+		onDeleteAssertion={onDeleteAssertion
+			? async (predicateIri, objectIri) => {
+					await onDeleteAssertion(target.iri, predicateIri, objectIri);
+					await reloadAssertions(target.iri);
+				}
+			: undefined}
 	/>
 {:else}
 	<ul class="members">

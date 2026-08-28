@@ -27,6 +27,13 @@ const DEFAULT_SHAPES_NAMESPACE_BASE = DEFAULT_GRAPHS.shapes;
 export const ATTRIBUTED_RELATIONSHIP_IRI = `${SCHEMA_NAMESPACE}AttributedRelationship`;
 
 /**
+ * The class marking a catalog-eligible entity (data-catalog Story 003): a class opts into DCAT
+ * catalog generation by being declared `rdfs:subClassOf` this, exactly mirroring
+ * `ATTRIBUTED_RELATIONSHIP_IRI`'s marker pattern — no link-count or naming heuristic.
+ */
+export const AUTHORITATIVE_ENTITY_IRI = `${SCHEMA_NAMESPACE}AuthoritativeEntity`;
+
+/**
  * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
  * own declaration triple, `<base> a <NAMESPACE_CLASS_IRI> ; <NAMESPACE_PREFIX_PREDICATE_IRI>
  * "prefix" ; rdfs:comment "..."`, stored in the default namespace's own `/schema` graph alongside
@@ -71,6 +78,12 @@ export function camelCase(name: string): string {
 	const words = toWords(name);
 	if (words.length === 0) return '';
 	return [words[0], ...words.slice(1).map(capitalize)].join('');
+}
+
+/** e.g. "Application Inventory" -> "application-inventory" (data-catalog Story 008's
+ *  `dct:identifier` slug). */
+export function kebabCase(name: string): string {
+	return toWords(name).join('-');
 }
 
 /**
@@ -144,6 +157,82 @@ export function individualIri(
 	const ownerLocal = extractLocalName(ownerClassIri);
 	const local = camelCase(ownerLocal) + capitalize(camelCase(label));
 	return `${namespaceBaseIri}#${local}`;
+}
+
+/**
+ * Deterministic `dcat:Catalog` container IRI for a namespace (data-catalog Story 002) — one per
+ * namespace, minted under its own `/catalog` graph base, mirroring `nodeShapeIri`'s pattern of
+ * deriving a fixed IRI from its owning resource rather than a lookup.
+ */
+export function catalogIri(namespaceBaseIri: string): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#Catalog`;
+}
+
+/**
+ * Deterministic `dcat:Dataset` IRI for an `AuthoritativeEntity` subclass (data-catalog Story 002)
+ * — one per class, minted under the class's own namespace's `/catalog` graph base.
+ */
+export function datasetIri(namespaceBaseIri: string, className: string): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}Dataset`;
+}
+
+/**
+ * Fresh `prov:Activity` individual IRI for one catalog-generation run against a class
+ * (data-catalog Story 002) — unlike `catalogIri`/`datasetIri`, intentionally **not** deterministic:
+ * each generation run needs its own IRI so multiple runs against the same class don't collide,
+ * hence the required `timestamp` (or any other caller-supplied uniqueness component, e.g. a
+ * generated ID) folded into the local name.
+ */
+export function publicationActivityIri(
+	namespaceBaseIri: string,
+	className: string,
+	timestamp: string
+): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}PublicationActivity${timestamp}`;
+}
+
+/**
+ * Deterministic `dcat:Distribution` IRI for an `AuthoritativeEntity` subclass's catalog entry
+ * (data-catalog Story 008/011) — one per class, like `datasetIri`. v1 supports exactly one
+ * distribution per dataset (Story 011's per-entity distribution form edits this one node's
+ * `dct:format`/`dcat:mediaType`/`dcat:accessURL` fields in place), so a fixed, deterministic IRI
+ * lets repeated form submissions target the same node instead of accumulating blank nodes.
+ */
+export function distributionIri(namespaceBaseIri: string, className: string): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}Distribution`;
+}
+
+/**
+ * Deterministic `dcat:Dataset` IRI for an attribute-level `isMasterFor` override's own split
+ * dataset (data-catalog Story 020) — one per (class, overriding system) pair, keyed by the
+ * system's own local name so the same system reused across multiple attributes on one entity
+ * still groups into a single split dataset, and so a regeneration run can recognize an already-
+ * generated split dataset by IRI alone (no lookup needed), mirroring `datasetIri`.
+ */
+export function splitDatasetIri(namespaceBaseIri: string, className: string, systemLocalName: string): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}${pascalCase(systemLocalName)}Dataset`;
+}
+
+/**
+ * Deterministic `dcat:Distribution` IRI for a split dataset (data-catalog Story 020), mirroring
+ * `distributionIri`'s one-per-dataset pattern.
+ */
+export function splitDistributionIri(
+	namespaceBaseIri: string,
+	className: string,
+	systemLocalName: string
+): string {
+	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}${pascalCase(systemLocalName)}Distribution`;
+}
+
+/** Loose "is this an absolute IRI" check (data-catalog Story 011) — used to validate
+ *  `dct:license`/`dct:format`/`dcat:mediaType`/`dcat:accessURL` form input before it's written as
+ *  an `<IRI>` term, distinct from `sparql-connector.ts`'s `isSafeSparqlIri` (which guards against
+ *  SPARQL-injection characters, not well-formedness). Requires an RFC 3986 scheme followed by `:`
+ *  and at least one more character — permissive on purpose, since this only gates "did the user
+ *  paste something IRI-shaped", not full RFC 3986 conformance. */
+export function isWellFormedIri(value: string): boolean {
+	return /^[a-zA-Z][a-zA-Z\d+.-]*:\S+$/.test(value.trim());
 }
 
 /** Extract the local name (fragment or last path segment) from an IRI. */

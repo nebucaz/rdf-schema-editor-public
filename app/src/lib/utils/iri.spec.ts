@@ -5,6 +5,9 @@ import {
 	genericPropertyIri,
 	individualIri,
 	nodeShapeIri,
+	catalogIri,
+	datasetIri,
+	publicationActivityIri,
 	extractLocalName,
 	pascalCase,
 	camelCase,
@@ -15,7 +18,7 @@ import {
 	SCHEMA_NAMESPACE,
 	SHAPES_NAMESPACE
 } from './iri';
-import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
+import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
 
 describe('pascalCase / camelCase', () => {
 	it('converts a multi-word name to PascalCase', () => {
@@ -136,6 +139,36 @@ describe('individualIri (STORY-019)', () => {
 		const coreIri = individualIri(relationType, 'nutzt', 'http://example.org/core/schema');
 		expect(govIri).toBe('http://example.org/gov/schema#relationTypeNutzt');
 		expect(govIri).not.toBe(coreIri);
+	});
+});
+
+describe('catalogIri / datasetIri / publicationActivityIri (data-catalog Story 002)', () => {
+	const govBase = 'http://example.org/gov';
+
+	it('catalogIri mints one deterministic dcat:Catalog IRI per namespace, under its /catalog graph', () => {
+		expect(catalogIri(govBase)).toBe(`${namespaceGraphs(govBase).catalog}#Catalog`);
+		expect(catalogIri(govBase)).toBe(catalogIri(govBase));
+	});
+
+	it('catalogIri does not bleed across namespaces', () => {
+		const coreBase = 'http://example.org/core';
+		expect(catalogIri(govBase)).not.toBe(catalogIri(coreBase));
+	});
+
+	it('datasetIri mints a deterministic dcat:Dataset IRI per class, under the namespace /catalog graph', () => {
+		expect(datasetIri(govBase, 'Person')).toBe(`${namespaceGraphs(govBase).catalog}#PersonDataset`);
+		expect(datasetIri(govBase, 'Person')).toBe(datasetIri(govBase, 'Person'));
+	});
+
+	it('datasetIri does not collide across two different classes', () => {
+		expect(datasetIri(govBase, 'Person')).not.toBe(datasetIri(govBase, 'Company'));
+	});
+
+	it('publicationActivityIri produces distinct IRIs across repeated calls with different timestamps', () => {
+		const first = publicationActivityIri(govBase, 'Person', '2026-08-27T00:00:00Z');
+		const second = publicationActivityIri(govBase, 'Person', '2026-08-27T00:00:01Z');
+		expect(first).not.toBe(second);
+		expect(first).toContain(namespaceGraphs(govBase).catalog);
 	});
 });
 

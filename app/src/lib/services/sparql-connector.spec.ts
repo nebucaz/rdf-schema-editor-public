@@ -10,10 +10,14 @@ import {
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
-	EXTERNAL_VOCABULARY_CLASS_IRI
+	EXTERNAL_VOCABULARY_CLASS_IRI,
+	catalogIri,
+	datasetIri,
+	distributionIri,
+	splitDatasetIri
 } from '../utils/iri';
 import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_GRAPH, namespaceGraphs } from '../config';
-import { RDF, RDFS, OWL, SH } from './turtle';
+import { RDF, RDFS, OWL, SH, DCAT, DCT, PROV } from './turtle';
 
 /** The default (pre-existing, `.env`-seeded) namespace's three storage graphs (STORY-025/026) —
  *  every method below defaults to this namespace when no `namespaceBaseIri` is passed explicitly,
@@ -609,11 +613,12 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		).rejects.toThrow(/already exists/);
 	});
 
-	it('merges a second, different target into the same source class\'s existing generic-relation property shape as an sh:or union', async () => {
+	it("merges a second, different target into the same source class's existing generic-relation property shape as an independent sh:property block (no sh:or, data-catalog Story 018)", async () => {
 		const project = classIri('Project');
 		const tool = classIri('Tool');
 		const ingredient = classIri('Ingredient');
 		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const shapeIri = nodeShapeIri(project, DEFAULT_GRAPHS.shapes);
 		const { fn, updates } = mockGenericFetch({
 			existingGenericIri: existingIri,
 			currentTargets: [tool],
@@ -630,12 +635,43 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(result.iri).toBe(existingIri);
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`sh:path <${existingIri}>`);
-		expect(updates[0]).toContain('sh:or');
 		expect(updates[0]).toContain(`sh:class <${tool}>`);
 		expect(updates[0]).toContain(`sh:class <${ingredient}>`);
-		// The old single-target/list-cell structure is cleared before the fresh union is written.
+		// Two independent `sh:property [ ... ]` blocks on the shape, one per target class — the
+		// freshly-written INSERT never uses sh:or, even though the DELETE/WHERE half still mentions
+		// it to clean up any legacy sh:or-shaped data (forward-fix only, no migration).
+		const insertSection = updates[0].slice(updates[0].indexOf('INSERT DATA'));
+		expect(insertSection).not.toContain('sh:or');
+		expect(insertSection.split(`<${shapeIri}> sh:property [`).length - 1).toBe(2);
 		expect(updates[0]).toContain('DELETE');
-		expect(updates[0]).toContain('rdf:first');
+	});
+
+	it('fetchGenericPropertyShapeDetails reads targets by matching every sh:property entry\'s own sh:class directly, without traversing sh:or (data-catalog Story 018)', async () => {
+		const project = classIri('Project');
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const existingIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const { fn } = mockGenericFetch({
+			existingGenericIri: existingIri,
+			currentTargets: [tool, ingredient],
+			currentName: 'uses',
+			shapeExists: true
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		// Exercises the private fetchGenericPropertyShapeDetails read path indirectly: the
+		// duplicate-target rejection only fires once both existing targets have been read back.
+		await expect(
+			connector.insertObjectProperty(project, tool, 'uses', false, true, { kind: 'generic' })
+		).rejects.toThrow(/already exists/);
+
+		const readQuery = fn.mock.calls
+			.map(([, opts]) => JSON.parse((opts as { body: string }).body).query as string | undefined)
+			.find((q) => q?.includes('SELECT ?class ?name ?minCount ?maxCount'));
+		expect(readQuery).toBeDefined();
+		expect(readQuery).not.toContain('sh:or');
+		expect(readQuery).toContain('?propShape sh:class ?class');
 	});
 
 	it('updateObjectProperty on a generic relation retargets only sh:class, leaving the shared property untouched', async () => {
@@ -660,12 +696,13 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(updates[0]).toContain(`sh:class <${newTarget}>`);
 	});
 
-	it('updateObjectProperty on a generic relation with several targets (an sh:or union) retargets only the given old target, leaving the others untouched', async () => {
+	it('updateObjectProperty on a generic relation with several targets (independent sh:property blocks, data-catalog Story 018) retargets only the given old target, leaving the others untouched', async () => {
 		const project = classIri('Project');
 		const propIri = genericPropertyIri('supports', DEFAULT_GRAPHS.schema);
 		const tool = classIri('Tool');
 		const ingredient = classIri('Ingredient');
 		const recipe = classIri('Recipe');
+		const shapeIri = nodeShapeIri(project, DEFAULT_GRAPHS.shapes);
 		const { fn, updates } = mockGenericFetch({
 			currentTargets: [tool, ingredient],
 			currentName: 'supports'
@@ -681,10 +718,12 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		);
 
 		expect(updates).toHaveLength(1);
-		expect(updates[0]).toContain('sh:or');
 		expect(updates[0]).toContain(`sh:class <${tool}>`);
 		expect(updates[0]).toContain(`sh:class <${recipe}>`);
 		expect(updates[0]).not.toContain(`sh:class <${ingredient}>`);
+		const insertSection = updates[0].slice(updates[0].indexOf('INSERT DATA'));
+		expect(insertSection).not.toContain('sh:or');
+		expect(insertSection.split(`<${shapeIri}> sh:property [`).length - 1).toBe(2);
 	});
 
 	it('listGenericObjectProperties returns label+iri pairs for properties with no rdfs:domain', async () => {
@@ -891,6 +930,1088 @@ describe('SparqlConnector — attributed-relationship marker (STORY-020)', () =>
 	});
 });
 
+describe('SparqlConnector — AuthoritativeEntity marker (data-catalog Story 003)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const markerIri = `${SCHEMA_NAMESPACE}AuthoritativeEntity`;
+
+	it('ensureAuthoritativeEntityClass creates the marker class only if missing', async () => {
+		const { fn, updates } = mockGraphFetch({ classExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureAuthoritativeEntityClass();
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${markerIri}> a owl:Class`);
+	});
+
+	it('ensureAuthoritativeEntityClass is a no-op when the marker class already exists', async () => {
+		const { fn, updates } = mockGraphFetch({ classExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureAuthoritativeEntityClass();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('setAuthoritativeEntity(true) ensures the marker class and writes the subClassOf triple', async () => {
+		const { fn, updates } = mockGraphFetch({ classExists: true, ancestors: [] });
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Person');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setAuthoritativeEntity(entityIri, true);
+
+		expect(updates).toEqual([expect.stringContaining(`<${entityIri}> rdfs:subClassOf <${markerIri}>`)]);
+	});
+
+	it('setAuthoritativeEntity(false) deletes the subClassOf triple without touching the marker class', async () => {
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Person');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setAuthoritativeEntity(entityIri, false);
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE DATA { ${inGraph(`<${entityIri}> rdfs:subClassOf <${markerIri}> .`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+});
+
+describe('SparqlConnector — fetchMasterSystemsOfClass (data-catalog Story 004/008/020)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS_ADOIT = 'https://example.com/adoit';
+
+	it('returns individuals mastering a class across namespaces via any property labeled "isMasterFor"', async () => {
+		const applicationIri = classIri('Application');
+		const systemOfWorkIri = `${NS_ADOIT}#AdoitSystemOfWork`;
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('rdfs:label "isMasterFor"') && q.includes(`<${applicationIri}>`)) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['s', 'label', 'g'] },
+						results: {
+							bindings: [
+								{
+									s: { type: 'uri', value: systemOfWorkIri },
+									label: { type: 'literal', value: 'ADOIT' },
+									g: { type: 'uri', value: NS_ADOIT }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchMasterSystemsOfClass(applicationIri);
+
+		expect(result).toEqual([{ iri: systemOfWorkIri, label: 'ADOIT', namespaceBaseIri: NS_ADOIT }]);
+	});
+
+	it('does not hardcode any particular predicate IRI — the query matches purely by label', async () => {
+		const applicationIri = classIri('Application');
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			expect(q).not.toContain('isMasterFor>');
+			expect(q).toContain('rdfs:label "isMasterFor"');
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchMasterSystemsOfClass(applicationIri);
+	});
+
+	it('rejects a malicious/malformed IRI before any query is issued', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchMasterSystemsOfClass('not-a-safe-iri<>')).rejects.toThrow(/Invalid/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — generalized individual→class relations (data-catalog Story 017/021)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS_ADOIT = 'https://example.com/adoit';
+	const NS_CORE = 'https://example.com/core';
+
+	/** `GRAPH ?g { <iri> a ?type }` (`findNamespaceOfIndividual`) needs its own mock shape, distinct
+	 *  from `mockGraphFetch`'s `GRAPH ?g { <iri> a owl:Class }` pattern. `existingPredicateByLabel`
+	 *  feeds `resolveOrMintPredicate`'s `findObjectPropertyByLabel` lookup — a match reuses that IRI
+	 *  outright, skipping the mint-and-declare path entirely. */
+	function mockIndividualNamespaceFetch(
+		individualGraph: Record<string, string> = {},
+		existingPredicateByLabel: Record<string, string> = {}
+	) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('SELECT ?p WHERE') && q.includes('a owl:ObjectProperty')) {
+				const match = q.match(/rdfs:label "([^"]+)"/);
+				const label = match?.[1];
+				const existingIri = label && existingPredicateByLabel[label];
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['p'] },
+						results: { bindings: existingIri ? [{ p: { type: 'uri', value: existingIri } }] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('ASK') && q.includes('owl:DatatypeProperty')) {
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				const match = q.match(/GRAPH \?g \{ <([^>]+)> a \?type \}/);
+				const individualIriValue = match?.[1];
+				const graph = (individualIriValue && individualGraph[individualIriValue]) ?? DEFAULT_NAMESPACE_BASE_IRI;
+				return new Response(
+					JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: graph } }] } }),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it("insertIndividualClassRelation mints a namespace-scoped predicate IRI, declares it, and writes into the individual's own namespace", async () => {
+		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const { fn, updates } = mockIndividualNamespaceFetch({ [architectureIri]: NS_ADOIT });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { iri } = await connector.insertIndividualClassRelation(architectureIri, applicationIri, 'isAuthorityFor');
+
+		expect(iri).toBe(genericPropertyIri('isAuthorityFor', NS_ADOIT));
+		expect(updates).toHaveLength(2);
+		expect(updates.some((u) => u.includes(`<${iri}> a owl:ObjectProperty ; rdfs:label "isAuthorityFor"`))).toBe(true);
+		expect(
+			updates.some((u) =>
+				u.includes(inGraph(`<${architectureIri}> <${iri}> <${applicationIri}> .`, namespaceGraphs(NS_ADOIT).instances))
+			)
+		).toBe(true);
+	});
+
+	it('insertIndividualClassRelation reuses an existing declared property (generic or domain/range-specific) whose label matches, instead of minting a shadow predicate', async () => {
+		const systemOfWorkIri = `${NS_ADOIT}#AdoitSystemOfWork`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const existingIri = `${NS_ADOIT}#systemOfWorkIsMasterFor`;
+		const { fn, updates } = mockIndividualNamespaceFetch(
+			{ [systemOfWorkIri]: NS_ADOIT },
+			{ isMasterFor: existingIri }
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { iri } = await connector.insertIndividualClassRelation(systemOfWorkIri, applicationIri, 'isMasterFor');
+
+		expect(iri).toBe(existingIri);
+		// Only the ABox triple is written — no property declaration, since one already exists.
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			inGraph(`<${systemOfWorkIri}> <${existingIri}> <${applicationIri}> .`, namespaceGraphs(NS_ADOIT).instances)
+		);
+	});
+
+	it('insertIndividualClassRelation rejects an empty relation name without issuing a query', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.insertIndividualClassRelation(`${NS_ADOIT}#Arch`, classIri('Application'), '   ')
+		).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('deleteIndividualClassRelation removes exactly that triple', async () => {
+		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const predicateIri = genericPropertyIri('isAuthorityFor', NS_ADOIT);
+		const { fn, updates } = mockIndividualNamespaceFetch({ [architectureIri]: NS_ADOIT });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIndividualClassRelation(architectureIri, predicateIri, applicationIri);
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${architectureIri}> <${predicateIri}> <${applicationIri}> .`, namespaceGraphs(NS_ADOIT).instances)} }`
+			)
+		]);
+	});
+
+	it('fetchAllIndividualClassRelations returns every predicate except rdf:type/rdfs:label, resolving cross-namespace class targets and preferring a real rdfs:label', async () => {
+		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const predicateIri = genericPropertyIri('isAuthorityFor', NS_ADOIT);
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('?s ?p ?plabel ?class') && q.includes('GRAPH ?classGraph')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['s', 'p', 'plabel', 'class'] },
+						results: {
+							bindings: [
+								{
+									s: { type: 'uri', value: architectureIri },
+									p: { type: 'uri', value: predicateIri },
+									plabel: { type: 'literal', value: 'isAuthorityFor' },
+									class: { type: 'uri', value: applicationIri }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAllIndividualClassRelations(NS_ADOIT);
+
+		expect(result).toEqual([
+			{
+				individualIri: architectureIri,
+				predicateIri,
+				name: 'isAuthorityFor',
+				classIri: applicationIri,
+				namespaceBaseIri: NS_ADOIT
+			}
+		]);
+	});
+});
+
+describe('SparqlConnector — generic instance assertion editor (data-catalog Story 019/021)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS_ADOIT = 'https://example.com/adoit';
+	const NS_CORE = 'https://example.com/core';
+
+	/** Mirrors Story 017's own `mockIndividualNamespaceFetch` for `findNamespaceOfIndividual`'s
+	 *  `GRAPH ?g { <iri> a ?type }` lookup, plus `resolveOrMintPredicate`'s label-lookup/declare
+	 *  steps. */
+	function mockIndividualNamespaceFetch(
+		individualGraph: Record<string, string> = {},
+		existingPredicateByLabel: Record<string, string> = {}
+	) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('SELECT ?p WHERE') && q.includes('a owl:ObjectProperty')) {
+				const match = q.match(/rdfs:label "([^"]+)"/);
+				const label = match?.[1];
+				const existingIri = label && existingPredicateByLabel[label];
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['p'] },
+						results: { bindings: existingIri ? [{ p: { type: 'uri', value: existingIri } }] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('ASK') && q.includes('owl:DatatypeProperty')) {
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				const match = q.match(/GRAPH \?g \{ <([^>]+)> a \?type \}/);
+				const individualIriValue = match?.[1];
+				const graph = (individualIriValue && individualGraph[individualIriValue]) ?? DEFAULT_NAMESPACE_BASE_IRI;
+				return new Response(
+					JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: graph } }] } }),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('insertAssertion reuses an existing declared property whose label matches "isMasterFor", targeting a non-class (attribute) object', async () => {
+		const systemIri = `${NS_ADOIT}#System_B`;
+		const attributeIri = `${NS_CORE}#SchutzobjektID`;
+		const existingIri = `${NS_ADOIT}#isMasterFor`;
+		const { fn, updates } = mockIndividualNamespaceFetch({ [systemIri]: NS_ADOIT }, { isMasterFor: existingIri });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { predicateIri } = await connector.insertAssertion(systemIri, 'isMasterFor', attributeIri);
+
+		expect(predicateIri).toBe(existingIri);
+		expect(updates).toEqual([
+			expect.stringContaining(
+				inGraph(`<${systemIri}> <${existingIri}> <${attributeIri}> .`, namespaceGraphs(NS_ADOIT).instances)
+			)
+		]);
+	});
+
+	it('insertAssertion mints and declares a fresh namespace-scoped predicate for an unlisted label, targeting an individual object', async () => {
+		const systemIri = `${NS_ADOIT}#System_B`;
+		const authorityIri = `${NS_ADOIT}#RiskManagement`;
+		const { fn, updates } = mockIndividualNamespaceFetch({ [systemIri]: NS_ADOIT });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { predicateIri } = await connector.insertAssertion(systemIri, 'isOperatedBy', authorityIri);
+
+		expect(predicateIri).toBe(genericPropertyIri('isOperatedBy', NS_ADOIT));
+		expect(updates.some((u) => u.includes(`<${predicateIri}> a owl:ObjectProperty ; rdfs:label "isOperatedBy"`))).toBe(
+			true
+		);
+		expect(
+			updates.some((u) =>
+				u.includes(inGraph(`<${systemIri}> <${predicateIri}> <${authorityIri}> .`, namespaceGraphs(NS_ADOIT).instances))
+			)
+		).toBe(true);
+	});
+
+	it('insertAssertion rejects an empty predicate label without issuing a query', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.insertAssertion(`${NS_ADOIT}#System_B`, '   ', `${NS_CORE}#SchutzobjektID`)
+		).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('deleteAssertion removes exactly the given triple', async () => {
+		const systemIri = `${NS_ADOIT}#System_B`;
+		const attributeIri = `${NS_CORE}#SchutzobjektID`;
+		const predicateIri = `${NS_ADOIT}#isMasterFor`;
+		const { fn, updates } = mockIndividualNamespaceFetch({ [systemIri]: NS_ADOIT });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteAssertion(systemIri, predicateIri, attributeIri);
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${systemIri}> <${predicateIri}> <${attributeIri}> .`, namespaceGraphs(NS_ADOIT).instances)} }`
+			)
+		]);
+	});
+
+	it('fetchAssertionsForIndividual returns labeled predicate/object pairs, excluding rdf:type/rdfs:label', async () => {
+		const systemIri = `${NS_ADOIT}#System_B`;
+		const attributeIri = `${NS_CORE}#SchutzobjektID`;
+		const predicateIri = `${NS_ADOIT}#isMasterFor`;
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return new Response(
+					JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: NS_ADOIT } }] } }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('?p ?plabel ?o ?olabel')) {
+				expect(q).toContain('?p != rdf:type && ?p != rdfs:label');
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['p', 'plabel', 'o', 'olabel'] },
+						results: {
+							bindings: [
+								{
+									p: { type: 'uri', value: predicateIri },
+									plabel: { type: 'literal', value: 'isMasterFor' },
+									o: { type: 'uri', value: attributeIri },
+									olabel: { type: 'literal', value: 'SchutzobjektID' }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAssertionsForIndividual(systemIri);
+
+		expect(result).toEqual([
+			{
+				individualIri: systemIri,
+				predicateIri,
+				predicateLabel: 'isMasterFor',
+				objectIri: attributeIri,
+				objectLabel: 'SchutzobjektID'
+			}
+		]);
+	});
+
+	it('fetchNameableEntities tags every schema entity with its kind, composing fetchFullSchemaForAllNamespaces', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [{ iri: 'urn:C', label: 'C', comment: null, namespaceBaseIri: NS_CORE }],
+			datatypeProperties: [
+				{
+					iri: 'urn:A',
+					label: 'A',
+					domain: 'urn:C',
+					range: 'http://www.w3.org/2001/XMLSchema#string',
+					namespaceBaseIri: NS_CORE,
+					required: false,
+					repeatable: false
+				}
+			],
+			objectProperties: [
+				{
+					iri: 'urn:R',
+					label: 'R',
+					domain: 'urn:C',
+					range: 'urn:C',
+					namespaceBaseIri: NS_CORE,
+					required: false,
+					repeatable: false,
+					relationKind: 'specific'
+				}
+			],
+			subClassOf: [],
+			individuals: [{ iri: 'urn:I', label: 'I', classIri: 'urn:C', namespaceBaseIri: NS_CORE }],
+			individualClassRelations: []
+		});
+
+		const result = await connector.fetchNameableEntities();
+
+		expect(result).toEqual([
+			{ iri: 'urn:C', label: 'C', kind: 'class' },
+			{ iri: 'urn:A', label: 'C.A', kind: 'attribute' },
+			{ iri: 'urn:R', label: 'R', kind: 'relation' },
+			{ iri: 'urn:I', label: 'I', kind: 'individual' }
+		]);
+	});
+
+	it('fetchRelationPredicateOptions lists every declared relation (generic and specific) plus every named individual→class relation, deduplicated', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const genericIri = genericPropertyIri('isOperatedBy', NS_ADOIT);
+		const specificIri = `${NS_ADOIT}#systemOfWorkIsMasterFor`;
+		const authorityRelIri = genericPropertyIri('isAuthorityFor', NS_ADOIT);
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [
+				{
+					iri: genericIri,
+					label: 'isOperatedBy',
+					domain: '',
+					range: '',
+					namespaceBaseIri: NS_ADOIT,
+					required: false,
+					repeatable: false,
+					relationKind: 'generic'
+				},
+				{
+					iri: specificIri,
+					label: 'isMasterFor',
+					domain: `${NS_ADOIT}#SystemOfWork`,
+					range: `${NS_CORE}#AuthoritativeEntity`,
+					namespaceBaseIri: NS_ADOIT,
+					required: false,
+					repeatable: false,
+					relationKind: 'specific'
+				}
+			],
+			subClassOf: [],
+			individuals: [],
+			individualClassRelations: [
+				{
+					individualIri: `${NS_ADOIT}#Arch`,
+					predicateIri: authorityRelIri,
+					name: 'isAuthorityFor',
+					classIri: 'urn:C',
+					namespaceBaseIri: NS_ADOIT
+				}
+			]
+		});
+
+		const result = await connector.fetchRelationPredicateOptions();
+
+		expect(result).toEqual(
+			expect.arrayContaining([
+				{ iri: specificIri, label: 'isMasterFor' },
+				{ iri: genericIri, label: 'isOperatedBy' },
+				{ iri: authorityRelIri, label: 'isAuthorityFor' }
+			])
+		);
+		expect(result).toHaveLength(3);
+	});
+});
+
+describe('SparqlConnector — split-dataset catalog generation for attribute overrides (data-catalog Story 020)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	const applicationIri = classIri('Application');
+	const attributeIri = propertyIri(applicationIri, 'SchutzobjektID');
+	const dataset = datasetIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+	const systemBIri = 'https://example.com/adoit#System_B';
+	const splitDataset = splitDatasetIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application', 'System_B');
+
+	function mockSplitCatalogFetch(
+		fixture: {
+			datasetExists?: boolean;
+			splitDatasetExists?: boolean;
+			label?: string;
+			existingSplitIris?: string[];
+			attributeOverride?: { systemIri: string; systemLabel: string } | null;
+			operatingAuthority?: string | null;
+		} = {}
+	) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('ASK') && q.includes(`a <${DCAT.Catalog}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: true }), { status: 200 });
+			}
+			if (q.includes('ASK') && q.includes(`<${splitDataset}> a <${DCAT.Dataset}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.splitDatasetExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('ASK') && q.includes(`<${dataset}> a <${DCAT.Dataset}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.datasetExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('SELECT ?label ?comment')) {
+				const binding: SparqlBinding = fixture.label ? { label: { type: 'literal', value: fixture.label } } : {};
+				return new Response(
+					JSON.stringify({ head: { vars: ['label', 'comment'] }, results: { bindings: fixture.label ? [binding] : [] } }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:label "isMasterFor"') && q.includes(`<${applicationIri}>`)) {
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+			}
+			if (q.includes('rdfs:label "isMasterFor"') && q.includes(`<${attributeIri}>`)) {
+				const bindings = fixture.attributeOverride
+					? [
+							{
+								s: { type: 'uri', value: fixture.attributeOverride.systemIri },
+								label: { type: 'literal', value: fixture.attributeOverride.systemLabel },
+								g: { type: 'uri', value: 'https://example.com/adoit' }
+							}
+						]
+					: [];
+				return new Response(JSON.stringify({ head: { vars: ['s', 'label', 'g'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			if (q.includes('owl:DatatypeProperty')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['p', 'label', 'domain', 'range'] },
+						results: {
+							bindings: [
+								{
+									p: { type: 'uri', value: attributeIri },
+									domain: { type: 'uri', value: applicationIri },
+									range: { type: 'uri', value: 'http://www.w3.org/2001/XMLSchema#string' }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('?split') && q.includes('isPartOf')) {
+				const bindings = (fixture.existingSplitIris ?? []).map((iri) => ({ split: { type: 'uri', value: iri } }));
+				return new Response(JSON.stringify({ head: { vars: ['split'] }, results: { bindings } }), { status: 200 });
+			}
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: 'https://example.com/adoit' } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?authority WHERE')) {
+				const bindings = fixture.operatingAuthority
+					? [{ authority: { type: 'uri', value: fixture.operatingAuthority } }]
+					: [];
+				return new Response(JSON.stringify({ head: { vars: ['authority'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('an entity with no attribute overrides generates exactly the same single dcat:Dataset output as before this story (no regression)', async () => {
+		const { fn, updates } = mockSplitCatalogFetch({ label: 'Application' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		expect(updates.some((u) => u.includes(splitDataset))).toBe(false);
+	});
+
+	it('an attribute-level override produces its own split dcat:Dataset, linked to the entity default dataset via dct:isPartOf', async () => {
+		const { fn, updates } = mockSplitCatalogFetch({
+			label: 'Application',
+			attributeOverride: { systemIri: systemBIri, systemLabel: 'System B' }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const splitInsert = updates.find((u) => u.includes(`<${splitDataset}> a <${DCAT.Dataset}>`));
+		expect(splitInsert).toBeDefined();
+		expect(splitInsert).toContain(`<${splitDataset}> <${DCT.isPartOf}> <${dataset}>`);
+		expect(splitInsert).toContain(`<${splitDataset}> <${PROV.wasAttributedTo}> <${systemBIri}>`);
+		expect(splitInsert).toContain(`<${splitDataset}> <${PROV.wasDerivedFrom}> <${systemBIri}>`);
+
+		const placeholderInsert = updates.find((u) => u.includes(`<${splitDataset}> <${DCAT.distribution}>`));
+		expect(placeholderInsert).toBeDefined();
+		expect(placeholderInsert).toContain(`<${splitDataset}> <${DCT.publisher}> ""`);
+		expect(placeholderInsert).toContain(`<${splitDataset}> <${DCT.license}> ""`);
+	});
+
+	it("a split dataset's provenance also includes the overriding system's authority via isOperatedBy", async () => {
+		const authorityIri = 'https://example.com/adoit#RiskManagement';
+		const { fn, updates } = mockSplitCatalogFetch({
+			label: 'Application',
+			attributeOverride: { systemIri: systemBIri, systemLabel: 'System B' },
+			operatingAuthority: authorityIri
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const splitInsert = updates.find((u) => u.includes(`<${splitDataset}> a <${DCAT.Dataset}>`))!;
+		expect(splitInsert).toContain(`<${splitDataset}> <${PROV.wasAttributedTo}> <${authorityIri}>`);
+	});
+
+	it('regeneration with an existing split dataset deletes/reinserts only generator-owned predicates, preserving publisher/license/distribution', async () => {
+		const { fn, updates } = mockSplitCatalogFetch({
+			label: 'Application',
+			datasetExists: true,
+			splitDatasetExists: true,
+			existingSplitIris: [splitDataset],
+			attributeOverride: { systemIri: systemBIri, systemLabel: 'System B' }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const splitDeleteOps = updates.filter((u) => u.includes('DELETE WHERE') && u.includes(`<${splitDataset}>`));
+		expect(splitDeleteOps.some((u) => u.includes(`<${splitDataset}> <${DCT.title}>`))).toBe(true);
+		expect(splitDeleteOps.some((u) => u.includes(`<${splitDataset}> <${DCT.publisher}>`))).toBe(false);
+		expect(updates.some((u) => u.includes(`<${splitDataset}> <${DCAT.distribution}>`))).toBe(false);
+	});
+
+	it('removing an attribute override folds it back: an existing split dataset with no remaining override is deleted', async () => {
+		const { fn, updates } = mockSplitCatalogFetch({
+			label: 'Application',
+			datasetExists: true,
+			existingSplitIris: [splitDataset],
+			attributeOverride: null
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		expect(updates.some((u) => u.includes('DELETE WHERE') && u.includes(`<${splitDataset}> ?p ?o`))).toBe(true);
+		expect(updates.some((u) => u.includes(`<${splitDataset}> a <${DCAT.Dataset}>`))).toBe(false);
+	});
+});
+
+describe('SparqlConnector — catalog generation & regeneration (data-catalog Story 008/012)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.useRealTimers();
+	});
+
+	const applicationIri = classIri('Application');
+	const dataset = datasetIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+	const catalog = catalogIri(DEFAULT_NAMESPACE_BASE_IRI);
+	const distribution = distributionIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+
+	function mockCatalogFetch(
+		fixture: {
+			catalogExists?: boolean;
+			datasetExists?: boolean;
+			label?: string;
+			comment?: string | null;
+			masters?: Array<{ s: string; label?: string; g: string }>;
+			namespaceRows?: Array<{
+				ns: string;
+				prefix?: string;
+				publisher?: string;
+				license?: string;
+			}>;
+		} = {}
+	) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('ASK') && q.includes(`a <${DCAT.Catalog}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.catalogExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('ASK') && q.includes(`a <${DCAT.Dataset}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.datasetExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('SELECT ?label ?comment')) {
+				const binding: SparqlBinding = {};
+				if (fixture.label) binding.label = { type: 'literal', value: fixture.label };
+				if (fixture.comment) binding.comment = { type: 'literal', value: fixture.comment };
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['label', 'comment'] },
+						results: { bindings: fixture.label !== undefined ? [binding] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?s ?label ?g WHERE')) {
+				const bindings = (fixture.masters ?? []).map((m) => {
+					const b: SparqlBinding = { s: { type: 'uri', value: m.s }, g: { type: 'uri', value: m.g } };
+					if (m.label) b.label = { type: 'literal', value: m.label };
+					return b;
+				});
+				return new Response(
+					JSON.stringify({ head: { vars: ['s', 'label', 'g'] }, results: { bindings } }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?ns ?prefix ?desc ?color ?publisher ?license')) {
+				const bindings = (fixture.namespaceRows ?? []).map((r) => {
+					const b: SparqlBinding = { ns: { type: 'uri', value: r.ns } };
+					if (r.prefix) b.prefix = { type: 'literal', value: r.prefix };
+					if (r.publisher) b.publisher = { type: 'literal', value: r.publisher };
+					if (r.license) b.license = { type: 'uri', value: r.license };
+					return b;
+				});
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns', 'prefix', 'desc', 'color', 'publisher', 'license'] },
+						results: { bindings }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('ensureCatalogContainer creates the container only if missing, and reuses it across classes', async () => {
+		const { fn, updates } = mockCatalogFetch({ catalogExists: false });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.ensureCatalogContainer();
+		expect(updates).toEqual([expect.stringContaining(`<${catalog}> a <${DCAT.Catalog}> .`)]);
+
+		const { fn: fn2, updates: updates2 } = mockCatalogFetch({ catalogExists: true });
+		vi.stubGlobal('fetch', fn2);
+		await connector.ensureCatalogContainer();
+		expect(updates2).toHaveLength(0);
+	});
+
+	it('generates the mandatory inferable triples for a first-time catalog entry', async () => {
+		const { fn, updates } = mockCatalogFetch({
+			catalogExists: false,
+			datasetExists: false,
+			label: 'Application',
+			comment: 'An enterprise application.'
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const result = await connector.generateCatalogForClass(applicationIri);
+		expect(result.datasetIri).toBe(dataset);
+
+		const insertOps = updates.filter((u) => u.includes('INSERT DATA'));
+		const generatorInsert = insertOps.find((u) => u.includes(`<${dataset}> a <${DCAT.Dataset}>`));
+		expect(generatorInsert).toBeDefined();
+		expect(generatorInsert).toContain(`<${dataset}> <${DCT.title}> "Application"`);
+		expect(generatorInsert).toContain(`<${dataset}> <${DCT.description}> "An enterprise application."`);
+		expect(generatorInsert).toContain(`<${dataset}> <${DCT.conformsTo}> <${applicationIri}>`);
+		expect(generatorInsert).toContain(`<${dataset}> <${PROV.wasGeneratedBy}>`);
+		expect(generatorInsert).not.toContain(PROV.wasAttributedTo);
+		expect(generatorInsert).not.toContain(PROV.wasDerivedFrom);
+
+		// dcat:Distribution placeholder is always emitted, never omitted.
+		const placeholderInsert = insertOps.find((u) => u.includes(`<${dataset}> <${DCAT.distribution}>`));
+		expect(placeholderInsert).toBeDefined();
+		expect(placeholderInsert).toContain(`<${distribution}> a <${DCAT.Distribution}>`);
+		expect(placeholderInsert).toContain(`<${distribution}> <${DCT.format}> ""`);
+		expect(placeholderInsert).toContain(`<${distribution}> <${DCAT.mediaType}> ""`);
+		expect(placeholderInsert).toContain(`<${distribution}> <${DCAT.accessURL}> ""`);
+		// dcat:theme is never populated — no taxonomy source to infer it from.
+		expect(placeholderInsert).not.toContain(DCAT.theme);
+	});
+
+	it('includes prov:wasAttributedTo/wasDerivedFrom when an isMasterFor assertion exists, omits them otherwise', async () => {
+		const systemOfWorkIri = 'https://example.com/adoit#AdoitSystemOfWork';
+		const { fn, updates } = mockCatalogFetch({
+			label: 'Application',
+			masters: [{ s: systemOfWorkIri, label: 'ADOIT', g: 'https://example.com/adoit' }]
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const generatorInsert = updates.find((u) => u.includes(`<${dataset}> a <${DCAT.Dataset}>`))!;
+		expect(generatorInsert).toContain(`<${dataset}> <${PROV.wasAttributedTo}> <${systemOfWorkIri}>`);
+		expect(generatorInsert).toContain(`<${dataset}> <${PROV.wasDerivedFrom}> <${systemOfWorkIri}>`);
+	});
+
+	it('pre-fills dct:publisher/dct:license from the namespace default when one is set', async () => {
+		const { fn, updates } = mockCatalogFetch({
+			label: 'Application',
+			namespaceRows: [
+				{
+					ns: DEFAULT_NAMESPACE_BASE_IRI,
+					prefix: 'rse',
+					publisher: 'Application Architecture Authority',
+					license: 'https://example.com/license/enterprise-internal-v1'
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const placeholderInsert = updates.find((u) => u.includes(`<${dataset}> <${DCAT.distribution}>`))!;
+		expect(placeholderInsert).toContain(
+			`<${dataset}> <${DCT.publisher}> "Application Architecture Authority"`
+		);
+		expect(placeholderInsert).toContain(
+			`<${dataset}> <${DCT.license}> <https://example.com/license/enterprise-internal-v1>`
+		);
+	});
+
+	it('emits empty placeholders for dct:publisher/dct:license when no namespace default exists', async () => {
+		const { fn, updates } = mockCatalogFetch({ label: 'Application' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const placeholderInsert = updates.find((u) => u.includes(`<${dataset}> <${DCAT.distribution}>`))!;
+		expect(placeholderInsert).toContain(`<${dataset}> <${DCT.publisher}> ""`);
+		expect(placeholderInsert).toContain(`<${dataset}> <${DCT.license}> ""`);
+	});
+
+	it('regeneration deletes/reinserts only generator-owned predicates, leaving publisher/license/distribution untouched', async () => {
+		const { fn, updates } = mockCatalogFetch({
+			catalogExists: true,
+			datasetExists: true,
+			label: 'Application Renamed'
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+
+		const deleteOps = updates.filter((u) => u.includes('DELETE WHERE'));
+		// One DELETE WHERE per generator-owned predicate, none for publisher/license/distribution/theme/keyword.
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${RDF.type}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCT.title}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCT.description}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCT.conformsTo}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${PROV.wasAttributedTo}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${PROV.wasDerivedFrom}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${PROV.wasGeneratedBy}>`))).toBe(true);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCT.publisher}>`))).toBe(false);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCT.license}>`))).toBe(false);
+		expect(deleteOps.some((u) => u.includes(`<${dataset}> <${DCAT.distribution}>`))).toBe(false);
+
+		// No placeholder re-insertion on regeneration — publisher/license/distribution insert is
+		// first-generation only.
+		expect(updates.some((u) => u.includes(`<${dataset}> <${DCAT.distribution}>`))).toBe(false);
+
+		const insertOp = updates.find((u) => u.includes('INSERT DATA'))!;
+		expect(insertOp).toContain(`<${dataset}> <${DCT.title}> "Application Renamed"`);
+	});
+
+	it('two successive regeneration runs mint two distinct prov:Activity individuals', async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(new Date('2026-01-01T00:00:00Z'));
+		const { fn, updates } = mockCatalogFetch({ catalogExists: true, datasetExists: true, label: 'Application' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.generateCatalogForClass(applicationIri);
+		vi.setSystemTime(new Date('2026-01-02T00:00:00Z'));
+		await connector.generateCatalogForClass(applicationIri);
+
+		const activityTriples = updates
+			.filter((u) => u.includes('INSERT DATA') && u.includes(`a <${PROV.Activity}>`))
+			.map((u) => u.match(new RegExp(`<([^>]+)> a <${PROV.Activity.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}>`))?.[1]);
+		expect(activityTriples).toHaveLength(2);
+		expect(activityTriples[0]).not.toBe(activityTriples[1]);
+	});
+
+	it('rejects a malicious/malformed IRI before any query is issued', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.generateCatalogForClass('not-a-safe-iri<>')).rejects.toThrow(/Invalid/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — catalog Turtle fetch/save & per-entity metadata (data-catalog Story 009/011)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const applicationIri = classIri('Application');
+	const dataset = datasetIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+
+	function mockCatalogGraphFetch(catalogQuadBindings: Array<{ s: string; p: string; o: SparqlBinding['o'] }>) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('SELECT ?s ?p ?o')) {
+				const bindings = catalogQuadBindings.map((row) => ({
+					s: { type: 'uri', value: row.s },
+					p: { type: 'uri', value: row.p },
+					o: row.o
+				}));
+				return new Response(
+					JSON.stringify({ head: { vars: ['s', 'p', 'o'] }, results: { bindings } }),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('fetchCatalogTurtleForClass returns an empty string when nothing has been generated yet', async () => {
+		const { fn } = mockCatalogGraphFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const result = await connector.fetchCatalogTurtleForClass(applicationIri);
+		expect(result).toBe('');
+	});
+
+	it('fetchCatalogTurtleForClass returns the class scope as Turtle when a catalog entry exists', async () => {
+		const { fn } = mockCatalogGraphFetch([
+			{ s: dataset, p: RDF.type, o: { type: 'uri', value: DCAT.Dataset } },
+			{ s: dataset, p: DCT.title, o: { type: 'literal', value: 'Application' } }
+		]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const result = await connector.fetchCatalogTurtleForClass(applicationIri);
+		expect(result).toContain('Application');
+	});
+
+	it('saveCatalogTurtleForClass rejects a draft missing mandatory fields without writing anything', async () => {
+		const { fn, updates } = mockCatalogGraphFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const incompleteTurtle = `
+			@prefix dcat: <${DCAT.Dataset.slice(0, -'Dataset'.length)}> .
+			<${dataset}> a dcat:Dataset .
+		`;
+		await expect(
+			connector.saveCatalogTurtleForClass(applicationIri, incompleteTurtle)
+		).rejects.toThrow();
+		expect(updates).toHaveLength(0);
+	});
+
+	it('setCatalogPublisher/setCatalogLicense write per-entity overrides directly, distinct from the namespace default', async () => {
+		const { fn, updates } = mockCatalogGraphFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.setCatalogPublisher(applicationIri, 'Override Org');
+		await connector.setCatalogLicense(applicationIri, 'https://example.com/license/override');
+
+		expect(updates[0]).toContain(`<${dataset}> <${DCT.publisher}> "Override Org"`);
+		expect(updates[1]).toContain(`<${dataset}> <${DCT.license}> <https://example.com/license/override>`);
+	});
+
+	it('setCatalogDistribution replaces the one deterministic distribution node in place', async () => {
+		const { fn, updates } = mockCatalogGraphFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		await connector.setCatalogDistribution(applicationIri, {
+			format: 'https://www.iana.org/assignments/media-types/text/turtle',
+			mediaType: 'https://www.iana.org/assignments/media-types/text/turtle',
+			accessURL: 'https://example.com/adoit/distribution/application-inventory.ttl'
+		});
+
+		const distribution = distributionIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+		expect(updates[0]).toContain(`<${dataset}> <${DCAT.distribution}> <${distribution}>`);
+		expect(updates[0]).toContain(
+			`<${distribution}> <${DCT.format}> <https://www.iana.org/assignments/media-types/text/turtle>`
+		);
+	});
+});
 
 describe('SparqlConnector — inheritance (STORY-008)', () => {
 	afterEach(() => vi.unstubAllGlobals());
@@ -1638,7 +2759,14 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		const namespaces = await connector.fetchNamespaces();
 
 		expect(namespaces).toEqual([
-			{ baseIri: govBase, prefix: 'gov', description: 'Governmental entities', color: null }
+			{
+				baseIri: govBase,
+				prefix: 'gov',
+				description: 'Governmental entities',
+				color: null,
+				publisher: null,
+				license: null
+			}
 		]);
 	});
 
@@ -1666,7 +2794,9 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		const connector = new SparqlConnector('/api/sparql');
 		const namespaces = await connector.fetchNamespaces();
 
-		expect(namespaces).toEqual([{ baseIri: govBase, prefix: 'gov', description: null, color: '#ff0000' }]);
+		expect(namespaces).toEqual([
+			{ baseIri: govBase, prefix: 'gov', description: null, color: '#ff0000', publisher: null, license: null }
+		]);
 	});
 
 	it('fetchFullSchemaForAllNamespaces merges every registered namespace\'s classes, each tagged with its own namespace (STORY-034)', async () => {
@@ -1823,6 +2953,56 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`DELETE WHERE`);
 		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_COLOR_PREDICATE_IRI}> ?old`);
+	});
+
+	it('updateNamespacePublisher sets dct:publisher as a plain literal (data-catalog Story 011)', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespacePublisher(govBase, 'Governmental Authority');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${DCT.publisher}> "Governmental Authority"`);
+	});
+
+	it('updateNamespacePublisher with null removes the publisher predicate', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespacePublisher(govBase, null);
+
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${govBase}> <${DCT.publisher}> ?old`, DEFAULT_GRAPHS.schema)} }`)
+		]);
+	});
+
+	it('updateNamespaceLicense sets dct:license as an IRI (data-catalog Story 011)', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceLicense(govBase, 'https://example.com/license/gov-v1');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${DCT.license}> <https://example.com/license/gov-v1>`);
+	});
+
+	it('updateNamespaceLicense with null removes the license predicate', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceLicense(govBase, null);
+
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${govBase}> <${DCT.license}> ?old`, DEFAULT_GRAPHS.schema)} }`)
+		]);
 	});
 
 	it('deleteNamespace without force is refused with the entry count when non-empty', async () => {
@@ -2588,7 +3768,7 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 		});
 	});
 
-	it('emits one edge per target for a generic relation drawn to several targets from the *same* source class (an sh:or union in the shapes graph)', async () => {
+	it('emits one edge per target for a generic relation drawn to several targets from the *same* source class (independent sh:property blocks in the shapes graph, data-catalog Story 018)', async () => {
 		const project = classIri('Project');
 		const tool = classIri('Tool');
 		const ingredient = classIri('Ingredient');
@@ -2783,7 +3963,7 @@ describe('SparqlConnector — reference-counted deletion for generic relations (
 		);
 	});
 
-	it("deleting one target of a generic relation's sh:or union (multiple targets from the same source class) only drops that target, leaving the shape and the other target(s) untouched", async () => {
+	it("deleting one target of a generic relation with multiple independent sh:property targets (data-catalog Story 018, multiple targets from the same source class) only drops that target, leaving the shape and the other target(s) untouched", async () => {
 		const project = classIri('Project');
 		const usesIri = `${DEFAULT_GRAPHS.schema}uses`;
 		const tool = classIri('Tool');

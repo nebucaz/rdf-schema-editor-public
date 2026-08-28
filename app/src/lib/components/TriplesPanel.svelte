@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
-	import type { Partition } from '$lib/services/turtle';
 	import { SchemaValidationError, type ValidationIssue } from '$lib/services/validation';
 	import { extractLocalName } from '$lib/utils/iri';
 	import { highlightTurtle } from '$lib/utils/turtle-highlight';
 	import { buildCanvasModel } from '$lib/services/canvas-model';
 	import { canvasModelToLinkML } from '$lib/services/linkml';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import CatalogMetadataForm from './CatalogMetadataForm.svelte';
 
 	interface Props {
 		/** `null` means "whole schema graph"; otherwise the IRI of the selected entity/relation. */
@@ -15,19 +15,39 @@
 		namespaces: FetchedNamespace[];
 		/** Base IRI the selector defaults to (STORY-031's active namespace) when the panel opens. */
 		initialNamespaceBaseIri: string;
+		/** Whether `selectedIri` carries the `AuthoritativeEntity` marker (data-catalog Story 003) —
+		 *  gates the Catalog tab (Story 009): catalog entries only exist for such classes, and
+		 *  `selectedIri` itself must be non-null for the tab to make sense. */
+		showCatalogTab: boolean;
+		/** Data-catalog Story 014: which tab to activate. Defaults to `'schema'`; per-node "View
+		 *  catalog" passes `'catalog'` so the panel opens straight onto the requested tab. Re-applied
+		 *  whenever the caller passes a new value (not just on mount), so re-opening the already-open
+		 *  panel from a different menu entry still jumps tabs. */
+		initialTab?: TabPartition;
 		onClose: () => void;
 		/** Called after a successful save so the canvas can reflect the edit without a page reload. */
 		onSaved: () => void;
 	}
 
-	let { selectedIri, namespaces, initialNamespaceBaseIri, onClose, onSaved }: Props = $props();
+	let {
+		selectedIri,
+		namespaces,
+		initialNamespaceBaseIri,
+		showCatalogTab,
+		initialTab = 'schema',
+		onClose,
+		onSaved
+	}: Props = $props();
 
 	// Set once from `initialNamespaceBaseIri` when the panel mounts; the user's own selection then
 	// persists across `selectedIri` changes (canvas selection) without resetting to the default.
 	let selectedNamespace = $state(initialNamespaceBaseIri);
 
-	/** `'all'` never appears here — STORY-018's tabs are always exactly one of these two. */
-	type TabPartition = Exclude<Partition, 'all'>;
+	/** STORY-018's Schema/Shapes tabs, plus Story 009's Catalog tab — unlike Schema/Shapes (a
+	 *  `turtle.ts` `Partition` filtered out of one whole-graph fetch), Catalog lives in its own
+	 *  graph entirely and is fetched/saved through its own dedicated connector methods, so it isn't
+	 *  a `Partition` value. */
+	type TabPartition = 'schema' | 'shapes' | 'catalog';
 
 	interface TabState {
 		editing: boolean;
@@ -41,10 +61,14 @@
 		return { editing: false, savedText: '', draftText: '', saving: false, issues: [] };
 	}
 
-	let activeTab = $state<TabPartition>('schema');
+	let activeTab = $state<TabPartition>(initialTab);
 	let schemaTab = $state<TabState>(makeTabState());
 	let shapesTab = $state<TabState>(makeTabState());
-	const currentTab = $derived(activeTab === 'schema' ? schemaTab : shapesTab);
+	let catalogTab = $state<TabState>(makeTabState());
+	let generatingCatalog = $state(false);
+	const currentTab = $derived(
+		activeTab === 'schema' ? schemaTab : activeTab === 'shapes' ? shapesTab : catalogTab
+	);
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
@@ -68,12 +92,21 @@
 		schemaTab.editing = false;
 		shapesTab.issues = [];
 		shapesTab.editing = false;
+		catalogTab.issues = [];
+		catalogTab.editing = false;
 		try {
-			const pair = await sparqlConnector.fetchScopedTurtlePair(iri, namespaceBaseIri);
+			const [pair, catalogText] = await Promise.all([
+				sparqlConnector.fetchScopedTurtlePair(iri, namespaceBaseIri),
+				iri !== null && showCatalogTab
+					? sparqlConnector.fetchCatalogTurtleForClass(iri, namespaceBaseIri)
+					: Promise.resolve('')
+			]);
 			schemaTab.savedText = pair.schema;
 			schemaTab.draftText = pair.schema;
 			shapesTab.savedText = pair.shapes;
 			shapesTab.draftText = pair.shapes;
+			catalogTab.savedText = catalogText;
+			catalogTab.draftText = catalogText;
 		} catch (err) {
 			loadError = err instanceof Error ? err.message : 'Failed to load triples';
 		} finally {
@@ -81,9 +114,46 @@
 		}
 	}
 
+	/** Reloads just the Catalog tab's content — used after "Generate catalog" and after
+	 *  `CatalogMetadataForm`'s direct-to-GraphDB writes, neither of which need a full reload of the
+	 *  Schema/Shapes tabs. */
+	async function reloadCatalogTab() {
+		if (selectedIri === null) return;
+		const text = await sparqlConnector.fetchCatalogTurtleForClass(selectedIri, selectedNamespace);
+		catalogTab.savedText = text;
+		catalogTab.draftText = text;
+		catalogTab.editing = false;
+		catalogTab.issues = [];
+	}
+
+	/** Story 008/012's "Generate catalog" action — a single entry point for both first-generation
+	 *  and regeneration; `generateCatalogForClass` itself decides which, and never clobbers
+	 *  user-entered `publisher`/`license`/`distribution` fields on a regeneration. */
+	async function generateCatalog() {
+		if (selectedIri === null) return;
+		generatingCatalog = true;
+		catalogTab.issues = [];
+		try {
+			await sparqlConnector.generateCatalogForClass(selectedIri, selectedNamespace);
+			await reloadCatalogTab();
+		} catch (err) {
+			catalogTab.issues = [
+				{ layer: 'structural', message: err instanceof Error ? err.message : String(err) }
+			];
+		} finally {
+			generatingCatalog = false;
+		}
+	}
+
 	// Re-fetches whenever the canvas selection or the chosen namespace changes while the panel is open.
 	$effect(() => {
 		void load(selectedIri, selectedNamespace);
+	});
+
+	// Jumps to the requested tab whenever the caller passes a new `initialTab` — e.g. clicking "View
+	// catalog" on a different entity while the panel is already open on the Schema tab.
+	$effect(() => {
+		activeTab = initialTab;
 	});
 
 	function startEdit() {
@@ -99,16 +169,15 @@
 	}
 
 	async function save() {
-		const partition = activeTab;
 		currentTab.saving = true;
 		currentTab.issues = [];
 		try {
-			await sparqlConnector.saveScopedTurtle(
-				selectedIri,
-				currentTab.draftText,
-				partition,
-				selectedNamespace
-			);
+			if (activeTab === 'catalog') {
+				if (selectedIri === null) throw new Error('Catalog entries require a selected entity');
+				await sparqlConnector.saveCatalogTurtleForClass(selectedIri, currentTab.draftText, selectedNamespace);
+			} else {
+				await sparqlConnector.saveScopedTurtle(selectedIri, currentTab.draftText, activeTab, selectedNamespace);
+			}
 			currentTab.editing = false;
 			onSaved();
 			await load(selectedIri, selectedNamespace);
@@ -180,7 +249,10 @@
 	};
 
 	const scopeLabel = $derived(selectedIri ? extractLocalName(selectedIri) : 'Whole schema graph');
-	const tabLabel: Record<TabPartition, string> = { schema: 'Schema', shapes: 'Shapes' };
+	const tabLabel: Record<TabPartition, string> = { schema: 'Schema', shapes: 'Shapes', catalog: 'Catalog' };
+	const visibleTabs = $derived(
+		showCatalogTab ? (['schema', 'shapes', 'catalog'] as const) : (['schema', 'shapes'] as const)
+	);
 </script>
 
 <div class="triples-panel">
@@ -190,7 +262,7 @@
 	</div>
 
 	<div class="tab-switch" role="tablist">
-		{#each ['schema', 'shapes'] as const as tab (tab)}
+		{#each visibleTabs as tab (tab)}
 			<button
 				role="tab"
 				aria-selected={activeTab === tab}
@@ -220,6 +292,20 @@
 			<p class="status">Loading…</p>
 		{:else if loadError}
 			<p class="status error">{loadError}</p>
+		{:else if activeTab === 'catalog' && selectedIri === null}
+			<p class="status">Select an entity to view or generate its catalog entry.</p>
+		{:else if activeTab === 'catalog' && catalogTab.savedText === '' && !currentTab.editing}
+			{#if currentTab.issues.length > 0}
+				<ul class="issues">
+					{#each currentTab.issues as issue, i (i)}
+						<li><strong>{layerLabel[issue.layer]}:</strong> {issue.message}</li>
+					{/each}
+				</ul>
+			{/if}
+			<p class="status">No catalog entry has been generated yet for this entity.</p>
+			<button class="primary" onclick={generateCatalog} disabled={generatingCatalog}>
+				{generatingCatalog ? 'Generating…' : 'Generate catalog'}
+			</button>
 		{:else}
 			{#if currentTab.issues.length > 0}
 				<ul class="issues">
@@ -227,6 +313,10 @@
 						<li><strong>{layerLabel[issue.layer]}:</strong> {issue.message}</li>
 					{/each}
 				</ul>
+			{/if}
+
+			{#if activeTab === 'catalog' && selectedIri !== null}
+				<CatalogMetadataForm classIri={selectedIri} namespaceBaseIri={selectedNamespace} onSaved={reloadCatalogTab} />
 			{/if}
 
 			<div class="editor-wrap">
@@ -255,6 +345,11 @@
 				>
 					{exportingLinkML ? 'Exporting…' : 'Download LinkML'}
 				</button>
+				{#if activeTab === 'catalog' && selectedIri !== null}
+					<button class="secondary" onclick={generateCatalog} disabled={generatingCatalog}>
+						{generatingCatalog ? 'Regenerating…' : 'Regenerate'}
+					</button>
+				{/if}
 				<div class="spacer"></div>
 				{#if currentTab.editing}
 					<button class="secondary" onclick={cancelEdit} disabled={currentTab.saving}>Cancel</button>

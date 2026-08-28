@@ -157,7 +157,11 @@ interface EnumDraft {
 }
 
 function nodeDisplayName(node: NodeSpec): string {
-	return node.kind === 'entity' ? node.name : node.prefixedName;
+	if (node.kind === 'entity') return node.name;
+	// LinkML export always runs against 'schema'-view-mode output (this module's only caller never
+	// passes `{ viewMode: 'instances' }`), so an 'individual' node never actually reaches here — this
+	// branch only exists to satisfy `NodeSpec`'s now-three-way union (data-catalog Story 005).
+	return node.kind === 'external' ? node.prefixedName : node.label;
 }
 
 /** A class is enum-backing (STORY-069) iff it has at least one enumerated member, no attributes of

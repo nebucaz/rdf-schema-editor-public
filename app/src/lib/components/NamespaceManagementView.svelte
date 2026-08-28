@@ -31,18 +31,29 @@
 		baseIri: string;
 		description: string;
 		color: string | undefined;
+		publisher: string;
+		license: string;
 	}) {
-		await sparqlConnector.insertNamespace(values.prefix, values.baseIri, values.description || undefined, values.color);
+		await sparqlConnector.insertNamespace(
+			values.prefix,
+			values.baseIri,
+			values.description || undefined,
+			values.color,
+			values.publisher || undefined,
+			values.license || undefined
+		);
 		await namespaceStore.refresh();
 		showAddForm = false;
 	}
 
 	async function handleEditSubmit(
 		target: FetchedNamespace,
-		values: { description: string; color: string | undefined }
+		values: { description: string; color: string | undefined; publisher: string; license: string }
 	) {
 		await sparqlConnector.updateNamespaceDescription(target.baseIri, values.description || null);
 		await sparqlConnector.updateNamespaceColor(target.baseIri, values.color ?? null);
+		await sparqlConnector.updateNamespacePublisher(target.baseIri, values.publisher || null);
+		await sparqlConnector.updateNamespaceLicense(target.baseIri, values.license || null);
 		await namespaceStore.refresh();
 		editTarget = null;
 	}
@@ -91,6 +102,8 @@
 		initialBaseIri={target.baseIri}
 		initialDescription={target.description ?? ''}
 		initialColor={target.color ?? undefined}
+		initialPublisher={target.publisher ?? ''}
+		initialLicense={target.license ?? ''}
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
 		onSubmit={(values) => handleEditSubmit(target, values)}

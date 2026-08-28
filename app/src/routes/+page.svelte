@@ -23,19 +23,30 @@
 		type ExternalClassNodeData,
 		type ExternalClassNodeType
 	} from '$lib/components/ExternalClassNode.svelte';
+	import IndividualNode, { type IndividualNodeData, type IndividualNodeType } from '$lib/components/IndividualNode.svelte';
 	import RelationEdge, { type RelationEdgeData } from '$lib/components/RelationEdge.svelte';
 	import AttributedLinkEdge, { type AttributedLinkEdgeData } from '$lib/components/AttributedLinkEdge.svelte';
 	import InheritanceEdge, { type InheritanceEdgeData } from '$lib/components/InheritanceEdge.svelte';
+	import IsMasterForEdge, { type IsMasterForEdgeData } from '$lib/components/IsMasterForEdge.svelte';
+	import InstanceOfEdge from '$lib/components/InstanceOfEdge.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import EntityForm from '$lib/components/EntityForm.svelte';
 	import AttributeForm from '$lib/components/AttributeForm.svelte';
 	import ManageMembersModal from '$lib/components/ManageMembersModal.svelte';
+	import MemberForm from '$lib/components/MemberForm.svelte';
 	import RelationForm from '$lib/components/RelationForm.svelte';
+	import IndividualRelationForm from '$lib/components/IndividualRelationForm.svelte';
 	import AssociationForm from '$lib/components/AssociationForm.svelte';
 	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
-	import { sparqlConnector, type AssociationLink } from '$lib/services/sparql-connector';
+	import {
+		sparqlConnector,
+		type AssociationLink,
+		type FetchedSchema,
+		type FetchedAssertion,
+		type NameableEntity
+	} from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import { buildCanvasModel } from '$lib/services/canvas-model';
@@ -43,15 +54,28 @@
 	import { nodeColorStore } from '$lib/stores/node-color-store';
 	import { activeNamespaceStore } from '$lib/stores/active-namespace-store';
 	import { namespaceVisibilityStore } from '$lib/stores/namespace-visibility-store';
+	import { viewModeStore, type ViewMode } from '$lib/stores/view-mode-store';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
 	import { extractLocalName, type XsdDatatype } from '$lib/utils/iri';
 	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
+	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
 
-	type CanvasNode = EntityNodeType | ExternalClassNodeType;
+	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType;
 
-	const nodeTypes = { entity: EntityNode, external: ExternalClassNode };
-	const edgeTypes = { relation: RelationEdge, attributedLink: AttributedLinkEdge, inheritance: InheritanceEdge };
+	const nodeTypes = { entity: EntityNode, external: ExternalClassNode, individual: IndividualNode };
+	const edgeTypes = {
+		relation: RelationEdge,
+		attributedLink: AttributedLinkEdge,
+		inheritance: InheritanceEdge,
+		// data-catalog Story 017: every individual→class relation (whatever its predicate) reuses
+		// IsMasterForEdge's component (floating-edge routing + delete button), labeled with the
+		// predicate's own real rdfs:label.
+		individualRelation: IsMasterForEdge,
+		// Derived rdf:type connector (instances view) — not a stored relation, so its own
+		// non-interactive, undeletable edge component instead of reusing IsMasterForEdge.
+		instanceOf: InstanceOfEdge
+	};
 
 	let nodes = $state.raw<CanvasNode[]>([]);
 	let edges = $state.raw<Edge[]>([]);
@@ -138,16 +162,8 @@
 	let nodeNamespaces = new Map<string, string>();
 
 	/** A node id with no `nodeNamespaces` entry is an external stub (`ExternalNodeSpec` carries no
-	 *  `namespace` field) — always treated as visible, matching its existing node-visibility
-	 *  behavior (STORY-061 AC). */
-	function isEndpointVisible(nodeId: string, namespaces: Map<string, string>, hidden: Set<string>): boolean {
-		const ns = namespaces.get(nodeId);
-		return ns === undefined || !hidden.has(ns);
-	}
-
-	function isEdgeHidden(source: string, target: string, namespaces: Map<string, string>, hidden: Set<string>): boolean {
-		return !isEndpointVisible(source, namespaces, hidden) || !isEndpointVisible(target, namespaces, hidden);
-	}
+	 *  `namespace` field) — its visibility is derived from its referencing inheritance edges instead
+	 *  (data-catalog Story 015), via `isEdgeHidden`/`isExternalNodeHidden` in `utils/visibility.ts`. */
 
 	function toggleNamespaceVisibility(baseIri: string) {
 		const next = new Set(hiddenNamespaces);
@@ -159,11 +175,40 @@
 			namespaceVisibilityStore.setHidden(baseIri, true);
 		}
 		hiddenNamespaces = next;
+
+		const externalReferencingSources = buildExternalReferencingSources(
+			edges.filter((e) => e.type === 'inheritance'),
+			nodeNamespaces
+		);
+
 		nodes = nodes.map((n) => {
 			const ns = nodeNamespaces.get(n.id);
-			return ns === undefined ? n : { ...n, hidden: next.has(ns) };
+			if (ns !== undefined) return { ...n, hidden: next.has(ns) };
+			return {
+				...n,
+				hidden: isExternalNodeHidden(externalReferencingSources.get(n.id), nodeNamespaces, next)
+			};
 		});
-		edges = edges.map((e) => ({ ...e, hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, next) }));
+		edges = edges.map((e) => ({
+			...e,
+			hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, next, externalReferencingSources)
+		}));
+	}
+
+	// -- Schema/Instances view mode (data-catalog Story 007) ---------------------------------------
+	// A different dimension from the namespace-visibility funnel above (view mode, not visibility) —
+	// deliberately a separate control (`ViewModeToggle` in `+layout.svelte`, bridged via
+	// `workbenchActions` the same way `hiddenNamespaces`/`toggleNamespaceVisibility` is). Toggling
+	// never re-queries GraphDB: `lastFetchedSchema` is kept around so `buildAndApplyCanvasModel` can
+	// just re-run `buildCanvasModel` with the new `viewMode` against already-fetched data.
+
+	let viewMode = $state<ViewMode>(viewModeStore.getViewMode());
+	let lastFetchedSchema = $state<FetchedSchema | null>(null);
+
+	function handleViewModeChange(mode: ViewMode) {
+		viewMode = mode;
+		viewModeStore.setViewMode(mode);
+		if (lastFetchedSchema) buildAndApplyCanvasModel(lastFetchedSchema);
 	}
 
 	// -- Raw triples view (STORY-011/012/013) ----------------------------------------------------
@@ -175,6 +220,19 @@
 	 *  selected on canvas, so a stale canvas selection can't silently filter the panel.
 	 *  STORY-043's per-entity Triples icon will set this explicitly instead. */
 	let triplesPanelScopeIri = $state<string | null>(null);
+
+	/** The namespace of whatever node `triplesPanelScopeIri` points at — set alongside it by every
+	 *  per-node "View triples"/"View catalog" opener, so the panel fetches *that* node's own
+	 *  namespace rather than whatever namespace happens to be globally "active" in the workbench
+	 *  (`activeNamespaceBaseIri()`, unrelated to canvas selection). `undefined` when scoped to the
+	 *  whole graph (`triplesPanelScopeIri === null`), which correctly falls back to the active
+	 *  namespace since there's no specific node to derive one from. */
+	let triplesPanelNamespaceBaseIri = $state<string | undefined>(undefined);
+
+	/** Data-catalog Story 014: which tab the Triples panel opens onto. Only "View catalog" ever
+	 *  requests `'catalog'`; every other opener (hamburger "View Triples", per-node "View triples")
+	 *  requests `'schema'`, matching pre-Story-014 behavior. */
+	let triplesPanelInitialTab = $state<'schema' | 'shapes' | 'catalog'>('schema');
 
 	function findNode(id: string | null): CanvasNode | undefined {
 		return id ? nodes.find((n) => n.id === id) : undefined;
@@ -253,6 +311,7 @@
 		members: EntityMemberVM[] = []
 	): EntityNodeData {
 		const isAssociationClass = lastAssociationClassIris.has(classIriValue);
+		const isAuthoritativeEntity = lastAuthoritativeEntityIris.has(classIriValue);
 		return {
 			classIri: classIriValue,
 			name,
@@ -262,6 +321,7 @@
 			attributes,
 			members,
 			isAssociationClass,
+			isAuthoritativeEntity,
 			onEdit: () => {
 				if (isAssociationClass) {
 					editAssociationId = classIriValue;
@@ -287,6 +347,14 @@
 			},
 			onViewTriples: () => {
 				triplesPanelScopeIri = classIriValue;
+				triplesPanelNamespaceBaseIri = namespaceBaseIri;
+				triplesPanelInitialTab = 'schema';
+				showTriplesPanel = true;
+			},
+			onViewCatalog: () => {
+				triplesPanelScopeIri = classIriValue;
+				triplesPanelNamespaceBaseIri = namespaceBaseIri;
+				triplesPanelInitialTab = 'catalog';
 				showTriplesPanel = true;
 			}
 		};
@@ -507,9 +575,120 @@
 		}));
 	}
 
+	// -- Generic instance assertion editor (data-catalog Story 019) ------------------------------
+	// Reusable across both `MemberForm` entry points: `ManageMembersModal`'s per-member edit flow
+	// (already wired via its own `onLoadAssertions`/`onAddAssertion`/`onDeleteAssertion` props below)
+	// and the standalone `IndividualNode` pencil button's own "Edit Individual" modal.
+
+	/** Predicate/object typeahead options, shared by both entry points — loaded lazily the first
+	 *  time either modal opens, not on every page load. */
+	let assertionPredicateOptions = $state<{ iri: string; label: string }[]>([]);
+	let assertionObjectOptions = $state<NameableEntity[]>([]);
+	let assertionOptionsLoaded = false;
+
+	async function ensureAssertionOptionsLoaded() {
+		if (assertionOptionsLoaded) return;
+		assertionOptionsLoaded = true;
+		const [predicateOptions, objectOptions] = await Promise.all([
+			sparqlConnector.fetchRelationPredicateOptions(),
+			sparqlConnector.fetchNameableEntities()
+		]);
+		assertionPredicateOptions = predicateOptions;
+		assertionObjectOptions = objectOptions;
+	}
+
+	/**
+	 * Draws the just-authored assertion as a canvas edge, immediately, without a full schema reload —
+	 * mirroring `handleCreateIndividualRelationSubmit` below, which appends to `edges` the same way.
+	 * Only fires when both endpoints are already on canvas (an individual node and an *entity* node
+	 * specifically — an assertion targeting an attribute/relation/other-individual has no entity node
+	 * to draw to) and only in `'instances'` view mode, matching `buildCanvasModel`'s own restriction
+	 * of these edge kinds to that mode.
+	 */
+	function addAssertionEdgeIfVisible(
+		individualIri: string,
+		predicateIri: string,
+		predicateLabel: string,
+		objectIri: string
+	) {
+		if (viewMode !== 'instances') return;
+		if (findNode(individualIri)?.type !== 'individual' || findNode(objectIri)?.type !== 'entity') return;
+		const edgeId = individualRelationEdgeId(individualIri, predicateIri, objectIri);
+		if (findEdge(edgeId)) return;
+		edges = [
+			...edges,
+			{
+				id: edgeId,
+				source: individualIri,
+				target: objectIri,
+				type: 'individualRelation',
+				data: makeIndividualRelationEdgeData(edgeId, individualIri, predicateIri, objectIri, predicateLabel)
+			}
+		];
+	}
+
+	/** Removes the canvas edge a just-deleted assertion drew, mirroring `addAssertionEdgeIfVisible`'s
+	 *  edge-id derivation so it targets the exact same edge (a no-op if it was never drawn — e.g. the
+	 *  object wasn't a visible entity node at insert time). */
+	function removeAssertionEdgeIfVisible(individualIri: string, predicateIri: string, objectIri: string) {
+		const edgeId = individualRelationEdgeId(individualIri, predicateIri, objectIri);
+		edges = edges.filter((e) => e.id !== edgeId);
+	}
+
+	async function handleAddAssertion(individualIri: string, predicateLabel: string, objectIri: string) {
+		const { predicateIri } = await sparqlConnector.insertAssertion(individualIri, predicateLabel, objectIri);
+		addAssertionEdgeIfVisible(individualIri, predicateIri, predicateLabel, objectIri);
+	}
+
+	async function handleDeleteAssertion(individualIri: string, predicateIri: string, objectIri: string) {
+		await sparqlConnector.deleteAssertion(individualIri, predicateIri, objectIri);
+		removeAssertionEdgeIfVisible(individualIri, predicateIri, objectIri);
+	}
+
+	/** Which standalone individual (an `IndividualNode` on canvas, not an entity-owned enumerated
+	 *  member) is currently open for editing — drives the "Edit Individual" modal below, a thin
+	 *  wrapper around `MemberForm` (Story 019), not a reuse of `ManageMembersModal`, which stays
+	 *  scoped to entity-owned members. */
+	let editIndividualId = $state<string | null>(null);
+	const editIndividualNode = $derived.by(() => {
+		const n = findNode(editIndividualId);
+		return n && n.type === 'individual' ? n : undefined;
+	});
+	let editIndividualAssertions = $state<FetchedAssertion[]>([]);
+
+	async function reloadEditIndividualAssertions() {
+		if (!editIndividualId) return;
+		editIndividualAssertions = await sparqlConnector.fetchAssertionsForIndividual(editIndividualId);
+	}
+
+	$effect(() => {
+		if (editIndividualId) {
+			void ensureAssertionOptionsLoaded();
+			void reloadEditIndividualAssertions();
+		} else {
+			editIndividualAssertions = [];
+		}
+	});
+
+	$effect(() => {
+		if (manageMembersClassIri) void ensureAssertionOptionsLoaded();
+	});
+
+	async function handleRenameIndividualNode(label: string) {
+		if (!editIndividualId) return;
+		const namespaceBaseIri = nodeNamespaces.get(editIndividualId) ?? activeNamespaceBaseIri();
+		await sparqlConnector.renameIndividual(editIndividualId, label, namespaceBaseIri);
+		const iri = editIndividualId;
+		nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
+	}
+
 	/** Classes currently carrying the `AttributedRelationship` marker (STORY-020) — read directly
 	 *  off `buildCanvasModel`'s output, itself derived from the persisted `rdfs:subClassOf` triple. */
 	let lastAssociationClassIris = $state<Set<string>>(new Set());
+
+	/** Classes currently carrying the `AuthoritativeEntity` marker (data-catalog Story 003) — same
+	 *  pattern as `lastAssociationClassIris`. */
+	let lastAuthoritativeEntityIris = $state<Set<string>>(new Set());
 
 	// -- Relations (STORY-006) + edge-kind choice on connect -------------------------------------
 
@@ -520,6 +699,22 @@
 	let deleteRelationBusy = $state(false);
 	let deleteInheritanceEdgeId = $state<string | null>(null);
 	let deleteInheritanceBusy = $state(false);
+
+	/** Pending drag-connection from an individual to a class awaiting a relation-name prompt
+	 *  (data-catalog Story 017) — every individual→class connection prompts for a name, exactly like
+	 *  drawing a new entity-to-entity relation does. */
+	let pendingIndividualRelationCreate = $state<Connection | null>(null);
+	/** Delete target for a generalized individual→class relation — captures every field the
+	 *  connector's delete call needs directly at creation time (`makeIndividualRelationEdgeData`),
+	 *  since `predicateIri` varies per relation and isn't otherwise recoverable from the Svelte Flow
+	 *  edge alone. */
+	let deleteIndividualRelationTarget = $state<{
+		edgeId: string;
+		individualIri: string;
+		predicateIri: string;
+		classIri: string;
+	} | null>(null);
+	let deleteIndividualRelationBusy = $state(false);
 
 	/** Whether the pending drag-connection starts from a node currently treated as an association
 	 *  class — if so, the "what kind of connection?" modal offers "Attributed Link" as a third
@@ -598,16 +793,89 @@
 		if (!connection.source || !connection.target) return;
 		// @xyflow/svelte auto-inserts a plain untyped edge into `edges` on every successful drag
 		// connection (see `onConnectExtended` in its Handle.svelte), before this callback runs. This
-		// app always creates edges with an explicit `type` ('relation'/'attributedLink'/'inheritance')
-		// via the modal flow below, so that auto-inserted edge is always a ghost — strip it here,
-		// otherwise it lingers on the canvas with no label and no way to delete it if the user
-		// cancels the modal.
+		// app always creates edges with an explicit `type` ('relation'/'attributedLink'/'inheritance'/
+		// 'individualRelation') via the modal flow below, so that auto-inserted edge is always a
+		// ghost — strip it here, otherwise it lingers on the canvas with no label and no way to
+		// delete it if the user cancels the modal (or the connection is rejected outright, below).
 		edges = edges.filter((e) => e.type !== undefined);
+		const sourceNode = findNode(connection.source);
 		const targetNode = findNode(connection.target);
+
+		if (sourceNode?.type === 'individual') {
+			// data-catalog Story 017: every individual→class connection prompts for a relation name,
+			// the same gesture drawing a new generic class-to-class relation already uses — no
+			// hardcoded predicate, no auto-pick; the name-resolution step (`resolveOrMintPredicate`)
+			// reuses an existing declared property (e.g. `gov:systemOfWorkIsMasterFor`) if the typed
+			// name matches one, or mints a new generic one.
+			if (targetNode?.type === 'entity') {
+				pendingIndividualRelationCreate = connection;
+				void ensureAssertionOptionsLoaded();
+			} else {
+				errorMessage = 'Individual connections must target a class node.';
+			}
+			return;
+		}
+
 		if (targetNode?.type === 'external') {
 			void createInheritanceEdge(connection.source, connection.target);
 		} else {
 			pendingConnectionChoice = connection;
+		}
+	}
+
+	/** Generalized individual→class relation edge id (data-catalog Story 017) — includes
+	 *  `predicateIri` since two differently-named relations can connect the same individual/class
+	 *  pair. */
+	function individualRelationEdgeId(individualIri: string, predicateIri: string, classIri: string): string {
+		return `individual-relation-${predicateIri} ${individualIri} ${classIri}`;
+	}
+
+	function makeIndividualRelationEdgeData(
+		edgeId: string,
+		individualIri: string,
+		predicateIri: string,
+		classIri: string,
+		label: string
+	): IsMasterForEdgeData {
+		return {
+			label,
+			onDelete: () => {
+				deleteIndividualRelationTarget = { edgeId, individualIri, predicateIri, classIri };
+			}
+		};
+	}
+
+	async function handleCreateIndividualRelationSubmit(relationName: string) {
+		if (!pendingIndividualRelationCreate?.source || !pendingIndividualRelationCreate?.target) return;
+		const { source, target } = pendingIndividualRelationCreate;
+		const { iri } = await sparqlConnector.insertIndividualClassRelation(source, target, relationName);
+		const edgeId = individualRelationEdgeId(source, iri, target);
+		edges = [
+			...edges,
+			{
+				id: edgeId,
+				source,
+				target,
+				type: 'individualRelation',
+				data: makeIndividualRelationEdgeData(edgeId, source, iri, target, relationName)
+			}
+		];
+		pendingIndividualRelationCreate = null;
+	}
+
+	async function handleDeleteIndividualRelationConfirm() {
+		if (!deleteIndividualRelationTarget) return;
+		const { edgeId, individualIri, predicateIri, classIri } = deleteIndividualRelationTarget;
+		deleteIndividualRelationBusy = true;
+		errorMessage = null;
+		try {
+			await sparqlConnector.deleteIndividualClassRelation(individualIri, predicateIri, classIri);
+			edges = edges.filter((e) => e.id !== edgeId);
+			deleteIndividualRelationTarget = null;
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to delete relation';
+		} finally {
+			deleteIndividualRelationBusy = false;
 		}
 	}
 
@@ -1096,6 +1364,159 @@
 
 	// -- Load/reload from GraphDB (STORY-009) + layout persistence (STORY-010) -------------------
 
+	/** Pure(-ish) rebuild of `nodes`/`edges` from an already-fetched schema, parameterized by the
+	 *  current `viewMode` (data-catalog Story 007) — factored out of `loadSchemaFromGraphDB` so
+	 *  toggling Schema/Instances re-renders instantly against `lastFetchedSchema` instead of
+	 *  re-querying GraphDB. */
+	function buildAndApplyCanvasModel(schema: FetchedSchema) {
+		const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap(), { viewMode });
+		lastAssociationClassIris = model.associationClassIris;
+		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
+
+		const positions = resolvePositions(
+			model.nodes.map((n) => n.iri),
+			layoutStore
+		);
+
+		const newNodeNamespaces = new Map<string, string>();
+		for (const spec of model.nodes) {
+			if (spec.kind === 'entity' || spec.kind === 'individual') {
+				newNodeNamespaces.set(spec.iri, spec.namespace);
+			}
+		}
+
+		// External stub nodes carry no namespace of their own — their visibility is derived from
+		// the local entities that reference them via inheritance instead (data-catalog Story 015).
+		const externalReferencingSources = buildExternalReferencingSources(
+			model.edges.filter((e) => e.kind === 'inheritance'),
+			newNodeNamespaces
+		);
+
+		const newNodes: CanvasNode[] = model.nodes.map((spec) => {
+			const position = positions.get(spec.iri)!;
+			if (spec.kind === 'entity') {
+				return {
+					id: spec.iri,
+					type: 'entity',
+					position,
+					hidden: hiddenNamespaces.has(spec.namespace),
+					data: makeNodeData(
+						spec.iri,
+						spec.name,
+						spec.description,
+						spec.attributes,
+						spec.namespace,
+						nodeColorStore.getColor(spec.iri),
+						spec.members
+					)
+				} satisfies EntityNodeType;
+			}
+			if (spec.kind === 'individual') {
+				return {
+					id: spec.iri,
+					type: 'individual',
+					position,
+					hidden: hiddenNamespaces.has(spec.namespace),
+					data: {
+						label: spec.label,
+						classIri: spec.classIri,
+						className: spec.className,
+						onEdit: () => {
+							editIndividualId = spec.iri;
+						},
+						onViewTriples: () => {
+							triplesPanelScopeIri = spec.iri;
+							triplesPanelNamespaceBaseIri = spec.namespace;
+							triplesPanelInitialTab = 'schema';
+							showTriplesPanel = true;
+						}
+					} satisfies IndividualNodeData
+				} satisfies IndividualNodeType;
+			}
+			return {
+				id: spec.iri,
+				type: 'external',
+				position,
+				hidden: isExternalNodeHidden(externalReferencingSources.get(spec.iri), newNodeNamespaces, hiddenNamespaces),
+				data: {
+					prefixedName: spec.prefixedName,
+					onRemove: () => {
+						void handleRemoveExternalStub(spec.iri);
+					}
+				} satisfies ExternalClassNodeData
+			} satisfies ExternalClassNodeType;
+		});
+
+		const newEdges: Edge[] = model.edges.map((spec) => {
+			if (spec.kind === 'relation') {
+				const edgeId = relationEdgeId(spec.iri, spec.source, spec.target);
+				return {
+					id: edgeId,
+					source: spec.source,
+					target: spec.target,
+					type: 'relation',
+					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					data: makeRelationEdgeData(
+						edgeId,
+						spec.iri,
+						spec.source,
+						spec.name,
+						spec.required,
+						spec.repeatable,
+						spec.relationKind
+					)
+				};
+			}
+			if (spec.kind === 'attributedLink') {
+				return {
+					id: spec.iri,
+					source: spec.source,
+					target: spec.target,
+					type: 'attributedLink',
+					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					data: makeAttributedLinkEdgeData(spec.iri, spec.propName, spec.required, spec.repeatable)
+				};
+			}
+			if (spec.kind === 'individualRelation') {
+				const edgeId = individualRelationEdgeId(spec.source, spec.predicateIri, spec.target);
+				return {
+					id: edgeId,
+					source: spec.source,
+					target: spec.target,
+					type: 'individualRelation',
+					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					data: makeIndividualRelationEdgeData(edgeId, spec.source, spec.predicateIri, spec.target, spec.name)
+				};
+			}
+			if (spec.kind === 'instanceOf') {
+				return {
+					id: `instanceof-${spec.source}-${spec.target}`,
+					source: spec.source,
+					target: spec.target,
+					type: 'instanceOf',
+					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources)
+				};
+			}
+			const edgeId = `subclassof-${spec.source}-${spec.target}`;
+			return {
+				id: edgeId,
+				source: spec.source,
+				target: spec.target,
+				type: 'inheritance',
+				hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+				data: {
+					onDelete: () => {
+						deleteInheritanceEdgeId = edgeId;
+					}
+				} satisfies InheritanceEdgeData
+			};
+		});
+
+		nodeNamespaces = newNodeNamespaces;
+		nodes = newNodes;
+		edges = newEdges;
+	}
+
 	async function loadSchemaFromGraphDB() {
 		loading = true;
 		errorMessage = null;
@@ -1104,98 +1525,10 @@
 			await externalVocabStore.refresh();
 			await sparqlConnector.ensureDefaultNamespaceMigrated();
 			await sparqlConnector.ensureAttributedRelationshipClass();
+			await sparqlConnector.ensureAuthoritativeEntityClass();
 			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
-			const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap());
-			lastAssociationClassIris = model.associationClassIris;
-
-			const positions = resolvePositions(
-				model.nodes.map((n) => n.iri),
-				layoutStore
-			);
-
-			const newNodeNamespaces = new Map<string, string>();
-
-			const newNodes: CanvasNode[] = model.nodes.map((spec) => {
-				const position = positions.get(spec.iri)!;
-				if (spec.kind === 'entity') {
-					newNodeNamespaces.set(spec.iri, spec.namespace);
-					return {
-						id: spec.iri,
-						type: 'entity',
-						position,
-						hidden: hiddenNamespaces.has(spec.namespace),
-						data: makeNodeData(
-							spec.iri,
-							spec.name,
-							spec.description,
-							spec.attributes,
-							spec.namespace,
-							nodeColorStore.getColor(spec.iri),
-							spec.members
-						)
-					} satisfies EntityNodeType;
-				}
-				return {
-					id: spec.iri,
-					type: 'external',
-					position,
-					data: {
-						prefixedName: spec.prefixedName,
-						onRemove: () => {
-							void handleRemoveExternalStub(spec.iri);
-						}
-					} satisfies ExternalClassNodeData
-				} satisfies ExternalClassNodeType;
-			});
-
-			const newEdges: Edge[] = model.edges.map((spec) => {
-				if (spec.kind === 'relation') {
-					const edgeId = relationEdgeId(spec.iri, spec.source, spec.target);
-					return {
-						id: edgeId,
-						source: spec.source,
-						target: spec.target,
-						type: 'relation',
-						hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
-						data: makeRelationEdgeData(
-							edgeId,
-							spec.iri,
-							spec.source,
-							spec.name,
-							spec.required,
-							spec.repeatable,
-							spec.relationKind
-						)
-					};
-				}
-				if (spec.kind === 'attributedLink') {
-					return {
-						id: spec.iri,
-						source: spec.source,
-						target: spec.target,
-						type: 'attributedLink',
-						hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
-						data: makeAttributedLinkEdgeData(spec.iri, spec.propName, spec.required, spec.repeatable)
-					};
-				}
-				const edgeId = `subclassof-${spec.source}-${spec.target}`;
-				return {
-					id: edgeId,
-					source: spec.source,
-					target: spec.target,
-					type: 'inheritance',
-					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces),
-					data: {
-						onDelete: () => {
-							deleteInheritanceEdgeId = edgeId;
-						}
-					} satisfies InheritanceEdgeData
-				};
-			});
-
-			nodeNamespaces = newNodeNamespaces;
-			nodes = newNodes;
-			edges = newEdges;
+			lastFetchedSchema = schema;
+			buildAndApplyCanvasModel(schema);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to load schema from GraphDB';
 		} finally {
@@ -1239,17 +1572,23 @@
 	$effect(() => {
 		workbenchActions.hiddenNamespaces = hiddenNamespaces;
 	});
+	$effect(() => {
+		workbenchActions.viewMode = viewMode;
+	});
 
 	onMount(() => {
 		workbenchActions.registerReload(() => void loadSchemaFromGraphDB());
 		workbenchActions.registerToggleTriples(() => {
 			if (!showTriplesPanel) {
 				triplesPanelScopeIri = null;
+				triplesPanelNamespaceBaseIri = undefined;
+				triplesPanelInitialTab = 'schema';
 			}
 			showTriplesPanel = !showTriplesPanel;
 		});
 		workbenchActions.registerExportSvg(() => void handleExportSvg());
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
+		workbenchActions.registerSetViewMode(handleViewModeChange);
 		void loadSchemaFromGraphDB();
 	});
 </script>
@@ -1285,6 +1624,41 @@
 				id="relation-arrow-path"
 				d="M1,1 L10,6 L1,11"
 				style="fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;"
+			/>
+		</marker>
+		<!-- Filled arrowhead for individual→class relation edges (data-catalog Story 006/017) — a
+			one-directional relationship, visually distinct from both the hollow is-a triangle and the
+			open relation arrow above. -->
+		<marker
+			id="ismasterfor-arrow"
+			viewBox="0 0 12 12"
+			refX="10"
+			refY="6"
+			markerWidth="10"
+			markerHeight="10"
+			orient="auto-start-reverse"
+		>
+			<path
+				id="ismasterfor-arrow-path"
+				d="M1,1 L10,6 L1,11 Z"
+				style="stroke: none;"
+			/>
+		</marker>
+		<!-- Small open arrowhead for the derived, non-interactive individual→rdf:type-class connector
+			(instances view) — muted to read as structural background, not a meaningful assertion like
+			isMasterFor above. -->
+		<marker
+			id="instanceof-arrow"
+			viewBox="0 0 10 10"
+			refX="8"
+			refY="5"
+			markerWidth="8"
+			markerHeight="8"
+			orient="auto-start-reverse"
+		>
+			<path
+				d="M1,1 L8,5 L1,9"
+				style="fill: none; stroke: var(--color-text-muted, #999); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;"
 			/>
 		</marker>
 	</defs>
@@ -1326,7 +1700,9 @@
 		<TriplesPanel
 			selectedIri={triplesPanelScopeIri}
 			namespaces={namespaceStore.namespaces}
-			initialNamespaceBaseIri={activeNamespaceBaseIri()}
+			initialNamespaceBaseIri={triplesPanelNamespaceBaseIri ?? activeNamespaceBaseIri()}
+			showCatalogTab={triplesPanelScopeIri !== null && lastAuthoritativeEntityIris.has(triplesPanelScopeIri)}
+			initialTab={triplesPanelInitialTab}
 			onClose={() => (showTriplesPanel = false)}
 			onSaved={() => void loadSchemaFromGraphDB()}
 		/>
@@ -1521,6 +1897,37 @@
 			onAdd={handleAddMember}
 			onEdit={handleEditMember}
 			onDelete={handleDeleteMember}
+			predicateOptions={assertionPredicateOptions}
+			objectOptions={assertionObjectOptions}
+			onLoadAssertions={(iri) => sparqlConnector.fetchAssertionsForIndividual(iri)}
+			onAddAssertion={handleAddAssertion}
+			onDeleteAssertion={handleDeleteAssertion}
+		/>
+	{/if}
+</Modal>
+
+<Modal isOpen={editIndividualId !== null} title="Edit Individual" onClose={() => (editIndividualId = null)}>
+	{#if editIndividualNode}
+		<MemberForm
+			mode="edit"
+			initialLabel={editIndividualNode.data.label}
+			submitLabel="Save"
+			onCancel={() => (editIndividualId = null)}
+			onSubmit={handleRenameIndividualNode}
+			individualIri={editIndividualId ?? undefined}
+			assertions={editIndividualAssertions}
+			predicateOptions={assertionPredicateOptions}
+			objectOptions={assertionObjectOptions}
+			onAddAssertion={async (predicateLabel, objectIri) => {
+				if (!editIndividualId) return;
+				await handleAddAssertion(editIndividualId, predicateLabel, objectIri);
+				await reloadEditIndividualAssertions();
+			}}
+			onDeleteAssertion={async (predicateIri, objectIri) => {
+				if (!editIndividualId) return;
+				await handleDeleteAssertion(editIndividualId, predicateIri, objectIri);
+				await reloadEditIndividualAssertions();
+			}}
 		/>
 	{/if}
 </Modal>
@@ -1637,6 +2044,39 @@
 	{/if}
 </Modal>
 
+<Modal
+	isOpen={pendingIndividualRelationCreate !== null}
+	title="Add Relation"
+	onClose={() => (pendingIndividualRelationCreate = null)}
+>
+	{#if pendingIndividualRelationCreate?.target}
+		<IndividualRelationForm
+			targetName={entityOptions.find((o) => o.iri === pendingIndividualRelationCreate?.target)?.name ??
+				pendingIndividualRelationCreate.target}
+			predicateOptions={assertionPredicateOptions}
+			submitLabel="Create"
+			onCancel={() => (pendingIndividualRelationCreate = null)}
+			onSubmit={handleCreateIndividualRelationSubmit}
+		/>
+	{/if}
+</Modal>
+
+<Modal
+	isOpen={deleteIndividualRelationTarget !== null}
+	title="Delete Relation"
+	onClose={() => (deleteIndividualRelationTarget = null)}
+>
+	{#if deleteIndividualRelationTarget}
+		<p>Delete this relation? This cannot be undone.</p>
+		<div class="confirm-actions">
+			<button class="secondary" onclick={() => (deleteIndividualRelationTarget = null)}>Cancel</button>
+			<button class="danger" onclick={handleDeleteIndividualRelationConfirm} disabled={deleteIndividualRelationBusy}>
+				{deleteIndividualRelationBusy ? 'Deleting…' : 'Delete'}
+			</button>
+		</div>
+	{/if}
+</Modal>
+
 <Modal isOpen={showAddAssociation} title="Add Attributed Relationship" onClose={() => (showAddAssociation = false)}>
 	<AssociationForm
 		{entityOptions}
@@ -1687,13 +2127,21 @@
 
 <style>
 	/* Matches xyflow's default edge line color (--xy-edge-stroke-default, scoped to .svelte-flow)
-		so the relation arrowhead isn't hardcoded to a different, unrelated color. */
+		so the relation/isMasterFor arrowheads aren't hardcoded to a different, unrelated color. */
 	:global(#relation-arrow-path) {
 		stroke: #b1b1b7;
 	}
 
 	:global(:root.dark #relation-arrow-path) {
 		stroke: #3e3e3e;
+	}
+
+	:global(#ismasterfor-arrow-path) {
+		fill: #b1b1b7;
+	}
+
+	:global(:root.dark #ismasterfor-arrow-path) {
+		fill: #3e3e3e;
 	}
 
 	.editor {

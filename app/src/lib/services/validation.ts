@@ -9,7 +9,7 @@
  * well-formedness here is checked by directly walking the parsed quads rather than pulling in
  * either library for what would only ever be a thin, hand-rolled wrapper around it anyway.
  */
-import { isRdfType, OWL, RDF, RDFS, SH, type Quad } from './turtle';
+import { isRdfType, DCAT, DCT, OWL, RDF, RDFS, SH, type Quad } from './turtle';
 import { XSD_NAMESPACE } from '$lib/utils/iri';
 
 export interface ValidationIssue {
@@ -189,6 +189,79 @@ export function checkStructural(quads: Quad[]): ValidationIssue[] {
 				layer: 'structural',
 				message: `<${propIri}> has conflicting rdfs:range declarations: ${[...ranges].map((r) => `<${r}>`).join(', ')}`
 			});
+		}
+	}
+
+	return issues;
+}
+
+/**
+ * Catalog-specific structural check (data-catalog Story 010) — syntax/structural tier, same as
+ * `checkStructural` above, not a SHACL shapes validation (this app's GraphDB repository is
+ * deliberately non-SHACL-enabled). For every `dcat:Dataset` in the draft, verifies the mandatory
+ * fields (`dct:title`/`dct:identifier`/`dct:conformsTo`, always inferable but hand-deletable;
+ * `dct:publisher`/`dct:license`, uninferable) carry a non-empty value, and that a
+ * `dcat:Distribution` is present with non-empty `dct:format`/`dcat:mediaType`/`dcat:accessURL`.
+ * `dcat:theme`/`dcat:keyword` are intentionally never checked — no taxonomy source exists to
+ * require them from (Story 008's generation engine doc comment). An "empty" value is a literal
+ * whose lexical form is `""`, matching the generator's own placeholder convention.
+ */
+export function checkCatalogStructural(quads: Quad[]): ValidationIssue[] {
+	const issues: ValidationIssue[] = [];
+
+	function hasNonEmptyValue(subject: string, predicate: string): boolean {
+		return quads.some(
+			(q) => q.subject.value === subject && q.predicate.value === predicate && q.object.value !== ''
+		);
+	}
+
+	const datasetSubjects = [
+		...new Set(quads.filter((q) => isRdfType(q, DCAT.Dataset)).map((q) => q.subject.value))
+	];
+
+	const requiredDatasetFields: [string, string][] = [
+		[DCT.title, 'dct:title'],
+		[DCT.identifier, 'dct:identifier'],
+		[DCT.conformsTo, 'dct:conformsTo'],
+		[DCT.publisher, 'dct:publisher'],
+		[DCT.license, 'dct:license']
+	];
+
+	for (const dataset of datasetSubjects) {
+		for (const [predicate, label] of requiredDatasetFields) {
+			if (!hasNonEmptyValue(dataset, predicate)) {
+				issues.push({
+					layer: 'structural',
+					message: `<${dataset}> is missing a non-empty ${label}`
+				});
+			}
+		}
+
+		const distributionIris = quads
+			.filter((q) => q.subject.value === dataset && q.predicate.value === DCAT.distribution)
+			.map((q) => q.object.value);
+		if (distributionIris.length === 0) {
+			issues.push({
+				layer: 'structural',
+				message: `<${dataset}> is missing a dcat:Distribution`
+			});
+			continue;
+		}
+
+		const requiredDistributionFields: [string, string][] = [
+			[DCT.format, 'dct:format'],
+			[DCAT.mediaType, 'dcat:mediaType'],
+			[DCAT.accessURL, 'dcat:accessURL']
+		];
+		for (const distribution of distributionIris) {
+			for (const [predicate, label] of requiredDistributionFields) {
+				if (!hasNonEmptyValue(distribution, predicate)) {
+					issues.push({
+						layer: 'structural',
+						message: `<${distribution}> (distribution of <${dataset}>) is missing a non-empty ${label}`
+					});
+				}
+			}
 		}
 	}
 

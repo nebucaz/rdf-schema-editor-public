@@ -3,9 +3,10 @@ import {
 	iriToPrefixedName,
 	EXTERNAL_PREFIXES,
 	ATTRIBUTED_RELATIONSHIP_IRI,
+	AUTHORITATIVE_ENTITY_IRI,
 	type XsdDatatype
 } from '$lib/utils/iri';
-import type { FetchedSchema } from './sparql-connector';
+import type { FetchedSchema, FetchedSubClassOf } from './sparql-connector';
 
 export interface CanvasAttributeSpec {
 	iri: string;
@@ -41,7 +42,22 @@ export interface ExternalNodeSpec {
 	prefixedName: string;
 }
 
-export type NodeSpec = EntityNodeSpec | ExternalNodeSpec;
+/** An individual (enumerated class member) rendered as its own canvas node (data-catalog Story 005)
+ *  — only emitted in `'instances'` view mode, distinct from `EntityNodeSpec.members` (the flat,
+ *  position-less list `'schema'` mode still uses). */
+export interface IndividualNodeSpec {
+	kind: 'individual';
+	iri: string;
+	label: string;
+	/** The owning class's IRI (`rdf:type`) and display label — resolved here so `IndividualNode`
+	 *  components stay pure display, not a second schema-lookup layer. */
+	classIri: string;
+	className: string;
+	/** See `EntityNodeSpec.namespace` (STORY-033). */
+	namespace: string;
+}
+
+export type NodeSpec = EntityNodeSpec | ExternalNodeSpec | IndividualNodeSpec;
 
 export interface RelationEdgeSpec {
 	kind: 'relation';
@@ -83,7 +99,41 @@ export interface InheritanceEdgeSpec {
 	namespace: string;
 }
 
-export type EdgeSpec = RelationEdgeSpec | AttributedLinkEdgeSpec | InheritanceEdgeSpec;
+/** A generalized individual→class relation (data-catalog Story 017) — any predicate connecting an
+ *  individual to a class, only emitted in `'instances'` view mode. `source` is the individual's IRI,
+ *  `target` the class's IRI. Reused for every individual→class relation regardless of predicate
+ *  (including one labeled "isMasterFor") — see `FetchedIndividualClassRelation`. */
+export interface IndividualClassRelationEdgeSpec {
+	kind: 'individualRelation';
+	source: string;
+	target: string;
+	predicateIri: string;
+	/** Display label for the edge — the predicate's real `rdfs:label`. */
+	name: string;
+	/** See `RelationEdgeSpec.namespace` (STORY-033) — the source individual's own namespace, since
+	 *  the relation triple lives in *its* `graphs.instances`. */
+	namespace: string;
+}
+
+/** A derived, non-persisted edge from an individual to its own `rdf:type` class (data-catalog
+ *  refinement — "connect instances to the schema"), only emitted in `'instances'` view mode.
+ *  Unlike `IndividualClassRelationEdgeSpec`, this isn't reconstructed from a stored triple beyond
+ *  `IndividualNodeSpec.classIri` itself, so there's nothing to edit or delete — it exists purely so
+ *  every individual has *some* visible connection to the canvas instead of floating unattached. */
+export interface InstanceOfEdgeSpec {
+	kind: 'instanceOf';
+	source: string;
+	target: string;
+	/** See `IndividualClassRelationEdgeSpec.namespace` — the individual's own namespace. */
+	namespace: string;
+}
+
+export type EdgeSpec =
+	| RelationEdgeSpec
+	| AttributedLinkEdgeSpec
+	| InheritanceEdgeSpec
+	| IndividualClassRelationEdgeSpec
+	| InstanceOfEdgeSpec;
 
 export interface CanvasModel {
 	nodes: NodeSpec[];
@@ -91,6 +141,20 @@ export interface CanvasModel {
 	/** Classes carrying the `AttributedRelationship` marker (STORY-020) — exposed so the UI can
 	 *  pre-check the "treat as association class" toggle correctly. */
 	associationClassIris: Set<string>;
+	/** Classes carrying the `AuthoritativeEntity` marker (data-catalog Story 003) — exposed so the
+	 *  UI can flag catalog-eligible classes (Story 014's "View catalog" menu gating) and Story 008's
+	 *  generation engine can decide which classes to generate a catalog entry for. */
+	authoritativeEntityIris: Set<string>;
+}
+
+/**
+ * Whether `classIriValue` is declared `rdfs:subClassOf <SCHEMA_NAMESPACE>AuthoritativeEntity`
+ * (data-catalog Story 003) — the same single-hop `rdfs:subClassOf` walk `buildCanvasModel` uses to
+ * classify association classes, exposed standalone so callers other than `buildCanvasModel` (e.g.
+ * Story 008's generation engine) can reuse it against a fetched `subClassOf` list directly.
+ */
+export function isAuthoritativeEntity(classIriValue: string, subClassOf: FetchedSubClassOf[]): boolean {
+	return subClassOf.some((r) => r.sub === classIriValue && r.super === AUTHORITATIVE_ENTITY_IRI);
 }
 
 /**
@@ -116,14 +180,22 @@ export interface CanvasModel {
  */
 export function buildCanvasModel(
 	schema: FetchedSchema,
-	externalPrefixes: Record<string, string> = EXTERNAL_PREFIXES
+	externalPrefixes: Record<string, string> = EXTERNAL_PREFIXES,
+	options?: { viewMode?: 'schema' | 'instances' }
 ): CanvasModel {
 	const associationClassIris = new Set(
 		schema.subClassOf.filter((r) => r.super === ATTRIBUTED_RELATIONSHIP_IRI).map((r) => r.sub)
 	);
-	const inheritanceTriples = schema.subClassOf.filter((r) => r.super !== ATTRIBUTED_RELATIONSHIP_IRI);
+	const authoritativeEntityIris = new Set(
+		schema.subClassOf.filter((r) => r.super === AUTHORITATIVE_ENTITY_IRI).map((r) => r.sub)
+	);
+	const inheritanceTriples = schema.subClassOf.filter(
+		(r) => r.super !== ATTRIBUTED_RELATIONSHIP_IRI && r.super !== AUTHORITATIVE_ENTITY_IRI
+	);
 
-	const localClasses = schema.classes.filter((c) => c.iri !== ATTRIBUTED_RELATIONSHIP_IRI);
+	const localClasses = schema.classes.filter(
+		(c) => c.iri !== ATTRIBUTED_RELATIONSHIP_IRI && c.iri !== AUTHORITATIVE_ENTITY_IRI
+	);
 	const localClassIris = new Set(localClasses.map((c) => c.iri));
 
 	const attributesByClass = new Map<string, CanvasAttributeSpec[]>();
@@ -196,9 +268,54 @@ export function buildCanvasModel(
 		edges.push({ kind: 'inheritance', source: sub, target: superIri, namespace: namespaceBaseIri });
 	}
 
+	const viewMode = options?.viewMode ?? 'schema';
+	if (viewMode === 'schema') {
+		return {
+			nodes: [...entityNodes, ...externalNodes.values()],
+			edges,
+			associationClassIris,
+			authoritativeEntityIris
+		};
+	}
+
+	// -- 'instances' view mode (data-catalog Story 005/006/016): individuals as their own nodes,
+	// alongside the *same* namespace-visible entity-node set 'schema' mode returns — Story 016
+	// dropped the earlier "only classes an individual relation references" filter so every relation
+	// target the user might want to link to (e.g. a cross-namespace generalized relation, Story 017)
+	// is already on canvas.
+	const classByIri = new Map(localClasses.map((c) => [c.iri, c]));
+
+	const individualNodes: IndividualNodeSpec[] = schema.individuals.map((individual) => ({
+		kind: 'individual',
+		iri: individual.iri,
+		label: individual.label,
+		classIri: individual.classIri,
+		className: classByIri.get(individual.classIri)?.label ?? individual.classIri,
+		namespace: individual.namespaceBaseIri
+	}));
+
+	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = schema.individualClassRelations.map(
+		(relation) => ({
+			kind: 'individualRelation',
+			source: relation.individualIri,
+			target: relation.classIri,
+			predicateIri: relation.predicateIri,
+			name: relation.name,
+			namespace: relation.namespaceBaseIri
+		})
+	);
+
+	const instanceOfEdges: InstanceOfEdgeSpec[] = schema.individuals.map((individual) => ({
+		kind: 'instanceOf',
+		source: individual.iri,
+		target: individual.classIri,
+		namespace: individual.namespaceBaseIri
+	}));
+
 	return {
-		nodes: [...entityNodes, ...externalNodes.values()],
-		edges,
-		associationClassIris
+		nodes: [...individualNodes, ...entityNodes],
+		edges: [...instanceOfEdges, ...individualRelationEdges],
+		associationClassIris,
+		authoritativeEntityIris
 	};
 }

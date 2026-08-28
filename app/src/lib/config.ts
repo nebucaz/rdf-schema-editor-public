@@ -31,22 +31,26 @@ export interface NamespaceGraphs {
 	schema: string;
 	/** Graph SHACL shapes live in. */
 	shapes: string;
+	/** Graph generated DCAT/PROV catalog triples live in (data-catalog Story 002). */
+	catalog: string;
 }
 
 /**
- * Derive a namespace's three storage graphs from its base IRI alone (research.md §12 Decision 1).
- * Path-segment suffixes (`/schema`, `/shapes`), not fragment suffixes (`#schema`, `#shapes`) —
- * reserves `#` exclusively for a resource's local name within the namespace, so e.g. a class
- * literally named "schema" can never mint an IRI textually identical to the schema graph's own
- * identifier. Normalizes away a trailing slash on `baseIri` so callers can pass either form
- * without producing a `//schema` double-slash.
+ * Derive a namespace's four storage graphs from its base IRI alone (research.md §12 Decision 1;
+ * `catalog` added by data-catalog Story 002). Path-segment suffixes (`/schema`, `/shapes`,
+ * `/catalog`), not fragment suffixes (`#schema`, `#shapes`, `#catalog`) — reserves `#` exclusively
+ * for a resource's local name within the namespace, so e.g. a class literally named "catalog" can
+ * never mint an IRI textually identical to the catalog graph's own identifier. Normalizes away a
+ * trailing slash on `baseIri` so callers can pass either form without producing a `//schema`
+ * double-slash.
  */
 export function namespaceGraphs(baseIri: string): NamespaceGraphs {
 	const base = baseIri.endsWith('/') ? baseIri.slice(0, -1) : baseIri;
 	return {
 		instances: base,
 		schema: `${base}/schema`,
-		shapes: `${base}/shapes`
+		shapes: `${base}/shapes`,
+		catalog: `${base}/catalog`
 	};
 }
 

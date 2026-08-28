@@ -6,6 +6,8 @@
 	import ThemeToggle from '$lib/components/ThemeToggle.svelte';
 	import HamburgerMenu from '$lib/components/HamburgerMenu.svelte';
 	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
+	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
+	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
@@ -132,6 +134,11 @@
 					{/each}
 				</select>
 			{/if}
+			<ViewModeToggle
+				viewMode={workbenchActions.viewMode}
+				onChange={(mode) => workbenchActions.setViewMode(mode)}
+			/>
+			<DescriptionVisibilityToggle />
 			<NamespaceFilter
 				namespaces={namespaceStore.namespaces}
 				hiddenNamespaces={workbenchActions.hiddenNamespaces}

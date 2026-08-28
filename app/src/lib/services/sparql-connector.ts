@@ -8,11 +8,19 @@ import {
 	extractLocalName,
 	SHAPES_NAMESPACE,
 	ATTRIBUTED_RELATIONSHIP_IRI,
+	AUTHORITATIVE_ENTITY_IRI,
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
 	EXTERNAL_VOCABULARY_CLASS_IRI,
 	EXTERNAL_PREFIXES,
+	catalogIri,
+	datasetIri,
+	distributionIri,
+	splitDatasetIri,
+	splitDistributionIri,
+	publicationActivityIri,
+	kebabCase,
 	type XsdDatatype
 } from '$lib/utils/iri';
 import {
@@ -33,15 +41,24 @@ import {
 	bindingToQuad,
 	quadKey,
 	isRdfType,
+	selectCatalogScope,
 	RDF,
 	OWL,
 	RDFS,
 	SH,
 	SH_NS,
+	DCAT,
+	DCT,
+	PROV,
 	type Quad,
 	type Partition
 } from './turtle';
-import { checkShaclWellFormedness, checkStructural, SchemaValidationError } from './validation';
+import {
+	checkShaclWellFormedness,
+	checkStructural,
+	checkCatalogStructural,
+	SchemaValidationError
+} from './validation';
 
 export interface SparqlBinding {
 	[key: string]: {
@@ -180,12 +197,52 @@ export interface FetchedIndividual {
 	namespaceBaseIri: string;
 }
 
+/** A generalized individual→class relation — any predicate connecting an individual to a class,
+ *  written as a plain triple into the individual's own `graphs.instances`, no SHACL shape involved.
+ *  Every predicate used here is a properly declared `owl:ObjectProperty` (generic or reused from an
+ *  existing domain/range-specific one, see `resolveOrMintPredicate`), so `name` always reflects a
+ *  real `rdfs:label` triple rather than a derived fallback. */
+export interface FetchedIndividualClassRelation {
+	individualIri: string;
+	predicateIri: string;
+	/** Display name — the predicate's real `rdfs:label`, falling back to its local name only if
+	 *  somehow undeclared. */
+	name: string;
+	classIri: string;
+	/** See `FetchedClass.namespaceBaseIri` (STORY-033) — the source individual's own namespace. */
+	namespaceBaseIri: string;
+}
+
+/** A generic `<predicate, object>` assertion on an individual (data-catalog Story 019) — the
+ *  editor's own CRUD read shape, unfiltered by target type (unlike `FetchedIndividualClassRelation`,
+ *  which only keeps class-typed objects). */
+export interface FetchedAssertion {
+	individualIri: string;
+	predicateIri: string;
+	predicateLabel: string;
+	objectIri: string;
+	objectLabel: string;
+}
+
+/** What kind of thing a `NameableEntity` resolves to — shown alongside its label in the Story 019
+ *  object typeahead so same-named entities of different kinds stay distinguishable. */
+export type NameableEntityKind = 'class' | 'attribute' | 'relation' | 'individual';
+
+/** Anything nameable the Story 019 assertion editor's object typeahead can resolve by label — a
+ *  class, an attribute, a relation, or an individual. */
+export interface NameableEntity {
+	iri: string;
+	label: string;
+	kind: NameableEntityKind;
+}
+
 export interface FetchedSchema {
 	classes: FetchedClass[];
 	datatypeProperties: FetchedProperty[];
 	objectProperties: FetchedObjectProperty[];
 	subClassOf: FetchedSubClassOf[];
 	individuals: FetchedIndividual[];
+	individualClassRelations: FetchedIndividualClassRelation[];
 }
 
 // -- Namespace management (STORY-027) -----------------------------------------------------------
@@ -197,6 +254,13 @@ export interface FetchedNamespace {
 	/** Optional default color (STORY-042) for entities/relations in this namespace with no
 	 *  per-node color override. */
 	color: string | null;
+	/** Optional default `dct:publisher` (data-catalog Story 011) — a plain literal (organization
+	 *  name), pre-filled onto a class's generated dataset at first-generation time when no
+	 *  per-entity override is later set. */
+	publisher: string | null;
+	/** Optional default `dct:license` (data-catalog Story 011) — a well-formed IRI, same pre-fill
+	 *  semantics as `publisher`. */
+	license: string | null;
 }
 
 /** A registered external vocabulary (STORY-046): `{prefix, baseIri}`, merged by
@@ -764,13 +828,14 @@ export class SparqlConnector {
 	}
 
 	/**
-	 * Reads `shapeIri`'s `sh:property` entry for `propIri`, if any — its full target-class list
-	 * (a bare `sh:class` for a single target, or every member of an `sh:or` union for several —
-	 * see `rewriteGenericPropertyShapeTargets`), `sh:name`, and cardinality. An empty `targets`
-	 * array means this source class doesn't use `propIri` at all yet (the STORY-052 "not yet on
-	 * this class" case). Used by `insertObjectProperty`'s generic-reuse path to decide whether a
-	 * new target merges into the existing shape, by `updateObjectProperty`'s generic path to know
-	 * which union member to retarget, and by `deleteObjectProperty` to decide shrink-the-union vs.
+	 * Reads `shapeIri`'s `sh:property` entries for `propIri`, if any — its full target-class list,
+	 * `sh:name`, and cardinality, collected across *every* independent `sh:property` block whose
+	 * `sh:path` matches `propIri` (data-catalog Story 018: one block per target class, each with
+	 * its own `sh:class` — no `sh:or` union, no RDF list). An empty `targets` array means this
+	 * source class doesn't use `propIri` at all yet (the STORY-052 "not yet on this class" case).
+	 * Used by `insertObjectProperty`'s generic-reuse path to decide whether a new target merges
+	 * into the existing shape, by `updateObjectProperty`'s generic path to know which target's
+	 * block to retarget, and by `deleteObjectProperty` to decide shrink-the-set vs.
 	 * remove-the-whole-shape.
 	 */
 	private async fetchGenericPropertyShapeDetails(
@@ -786,7 +851,6 @@ export class SparqlConnector {
 				OPTIONAL { ?propShape sh:minCount ?minCount }
 				OPTIONAL { ?propShape sh:maxCount ?maxCount }
 				OPTIONAL { ?propShape sh:class ?class }
-				OPTIONAL { ?propShape sh:or/rdf:rest*/rdf:first/sh:class ?class }
 			}
 		`);
 		const bindings = results.results.bindings;
@@ -801,14 +865,16 @@ export class SparqlConnector {
 	}
 
 	/**
-	 * Replaces `shapeIri`'s entire `sh:property` entry for `propIri` with a fresh one carrying
-	 * exactly `targets` (a bare `sh:class` if there's only one, an `sh:or` union of `[ sh:class
-	 * ... ]` alternatives if there are several) — the SHACL-valid way to say "this property's
-	 * values must belong to *one* of several classes" without two conflicting `sh:class`
-	 * constraints on the same path. Deletes the old property-shape subtree first (including every
-	 * `sh:or` list cell, if any) rather than trying to edit it in place: blank-node identity is
-	 * never relied on elsewhere in this codebase (every lookup re-traverses `sh:property`/
-	 * `sh:path`), so a full replace is simpler and safer than patching a variable-length RDF list.
+	 * Replaces `shapeIri`'s `sh:property` entries for `propIri` with exactly one independent
+	 * `sh:property` block per target class (data-catalog Story 018) — each carrying its own
+	 * `sh:path`/`sh:name`/cardinality and a single `sh:class`, never an `sh:or` union. Cardinality
+	 * applies *per target class*, not to a combined union: `sh:maxCount 1` on a relation used with
+	 * both `core:Bal` and `core:Sd` means "at most 1 `Bal` **and** at most 1 `Sd`" independently.
+	 * Deletes the old property-shape subtree first (including any `sh:or` list cells left over from
+	 * data predating this fix — forward-fix only, no migration story) rather than trying to edit it
+	 * in place: blank-node identity is never relied on elsewhere in this codebase (every lookup
+	 * re-traverses `sh:property`/`sh:path`), so a full replace is simpler and safer than patching a
+	 * variable-length structure.
 	 */
 	private async rewriteGenericPropertyShapeTargets(
 		shapeIri: string,
@@ -824,10 +890,16 @@ export class SparqlConnector {
 			.filter((c): c is string => c !== null)
 			.map((c) => ` ; ${c}`)
 			.join('');
-		const classConstraint =
-			targets.length <= 1
-				? ` ; sh:class <${targets[0]}>`
-				: ` ; sh:or ( ${targets.map((t) => `[ sh:class <${t}> ]`).join(' ')} )`;
+		const propertyBlocks = targets
+			.map(
+				(t) => `
+					<${shapeIri}> sh:property [
+						sh:path <${propIri}> ;
+						sh:name "${escapedName}"${constraints} ;
+						sh:class <${t}>
+					] .`
+			)
+			.join('');
 
 		await this.executeUpdate(`
 			${PREFIXES}
@@ -850,11 +922,7 @@ export class SparqlConnector {
 				}
 			} ;
 			INSERT DATA {
-				GRAPH <${graphs.shapes}> {
-					<${shapeIri}> sh:property [
-						sh:path <${propIri}> ;
-						sh:name "${escapedName}"${classConstraint}${constraints}
-					] .
+				GRAPH <${graphs.shapes}> {${propertyBlocks}
 				}
 			}
 		`);
@@ -1490,6 +1558,809 @@ export class SparqlConnector {
 		}
 	}
 
+	// -- AuthoritativeEntity marker (data-catalog Story 003) ------------------------------------
+
+	/** Idempotently ensures `<SCHEMA_NAMESPACE>AuthoritativeEntity a owl:Class` exists — the
+	 *  marker a class is declared `rdfs:subClassOf` to opt into DCAT catalog generation
+	 *  (`canvas-model.ts`'s `isAuthoritativeEntity`), mirroring
+	 *  `ensureAttributedRelationshipClass` exactly. Always lives in the *default* namespace's
+	 *  `/schema` graph, even when the class carrying the marker lives elsewhere. Safe to call on
+	 *  every load: a no-op once the triple exists. */
+	async ensureAuthoritativeEntityClass(): Promise<void> {
+		const exists = await this.classExists(AUTHORITATIVE_ENTITY_IRI, DEFAULT_NAMESPACE_BASE_IRI);
+		if (exists) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class ; rdfs:label "AuthoritativeEntity" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Marks/unmarks `classIriValue` as an `AuthoritativeEntity` by inserting/deleting its
+	 *  `rdfs:subClassOf <SCHEMA_NAMESPACE>AuthoritativeEntity` triple — the sole signal
+	 *  `canvas-model.ts` uses to classify a class as catalog-eligible. Mirrors
+	 *  `setAssociationClass` exactly. Written into `classIriValue`'s own namespace (the subject of
+	 *  the triple), not necessarily the default namespace the marker class itself lives in. */
+	async setAuthoritativeEntity(
+		classIriValue: string,
+		isAuthoritative: boolean,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		if (isAuthoritative) {
+			await this.ensureAuthoritativeEntityClass();
+			await this.insertSubClassOf(classIriValue, AUTHORITATIVE_ENTITY_IRI, namespaceBaseIri);
+		} else {
+			await this.deleteSubClassOf(classIriValue, AUTHORITATIVE_ENTITY_IRI, namespaceBaseIri);
+		}
+	}
+
+	/**
+	 * Looks up which namespace `individualIri` was declared in, by finding the named graph its own
+	 * `rdf:type` triple actually lives in — a plain cross-graph `GRAPH ?g {...}` pattern, mirroring
+	 * `findNamespaceOfClass` but for an ABox individual instead of a TBox class. An individual
+	 * normally lives in a namespace's plain instances graph (no `/schema`/`/shapes` suffix), so the
+	 * matched graph is usually the base IRI already; the suffix-stripping here is defensive, mirroring
+	 * `findNamespaceOfSubject`.
+	 */
+	private async findNamespaceOfIndividual(individualIri: string): Promise<string> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		const results = await this.selectQuery(
+			`${PREFIXES} SELECT ?g WHERE { GRAPH ?g { <${individualIri}> a ?type } } LIMIT 1`
+		);
+		const graphIri = results.results.bindings[0]?.g?.value;
+		if (!graphIri) {
+			throw new Error(`Cannot determine namespace: individual not found (${individualIri})`);
+		}
+		if (graphIri.endsWith('/schema')) return graphIri.slice(0, -'/schema'.length);
+		if (graphIri.endsWith('/shapes')) return graphIri.slice(0, -'/shapes'.length);
+		return graphIri;
+	}
+
+	/** Every individual asserting mastery over `classIri` (a class or an attribute IRI — Story 019
+	 *  widened this beyond classes) via any declared property labeled "isMasterFor" — a plain
+	 *  cross-graph `GRAPH ?g {...}` lookup with no `FROM`/`FROM NAMED` restriction, mirroring
+	 *  `findSubClassReferences`. `"isMasterFor"` is a naming *convention* read off real declared
+	 *  properties, not a hardcoded IRI: any generic or domain/range-specific `owl:ObjectProperty` the
+	 *  user happens to label "isMasterFor", in any namespace, is honored. Used by Story 008's
+	 *  generation engine to compute `prov:wasAttributedTo`/`wasDerivedFrom`; `buildSplitDatasetOps`
+	 *  (Story 020) reuses this same method to look up an *attribute's* own override, despite the
+	 *  class-scoped name/param kept for its original, still-primary call site. */
+	async fetchMasterSystemsOfClass(
+		classIri: string
+	): Promise<Array<{ iri: string; label: string; namespaceBaseIri: string }>> {
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?s ?label ?g WHERE {
+				GRAPH ?g { ?s ?p <${classIri}> }
+				GRAPH ?pg { ?p rdfs:label "isMasterFor" }
+				OPTIONAL { ?s rdfs:label ?label }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.s.value,
+			label: b.label?.value ?? extractLocalName(b.s.value),
+			namespaceBaseIri: b.g.value
+		}));
+	}
+
+	// -- Generalized individual→class relations (data-catalog Story 017) ------------------------
+	// Individual-relations are modelled exactly like entity-to-entity relations (STORY-051/052's
+	// 'generic'/'specific' split): a name typed by the user first tries to reuse an existing,
+	// *properly declared* `owl:ObjectProperty` with that exact `rdfs:label` — generic or
+	// domain/range-specific, so a relation already drawn between two classes on canvas (e.g.
+	// `gov:systemOfWorkIsMasterFor`) is reused verbatim, never shadowed by a second, undeclared
+	// predicate. Only when nothing matches is a fresh *generic* property minted+declared. The one
+	// deliberate difference from entity-to-entity relations: no SHACL shape is ever written here —
+	// ABox assertions aren't shape-constrained today.
+
+	/** Finds an existing `owl:ObjectProperty` (generic or domain/range-specific) by its exact
+	 *  `rdfs:label`, across every namespace — an unrestricted cross-graph `GRAPH ?g` lookup,
+	 *  mirroring `fetchMasterSystemsOfClass`'s own pattern. */
+	private async findObjectPropertyByLabel(label: string): Promise<string | undefined> {
+		const escapedLabel = this.escapeString(label);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?p WHERE {
+				GRAPH ?g { ?p a owl:ObjectProperty ; rdfs:label "${escapedLabel}" }
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.p.value;
+	}
+
+	/** Resolves a user-entered name for any individual-involving relation (an individual→class
+	 *  relation, or the Story 019 assertion editor's predicate) to a real, declared
+	 *  `owl:ObjectProperty` IRI: reuses an existing property with that exact `rdfs:label` if one
+	 *  exists anywhere in the schema; otherwise mints and declares a fresh *generic* one (`a
+	 *  owl:ObjectProperty ; rdfs:label`, no `rdfs:domain`/`rdfs:range`, and no `sh:property` shape).
+	 *  Never mints a new *specific* property — those are only ever authored via the ordinary
+	 *  entity-to-entity relation tool (`insertObjectProperty`). */
+	private async resolveOrMintPredicate(label: string, namespaceBaseIri: string): Promise<string> {
+		const trimmed = label.trim();
+		const existing = await this.findObjectPropertyByLabel(trimmed);
+		if (existing) return existing;
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const genericIri = genericPropertyIri(trimmed, namespaceBaseIri);
+		if (!(await this.propertyExists(genericIri, namespaceBaseIri))) {
+			await this.executeUpdate(
+				`${PREFIXES} INSERT DATA { ${inGraph(`<${genericIri}> a owl:ObjectProperty ; rdfs:label "${this.escapeString(trimmed)}" .`, graphs.schema)} }`
+			);
+		}
+		return genericIri;
+	}
+
+	/** Resolves `relationName` to a declared predicate IRI (`resolveOrMintPredicate`) and asserts
+	 *  `<individualIri> <predicateIri> <classIri>` as a plain triple in the individual's own
+	 *  namespace's `graphs.instances`. */
+	async insertIndividualClassRelation(
+		individualIri: string,
+		classIri: string,
+		relationName: string
+	): Promise<{ iri: string }> {
+		if (!relationName.trim()) throw new Error('Relation name must not be empty');
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const predicateIri = await this.resolveOrMintPredicate(relationName, namespaceBaseIri);
+		this.assertSafeSparqlIri(predicateIri, 'relation predicate IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${individualIri}> <${predicateIri}> <${classIri}> .`, graphs.instances)} }`
+		);
+		return { iri: predicateIri };
+	}
+
+	/** Removes exactly the `<individualIri> <predicateIri> <classIri>` triple. */
+	async deleteIndividualClassRelation(individualIri: string, predicateIri: string, classIri: string): Promise<void> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(predicateIri, 'relation predicate IRI');
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${predicateIri}> <${classIri}> .`, graphs.instances)} }`
+		);
+	}
+
+	/** Every generalized individual→class relation whose source individual lives in
+	 *  `namespaceBaseIri`, across any predicate except `rdf:type`/`rdfs:label`. An object is only
+	 *  kept when it's itself declared `a owl:Class` somewhere in the repo — an unrestricted
+	 *  cross-graph `GRAPH ?classGraph {...}` lookup so a cross-namespace target (Story 016/017's
+	 *  whole point) is found regardless of which namespace's `/schema` graph declares it, mirroring
+	 *  `fetchAllIndividuals`'s own "object is a real class" discriminator. Both graph patterns use an
+	 *  explicit `GRAPH <...>`/`GRAPH ?var` rather than `fromClause`: a query with any `FROM` but no
+	 *  matching `FROM NAMED` makes GraphDB treat the named-graph dataset as empty, which would
+	 *  silently make the unrestricted `?classGraph` lookup match nothing. */
+	async fetchAllIndividualClassRelations(
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<FetchedIndividualClassRelation[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?s ?p ?plabel ?class WHERE {
+				GRAPH <${graphs.instances}> { ?s ?p ?class }
+				GRAPH ?classGraph { ?class a owl:Class }
+				FILTER(?p != rdf:type && ?p != rdfs:label)
+				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			individualIri: b.s.value,
+			predicateIri: b.p.value,
+			name: b.plabel?.value ?? extractLocalName(b.p.value),
+			classIri: b.class.value,
+			namespaceBaseIri
+		}));
+	}
+
+	// -- Generic instance assertion editor (data-catalog Story 019) -----------------------------
+	// Widens Story 017's individual→class relation pattern to an arbitrary object IRI — a class, an
+	// attribute (`owl:DatatypeProperty`/`sh:property`), a relation (`owl:ObjectProperty`), or another
+	// individual — reusing the same individual-owns-its-own-instances-graph placement
+	// (`findNamespaceOfIndividual`) and the same `resolveOrMintPredicate` reuse-or-mint resolution.
+
+	/**
+	 * Resolves `predicateLabel` to a declared predicate IRI (`resolveOrMintPredicate`) and asserts
+	 * `<individualIri> <predicate> <objectIri>` in the individual's own `graphs.instances`
+	 * (data-catalog Story 019) — the object may be any IRI the app can resolve and label (a class, an
+	 * attribute, a relation, or another individual), widening Story 017's class-only object type.
+	 */
+	async insertAssertion(
+		individualIri: string,
+		predicateLabel: string,
+		objectIri: string
+	): Promise<{ predicateIri: string }> {
+		if (!predicateLabel.trim()) throw new Error('Predicate name must not be empty');
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const predicateIri = await this.resolveOrMintPredicate(predicateLabel, namespaceBaseIri);
+		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${individualIri}> <${predicateIri}> <${objectIri}> .`, graphs.instances)} }`
+		);
+		return { predicateIri };
+	}
+
+	/** Removes exactly the `<individualIri> <predicateIri> <objectIri>` triple. */
+	async deleteAssertion(individualIri: string, predicateIri: string, objectIri: string): Promise<void> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
+		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${predicateIri}> <${objectIri}> .`, graphs.instances)} }`
+		);
+	}
+
+	/**
+	 * Every `<predicate, object>` assertion on `individualIri`, excluding `rdf:type`/`rdfs:label`
+	 * (data-catalog Story 019) — the generic editor's own CRUD list, an unfiltered-by-target-type
+	 * superset of Story 017's narrower individual→class fetch (which remains in place for its own
+	 * existing call site). Predicate/object labels are resolved via an unrestricted cross-graph
+	 * `GRAPH ?g` lookup, mirroring `fetchAllIndividualClassRelations`'s own pattern, falling back to
+	 * the IRI's local name only when nothing declares an `rdfs:label`.
+	 */
+	async fetchAssertionsForIndividual(individualIri: string): Promise<FetchedAssertion[]> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?p ?plabel ?o ?olabel WHERE {
+				GRAPH <${graphs.instances}> { <${individualIri}> ?p ?o }
+				FILTER(?p != rdf:type && ?p != rdfs:label)
+				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+				OPTIONAL { GRAPH ?og { ?o rdfs:label ?olabel } }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			individualIri,
+			predicateIri: b.p.value,
+			predicateLabel: b.plabel?.value ?? extractLocalName(b.p.value),
+			objectIri: b.o.value,
+			objectLabel: b.olabel?.value ?? extractLocalName(b.o.value)
+		}));
+	}
+
+	/**
+	 * Aggregating lookup across every nameable thing the app knows how to resolve and display — the
+	 * Story 019 object typeahead's data source. Composes `fetchFullSchemaForAllNamespaces` (already
+	 * merging every namespace's classes/attributes/relations/individuals) rather than issuing a new
+	 * SPARQL query. Deduplicates by IRI: `schema.objectProperties` carries one row per domain a
+	 * generic relation is used from (`fetchGenericObjectPropertyEdges`), so the same relation IRI can
+	 * otherwise appear more than once and break the typeahead's keyed `{#each ... (o.iri)}`.
+	 *
+	 * Attribute labels are prefixed with their owning class's own label (`"Application.Name"`, not
+	 * bare `"Name"`): `propertyIri` scopes an attribute's IRI to its owning class specifically so two
+	 * classes can each have their own same-named attribute without an IRI clash, which means the
+	 * bare label alone can't disambiguate them in this flattened, cross-class typeahead list.
+	 */
+	async fetchNameableEntities(): Promise<NameableEntity[]> {
+		const schema = await this.fetchFullSchemaForAllNamespaces();
+		const classLabelByIri = new Map(schema.classes.map((c) => [c.iri, c.label]));
+		const all = [
+			...schema.classes.map((c) => ({ iri: c.iri, label: c.label, kind: 'class' as const })),
+			...schema.datatypeProperties.map((p) => ({
+				iri: p.iri,
+				label: classLabelByIri.has(p.domain) ? `${classLabelByIri.get(p.domain)}.${p.label}` : p.label,
+				kind: 'attribute' as const
+			})),
+			...schema.objectProperties.map((p) => ({ iri: p.iri, label: p.label, kind: 'relation' as const })),
+			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const }))
+		];
+		const byIri = new Map(all.map((e) => [e.iri, e]));
+		return [...byIri.values()];
+	}
+
+	/**
+	 * Every labeled `owl:ObjectProperty` usable as a predicate for any individual-involving relation
+	 * — the drag-connect individual→class dialog's and the Story 019 assertion editor's predicate
+	 * typeahead. Every declared relation is offered, generic *and* domain/range-specific (so an
+	 * existing entity-to-entity relation like `gov:systemOfWorkIsMasterFor` is pickable and reused
+	 * verbatim), plus every already-used individual→class relation predicate, deduplicated by IRI.
+	 * Typing an unlisted name mints a fresh namespace-scoped generic predicate via
+	 * `resolveOrMintPredicate`.
+	 */
+	async fetchRelationPredicateOptions(): Promise<{ iri: string; label: string }[]> {
+		const schema = await this.fetchFullSchemaForAllNamespaces();
+		const byIri = new Map<string, string>();
+		for (const rel of schema.objectProperties) {
+			byIri.set(rel.iri, rel.label);
+		}
+		for (const rel of schema.individualClassRelations) {
+			if (!byIri.has(rel.predicateIri)) byIri.set(rel.predicateIri, rel.name);
+		}
+		return [...byIri.entries()].map(([iri, label]) => ({ iri, label }));
+	}
+
+	/**
+	 * Resolves a `SystemOfWork` individual's own authority via its `isOperatedBy` edge (data-catalog
+	 * Story 020) — an ordinary user-defined generic individual→individual relation authored through
+	 * this same Story 019 editor, not a built-in predicate. Looked up by minting `isOperatedBy`'s
+	 * predicate IRI under the system's own namespace (mirroring how the relation itself would have
+	 * been authored) rather than a label search, since the predicate is namespace-scoped and
+	 * deterministic. Returns `null` — never throws — when the system individual can't be found or has
+	 * no such edge; this is an optional provenance enrichment, not a mandatory field.
+	 */
+	private async fetchOperatingAuthority(systemOfWorkIri: string): Promise<string | null> {
+		let namespaceBaseIri: string;
+		try {
+			namespaceBaseIri = await this.findNamespaceOfIndividual(systemOfWorkIri);
+		} catch {
+			return null;
+		}
+		const predicateIri = genericPropertyIri('isOperatedBy', namespaceBaseIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?authority WHERE {
+				GRAPH <${graphs.instances}> { <${systemOfWorkIri}> <${predicateIri}> ?authority }
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.authority?.value ?? null;
+	}
+
+	// -- Catalog generation, edit & save (data-catalog Stories 008/009/010/011/012) -------------
+	// One `dcat:Dataset` per `AuthoritativeEntity` subclass, written into `graphs.catalog` of the
+	// class's own namespace. `generateCatalogForClass` is the single "Generate catalog" entry point
+	// for both first-generation (Story 008) and regeneration (Story 012): on first run it writes the
+	// full inferable+placeholder set; on every later run it merges by predicate, touching only the
+	// generator-owned fields (identity/title/description/conformsTo/prov chain) and leaving
+	// `dct:publisher`/`dct:license`/`dcat:distribution`/`dcat:theme`/`dcat:keyword` — whatever a
+	// human already entered — untouched, per the plan's highest-risk-item mitigation. The Catalog
+	// tab's own free-form "Save" (`saveCatalogTurtleForClass`) is a *different* operation: a
+	// full-scope overwrite of the user's hand-edited draft, exactly mirroring how Schema/Shapes'
+	// `saveScopedTurtle` already works — it must never re-derive fields from the schema itself,
+	// or every manual edit would be silently reverted on next generate.
+
+	/** Predicates `generateCatalogForClass` owns and re-syncs on every regeneration (Story 012) —
+	 *  every other predicate on a dataset subject (`dct:publisher`, `dct:license`,
+	 *  `dcat:distribution`, `dcat:theme`, `dcat:keyword`) is never touched by generation. */
+	private static readonly GENERATOR_OWNED_DATASET_PREDICATES = [
+		RDF.type,
+		DCT.identifier,
+		DCT.title,
+		DCT.description,
+		DCT.conformsTo,
+		PROV.wasAttributedTo,
+		PROV.wasDerivedFrom,
+		PROV.wasGeneratedBy
+	];
+
+	/** Predicates a split dataset's own regeneration owns and re-syncs (data-catalog Story 020) —
+	 *  mirrors `GENERATOR_OWNED_DATASET_PREDICATES`, plus `dct:isPartOf` (the split dataset's own
+	 *  generator-derived link back to its parent, unlike the parent dataset which has no such link).
+	 *  `dct:publisher`/`dct:license`/`dcat:distribution` are, again, never touched once seeded. */
+	private static readonly SPLIT_DATASET_GENERATOR_OWNED_PREDICATES = [
+		RDF.type,
+		DCT.identifier,
+		DCT.title,
+		DCT.description,
+		DCT.conformsTo,
+		DCT.isPartOf,
+		PROV.wasAttributedTo,
+		PROV.wasDerivedFrom,
+		PROV.wasGeneratedBy
+	];
+
+	/** Idempotently ensures `<catalogIri> a dcat:Catalog` exists for a namespace — one container
+	 *  per namespace, reused across every class's generation run (mirrors
+	 *  `ensureAuthoritativeEntityClass`'s ASK-then-INSERT shape). */
+	async ensureCatalogContainer(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<void> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const catalog = catalogIri(namespaceBaseIri);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.catalog)} { <${catalog}> a <${DCAT.Catalog}> }`
+		);
+		if (exists) return;
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${catalog}> a <${DCAT.Catalog}> .`, graphs.catalog)} }`
+		);
+	}
+
+	/** A class's own `rdfs:label`/`rdfs:comment`, the inputs `generateCatalogForClass` derives
+	 *  `dct:title`/`dct:description` from. */
+	private async fetchClassLabelAndComment(
+		classIriValue: string,
+		namespaceBaseIri: string
+	): Promise<{ label: string; comment: string | null }> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?label ?comment ${fromClause(graphs.schema)} WHERE {
+				OPTIONAL { <${classIriValue}> rdfs:label ?label }
+				OPTIONAL { <${classIriValue}> rdfs:comment ?comment }
+			}
+		`);
+		const b = results.results.bindings[0];
+		return { label: b?.label?.value ?? extractLocalName(classIriValue), comment: b?.comment?.value ?? null };
+	}
+
+	/**
+	 * Generates (first run) or regenerates (every later run) the DCAT catalog entry for an
+	 * `AuthoritativeEntity` subclass (data-catalog Stories 008/012). Computes exactly the inferable
+	 * triples — `dcat:Dataset` typing, `dct:identifier`/`dct:title`/`dct:description`/
+	 * `dct:conformsTo`, the `prov:wasAttributedTo`/`wasDerivedFrom` pair per `isMasterFor` assertion
+	 * (omitted entirely when none exists — optional metadata, not a mandatory placeholder), and a
+	 * fresh `prov:wasGeneratedBy` → `prov:Activity` individual on every single run (never reused or
+	 * mutated in place, so each run keeps its own provenance record).
+	 *
+	 * First run only: pre-fills `dct:publisher`/`dct:license` from the namespace's own default when
+	 * one is set (otherwise an empty placeholder literal, `""`), and always emits one placeholder
+	 * `dcat:Distribution` (`dct:format`/`dcat:mediaType`/`dcat:accessURL` all `""`) — `dcat:theme` is
+	 * deliberately never populated (no taxonomy source to infer it from; see Story 008). Every later
+	 * run leaves all of that alone: only `GENERATOR_OWNED_DATASET_PREDICATES` is deleted and
+	 * reinserted, so a user-entered publisher/license/distribution survives regeneration regardless
+	 * of whether the namespace default it may have been seeded from later changes.
+	 */
+	async generateCatalogForClass(
+		classIriValue: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<{ datasetIri: string }> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const className = extractLocalName(classIriValue);
+		const dataset = datasetIri(namespaceBaseIri, className);
+		const catalog = catalogIri(namespaceBaseIri);
+
+		await this.ensureCatalogContainer(namespaceBaseIri);
+
+		const [classInfo, masters, namespaces, exists] = await Promise.all([
+			this.fetchClassLabelAndComment(classIriValue, namespaceBaseIri),
+			this.fetchMasterSystemsOfClass(classIriValue),
+			this.fetchNamespaces(),
+			this.askQuery(`${PREFIXES} ASK ${fromClause(graphs.catalog)} { <${dataset}> a <${DCAT.Dataset}> }`)
+		]);
+		const ns = namespaces.find((n) => n.baseIri === namespaceBaseIri);
+
+		const nowIso = new Date().toISOString();
+		const timestamp = nowIso.replace(/[^0-9]/g, '');
+		const activity = publicationActivityIri(namespaceBaseIri, className, timestamp);
+		const identifier = `${ns?.prefix ? kebabCase(ns.prefix) : 'catalog'}-${kebabCase(className)}`;
+
+		const generatorTriples: string[] = [
+			`<${dataset}> a <${DCAT.Dataset}> .`,
+			`<${dataset}> <${DCT.identifier}> "${this.escapeString(identifier)}" .`,
+			`<${dataset}> <${DCT.title}> "${this.escapeString(classInfo.label)}" .`
+		];
+		if (classInfo.comment) {
+			generatorTriples.push(`<${dataset}> <${DCT.description}> "${this.escapeString(classInfo.comment)}" .`);
+		}
+		generatorTriples.push(`<${dataset}> <${DCT.conformsTo}> <${classIriValue}> .`);
+		for (const master of masters) {
+			generatorTriples.push(`<${dataset}> <${PROV.wasAttributedTo}> <${master.iri}> .`);
+			generatorTriples.push(`<${dataset}> <${PROV.wasDerivedFrom}> <${master.iri}> .`);
+		}
+		generatorTriples.push(`<${dataset}> <${PROV.wasGeneratedBy}> <${activity}> .`);
+		generatorTriples.push(`<${activity}> a <${PROV.Activity}> .`);
+		generatorTriples.push(`<${activity}> <${PROV.startedAtTime}> "${nowIso}"^^xsd:dateTime .`);
+		generatorTriples.push(`<${activity}> <${PROV.endedAtTime}> "${nowIso}"^^xsd:dateTime .`);
+
+		const ops: string[] = [];
+		if (exists) {
+			for (const predicate of SparqlConnector.GENERATOR_OWNED_DATASET_PREDICATES) {
+				ops.push(`DELETE WHERE { ${inGraph(`<${dataset}> <${predicate}> ?o .`, graphs.catalog)} }`);
+			}
+		}
+		ops.push(`INSERT DATA { ${inGraph(generatorTriples.join(' '), graphs.catalog)} }`);
+
+		if (!exists) {
+			const distribution = distributionIri(namespaceBaseIri, className);
+			const publisherTriple = ns?.publisher
+				? `<${dataset}> <${DCT.publisher}> "${this.escapeString(ns.publisher)}" .`
+				: `<${dataset}> <${DCT.publisher}> "" .`;
+			const licenseTriple = ns?.license
+				? `<${dataset}> <${DCT.license}> <${ns.license}> .`
+				: `<${dataset}> <${DCT.license}> "" .`;
+			const placeholderTriples = [
+				publisherTriple,
+				licenseTriple,
+				`<${dataset}> <${DCAT.distribution}> <${distribution}> .`,
+				`<${distribution}> a <${DCAT.Distribution}> .`,
+				`<${distribution}> <${DCT.format}> "" .`,
+				`<${distribution}> <${DCAT.mediaType}> "" .`,
+				`<${distribution}> <${DCAT.accessURL}> "" .`,
+				`<${catalog}> <${DCAT.dataset}> <${dataset}> .`
+			];
+			ops.push(`INSERT DATA { ${inGraph(placeholderTriples.join(' '), graphs.catalog)} }`);
+		}
+
+		ops.push(
+			...(await this.buildSplitDatasetOps(
+				classIriValue,
+				namespaceBaseIri,
+				className,
+				classInfo.label,
+				dataset,
+				nowIso,
+				timestamp
+			))
+		);
+
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ; ')}`);
+		return { datasetIri: dataset };
+	}
+
+	/**
+	 * Data-catalog Story 020: computes the SPARQL update fragments for every attribute-level
+	 * `isMasterFor` override's own split `dcat:Dataset`, appended to `generateCatalogForClass`'s own
+	 * `ops`. Attributes sharing a non-default master-system override are grouped into one dataset per
+	 * distinct overriding system (not per attribute) — the entity's own default dataset needs no
+	 * change to exclude them, since it never enumerates attributes at all (out of scope per the
+	 * plan's own ADR). Merge-aware per split dataset, mirroring the parent dataset's own regeneration
+	 * shape: an existing split dataset only has `SPLIT_DATASET_GENERATOR_OWNED_PREDICATES` deleted/
+	 * reinserted; `dct:publisher`/`dct:license`/`dcat:distribution` are seeded once, on first
+	 * creation, and never touched again. A split dataset whose override no longer exists on any
+	 * attribute is deleted outright — its attribute(s) fold back into the entity's default dataset,
+	 * which already covers them without any change of its own.
+	 */
+	private async buildSplitDatasetOps(
+		classIriValue: string,
+		namespaceBaseIri: string,
+		className: string,
+		classLabel: string,
+		parentDataset: string,
+		nowIso: string,
+		timestamp: string
+	): Promise<string[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const attributes = (await this.fetchAllDatatypeProperties(namespaceBaseIri)).filter(
+			(p) => p.domain === classIriValue
+		);
+
+		const overrideGroups = new Map<string, { iri: string; label: string }>();
+		if (attributes.length > 0) {
+			const overridesByAttribute = await Promise.all(
+				attributes.map((attr) => this.fetchMasterSystemsOfClass(attr.iri))
+			);
+			for (const masters of overridesByAttribute) {
+				const system = masters[0];
+				if (system && !overrideGroups.has(system.iri)) {
+					overrideGroups.set(system.iri, { iri: system.iri, label: system.label });
+				}
+			}
+		}
+
+		const existingLinks = await this.selectQuery(`
+			${PREFIXES} SELECT ?split ${fromClause(graphs.catalog)} WHERE { ?split <${DCT.isPartOf}> <${parentDataset}> }
+		`);
+		const existingSplitIris = new Set(existingLinks.results.bindings.map((b) => b.split.value));
+		const requiredSplitIris = new Set<string>();
+		const ops: string[] = [];
+
+		for (const system of overrideGroups.values()) {
+			const systemLocalName = extractLocalName(system.iri);
+			const splitDataset = splitDatasetIri(namespaceBaseIri, className, systemLocalName);
+			requiredSplitIris.add(splitDataset);
+
+			const splitExists =
+				existingSplitIris.has(splitDataset) ||
+				(await this.askQuery(
+					`${PREFIXES} ASK ${fromClause(graphs.catalog)} { <${splitDataset}> a <${DCAT.Dataset}> }`
+				));
+			const authority = await this.fetchOperatingAuthority(system.iri);
+			const splitActivity = publicationActivityIri(namespaceBaseIri, `${className}${systemLocalName}`, timestamp);
+			const splitIdentifier = `${kebabCase(className)}-${kebabCase(system.label)}`;
+
+			const splitTriples: string[] = [
+				`<${splitDataset}> a <${DCAT.Dataset}> .`,
+				`<${splitDataset}> <${DCT.identifier}> "${this.escapeString(splitIdentifier)}" .`,
+				`<${splitDataset}> <${DCT.title}> "${this.escapeString(classLabel)} — ${this.escapeString(system.label)}" .`,
+				`<${splitDataset}> <${DCT.description}> "Attributes of ${this.escapeString(classLabel)} mastered independently by ${this.escapeString(system.label)}." .`,
+				`<${splitDataset}> <${DCT.conformsTo}> <${classIriValue}> .`,
+				`<${splitDataset}> <${DCT.isPartOf}> <${parentDataset}> .`,
+				`<${splitDataset}> <${PROV.wasAttributedTo}> <${system.iri}> .`,
+				`<${splitDataset}> <${PROV.wasDerivedFrom}> <${system.iri}> .`
+			];
+			if (authority) {
+				splitTriples.push(`<${splitDataset}> <${PROV.wasAttributedTo}> <${authority}> .`);
+			}
+			splitTriples.push(`<${splitDataset}> <${PROV.wasGeneratedBy}> <${splitActivity}> .`);
+			splitTriples.push(`<${splitActivity}> a <${PROV.Activity}> .`);
+			splitTriples.push(`<${splitActivity}> <${PROV.startedAtTime}> "${nowIso}"^^xsd:dateTime .`);
+			splitTriples.push(`<${splitActivity}> <${PROV.endedAtTime}> "${nowIso}"^^xsd:dateTime .`);
+
+			if (splitExists) {
+				for (const predicate of SparqlConnector.SPLIT_DATASET_GENERATOR_OWNED_PREDICATES) {
+					ops.push(`DELETE WHERE { ${inGraph(`<${splitDataset}> <${predicate}> ?o .`, graphs.catalog)} }`);
+				}
+			}
+			ops.push(`INSERT DATA { ${inGraph(splitTriples.join(' '), graphs.catalog)} }`);
+
+			if (!splitExists) {
+				const splitDistribution = splitDistributionIri(namespaceBaseIri, className, systemLocalName);
+				const placeholderTriples = [
+					`<${splitDataset}> <${DCT.publisher}> "" .`,
+					`<${splitDataset}> <${DCT.license}> "" .`,
+					`<${splitDataset}> <${DCAT.distribution}> <${splitDistribution}> .`,
+					`<${splitDistribution}> a <${DCAT.Distribution}> .`,
+					`<${splitDistribution}> <${DCT.format}> "" .`,
+					`<${splitDistribution}> <${DCAT.mediaType}> "" .`,
+					`<${splitDistribution}> <${DCAT.accessURL}> "" .`
+				];
+				ops.push(`INSERT DATA { ${inGraph(placeholderTriples.join(' '), graphs.catalog)} }`);
+			}
+		}
+
+		for (const splitIri of existingSplitIris) {
+			if (requiredSplitIris.has(splitIri)) continue;
+			ops.push(
+				`DELETE WHERE { ${inGraph(`<${splitIri}> <${DCAT.distribution}> ?dist . ?dist ?dp ?do .`, graphs.catalog)} }`
+			);
+			ops.push(`DELETE WHERE { ${inGraph(`<${splitIri}> ?p ?o .`, graphs.catalog)} }`);
+		}
+
+		return ops;
+	}
+
+	/** Fetches the current whole `graphs.catalog` content of a namespace as quads — the shared
+	 *  building block `fetchCatalogTurtleForClass`/`saveCatalogTurtleForClass` both scope down via
+	 *  `selectCatalogScope`. */
+	private async fetchCatalogGraphQuads(namespaceBaseIri: string): Promise<Quad[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(
+			`SELECT ?s ?p ?o ${fromClause(graphs.catalog)} WHERE { ?s ?p ?o }`,
+			{ infer: false }
+		);
+		return results.results.bindings.map((b) => bindingToQuad(b));
+	}
+
+	/** The Catalog tab's read path (Story 009): a class's own generated catalog entry, scoped via
+	 *  `selectCatalogScope`, serialized as Turtle. Returns `''` when nothing has been generated yet
+	 *  for this class — the Catalog tab shows an empty/prompt state rather than an error. */
+	async fetchCatalogTurtleForClass(
+		classIriValue: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<string> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const dataset = datasetIri(namespaceBaseIri, extractLocalName(classIriValue));
+		const catalogQuads = await this.fetchCatalogGraphQuads(namespaceBaseIri);
+		const scoped = selectCatalogScope(catalogQuads, dataset);
+		if (scoped.length === 0) return '';
+		const [namespaces, externalVocabularies] = await Promise.all([
+			this.fetchNamespaces(),
+			this.fetchExternalVocabularies()
+		]);
+		return quadsToTurtle(scoped, buildDisplayPrefixes(namespaces, externalVocabularies));
+	}
+
+	/**
+	 * The Catalog tab's write path (Stories 009/010): parses `turtleText`, validates it against
+	 * `checkCatalogStructural` (syntax + catalog-specific structural checks only — never
+	 * `checkStructural`/`checkShaclWellFormedness`, which are OWL/RDFS/SHACL-shaped checks that
+	 * don't apply to DCAT/PROV data), and — only if valid — replaces the class's whole catalog scope
+	 * (`selectCatalogScope`) with the parsed content, exactly mirroring `saveScopedTurtle`'s
+	 * full-scope-overwrite semantics for Schema/Shapes. Unlike `generateCatalogForClass`, this never
+	 * re-derives anything from the schema — it persists verbatim whatever the user's draft says.
+	 */
+	async saveCatalogTurtleForClass(
+		classIriValue: string,
+		turtleText: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const dataset = datasetIri(namespaceBaseIri, extractLocalName(classIriValue));
+
+		let newQuads: Quad[];
+		try {
+			newQuads = parseTurtle(turtleText);
+		} catch (err) {
+			throw new SchemaValidationError([
+				{ layer: 'syntax', message: err instanceof Error ? err.message : String(err) }
+			]);
+		}
+
+		const issues = checkCatalogStructural(newQuads);
+		if (issues.length > 0) throw new SchemaValidationError(issues);
+
+		const catalogQuads = await this.fetchCatalogGraphQuads(namespaceBaseIri);
+		const oldScope = selectCatalogScope(catalogQuads, dataset);
+		const oldSubjects = [...new Set(oldScope.map((q) => q.subject.value))];
+
+		const deleteOps = oldSubjects.map(
+			(s) => `DELETE WHERE { ${inGraph(`<${s}> ?p ?o .`, graphs.catalog)} }`
+		);
+		const insertBody = await quadsToGroundTriples(newQuads);
+		const insertOp = insertBody.trim() ? `INSERT DATA { ${inGraph(insertBody, graphs.catalog)} }` : '';
+		const ops = [...deleteOps, insertOp].filter(Boolean).join(' ; ');
+		if (ops) {
+			await this.executeUpdate(`${PREFIXES} ${ops}`);
+		}
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a class's per-entity `dct:publisher`
+	 *  override (data-catalog Story 011) — a plain literal, written directly onto the dataset
+	 *  subject, mirroring `updateClassDescription`'s DELETE/INSERT-WHERE shape. Never touched by
+	 *  `generateCatalogForClass` regeneration (not in `GENERATOR_OWNED_DATASET_PREDICATES`). */
+	async setCatalogPublisher(
+		classIriValue: string,
+		publisher: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const dataset = datasetIri(namespaceBaseIri, extractLocalName(classIriValue));
+		const trimmed = publisher?.trim();
+		const value = trimmed ? `"${this.escapeString(trimmed)}"` : '""';
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.catalog)}
+			DELETE { <${dataset}> <${DCT.publisher}> ?old }
+			INSERT { <${dataset}> <${DCT.publisher}> ${value} }
+			WHERE { OPTIONAL { <${dataset}> <${DCT.publisher}> ?old } }
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a class's per-entity `dct:license`
+	 *  override (data-catalog Story 011) — a well-formed IRI (validated by the caller/UI via
+	 *  `isWellFormedIri`), mirrors `setCatalogPublisher`. */
+	async setCatalogLicense(
+		classIriValue: string,
+		licenseIri: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const dataset = datasetIri(namespaceBaseIri, extractLocalName(classIriValue));
+		const trimmed = licenseIri?.trim();
+		if (trimmed) this.assertSafeSparqlIri(trimmed, 'license IRI');
+		const value = trimmed ? `<${trimmed}>` : '""';
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.catalog)}
+			DELETE { <${dataset}> <${DCT.license}> ?old }
+			INSERT { <${dataset}> <${DCT.license}> ${value} }
+			WHERE { OPTIONAL { <${dataset}> <${DCT.license}> ?old } }
+		`);
+	}
+
+	/**
+	 * Replaces a class's one `dcat:Distribution` block (data-catalog Story 011) —
+	 * `dct:format`/`dcat:mediaType`/`dcat:accessURL`, each a well-formed IRI (validated by the
+	 * caller/UI) or `null`/empty for "still a placeholder". Targets the deterministic
+	 * `distributionIri` node so repeated submissions overwrite the same node's fields rather than
+	 * accumulating new distributions. Never touched by regeneration.
+	 */
+	async setCatalogDistribution(
+		classIriValue: string,
+		fields: { format: string | null; mediaType: string | null; accessURL: string | null },
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const className = extractLocalName(classIriValue);
+		const dataset = datasetIri(namespaceBaseIri, className);
+		const distribution = distributionIri(namespaceBaseIri, className);
+
+		const iriOrPlaceholder = (value: string | null, fieldName: string): string => {
+			const trimmed = value?.trim();
+			if (!trimmed) return '""';
+			this.assertSafeSparqlIri(trimmed, fieldName);
+			return `<${trimmed}>`;
+		};
+
+		const formatValue = iriOrPlaceholder(fields.format, 'distribution format IRI');
+		const mediaTypeValue = iriOrPlaceholder(fields.mediaType, 'distribution mediaType IRI');
+		const accessURLValue = iriOrPlaceholder(fields.accessURL, 'distribution accessURL IRI');
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.catalog)}
+			DELETE {
+				<${dataset}> <${DCAT.distribution}> <${distribution}> .
+				<${distribution}> ?p ?o .
+			}
+			INSERT {
+				<${dataset}> <${DCAT.distribution}> <${distribution}> .
+				<${distribution}> a <${DCAT.Distribution}> .
+				<${distribution}> <${DCT.format}> ${formatValue} .
+				<${distribution}> <${DCAT.mediaType}> ${mediaTypeValue} .
+				<${distribution}> <${DCAT.accessURL}> ${accessURLValue} .
+			}
+			WHERE { OPTIONAL { <${distribution}> ?p ?o } }
+		`);
+	}
+
 	// -- Namespace management (STORY-027) -------------------------------------------------------
 
 	/** Idempotently ensures `<SCHEMA_NAMESPACE>Namespace a owl:Class` exists — mirrors
@@ -1510,18 +2381,22 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?ns ?prefix ?desc ?color ${fromClause(graphs.schema)} WHERE {
+			SELECT ?ns ?prefix ?desc ?color ?publisher ?license ${fromClause(graphs.schema)} WHERE {
 				?ns a <${NAMESPACE_CLASS_IRI}> .
 				OPTIONAL { ?ns <${NAMESPACE_PREFIX_PREDICATE_IRI}> ?prefix }
 				OPTIONAL { ?ns rdfs:comment ?desc }
 				OPTIONAL { ?ns <${NAMESPACE_COLOR_PREDICATE_IRI}> ?color }
+				OPTIONAL { ?ns <${DCT.publisher}> ?publisher }
+				OPTIONAL { ?ns <${DCT.license}> ?license }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			baseIri: b.ns.value,
 			prefix: b.prefix?.value ?? '',
 			description: b.desc?.value ?? null,
-			color: b.color?.value ?? null
+			color: b.color?.value ?? null,
+			publisher: b.publisher?.value ?? null,
+			license: b.license?.value ?? null
 		}));
 	}
 
@@ -1535,7 +2410,9 @@ export class SparqlConnector {
 		prefix: string,
 		baseIri: string,
 		description?: string,
-		color?: string
+		color?: string,
+		publisher?: string,
+		license?: string
 	): Promise<{ baseIri: string }> {
 		if (!prefix.trim()) throw new Error('Namespace prefix must not be empty');
 		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
@@ -1558,10 +2435,17 @@ export class SparqlConnector {
 		const colorTriple = trimmedColor
 			? ` ; <${NAMESPACE_COLOR_PREDICATE_IRI}> "${this.escapeString(trimmedColor)}"`
 			: '';
+		const trimmedPublisher = publisher?.trim();
+		const publisherTriple = trimmedPublisher
+			? ` ; <${DCT.publisher}> "${this.escapeString(trimmedPublisher)}"`
+			: '';
+		const trimmedLicense = license?.trim();
+		if (trimmedLicense) this.assertSafeSparqlIri(trimmedLicense, 'license IRI');
+		const licenseTriple = trimmedLicense ? ` ; <${DCT.license}> <${trimmedLicense}>` : '';
 
 		await this.executeUpdate(
 			`${PREFIXES} INSERT DATA { ${inGraph(
-				`<${baseIri}> a <${NAMESPACE_CLASS_IRI}> ; <${NAMESPACE_PREFIX_PREDICATE_IRI}> "${escapedPrefix}"${commentTriple}${colorTriple} .`,
+				`<${baseIri}> a <${NAMESPACE_CLASS_IRI}> ; <${NAMESPACE_PREFIX_PREDICATE_IRI}> "${escapedPrefix}"${commentTriple}${colorTriple}${publisherTriple}${licenseTriple} .`,
 				graphs.schema
 			)} }`
 		);
@@ -1613,6 +2497,58 @@ export class SparqlConnector {
 			DELETE { <${baseIri}> <${NAMESPACE_COLOR_PREDICATE_IRI}> ?old }
 			INSERT { <${baseIri}> <${NAMESPACE_COLOR_PREDICATE_IRI}> "${escaped}" }
 			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_COLOR_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a namespace's default `dct:publisher`
+	 *  (data-catalog Story 011) — a plain literal, mirrors `updateNamespaceDescription`. Reuses the
+	 *  `DCT.publisher` predicate directly on the namespace's own declaration subject rather than a
+	 *  new app-authored predicate, per the story's "join that same subject/graph as two more
+	 *  optional properties" decision. */
+	async updateNamespacePublisher(baseIri: string, publisher: string | null): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const trimmed = publisher?.trim();
+
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${baseIri}> <${DCT.publisher}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		const escaped = this.escapeString(trimmed);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${DCT.publisher}> ?old }
+			INSERT { <${baseIri}> <${DCT.publisher}> "${escaped}" }
+			WHERE { OPTIONAL { <${baseIri}> <${DCT.publisher}> ?old } }
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a namespace's default `dct:license`
+	 *  (data-catalog Story 011) — a well-formed IRI (validated by the caller/UI, see
+	 *  `isWellFormedIri`), mirrors `updateNamespacePublisher`. */
+	async updateNamespaceLicense(baseIri: string, licenseIri: string | null): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const trimmed = licenseIri?.trim();
+
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${baseIri}> <${DCT.license}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		this.assertSafeSparqlIri(trimmed, 'license IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${DCT.license}> ?old }
+			INSERT { <${baseIri}> <${DCT.license}> <${trimmed}> }
+			WHERE { OPTIONAL { <${baseIri}> <${DCT.license}> ?old } }
 		`);
 	}
 
@@ -1888,16 +2824,25 @@ export class SparqlConnector {
 	 * `canvas-model.ts`, kept separate so it's testable without a running GraphDB.
 	 */
 	async fetchFullSchema(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<FetchedSchema> {
-		const [classes, datatypeRaw, objectRaw, constraints, subClassOf, individuals, genericObjectProperties] =
-			await Promise.all([
-				this.fetchAllClasses(namespaceBaseIri),
-				this.fetchAllDatatypeProperties(namespaceBaseIri),
-				this.fetchAllObjectProperties(namespaceBaseIri),
-				this.fetchAllShapesAndProperties(namespaceBaseIri),
-				this.fetchAllSubClassOf(namespaceBaseIri),
-				this.fetchAllIndividuals(namespaceBaseIri),
-				this.fetchGenericObjectPropertyEdges(namespaceBaseIri)
-			]);
+		const [
+			classes,
+			datatypeRaw,
+			objectRaw,
+			constraints,
+			subClassOf,
+			individuals,
+			genericObjectProperties,
+			individualClassRelations
+		] = await Promise.all([
+			this.fetchAllClasses(namespaceBaseIri),
+			this.fetchAllDatatypeProperties(namespaceBaseIri),
+			this.fetchAllObjectProperties(namespaceBaseIri),
+			this.fetchAllShapesAndProperties(namespaceBaseIri),
+			this.fetchAllSubClassOf(namespaceBaseIri),
+			this.fetchAllIndividuals(namespaceBaseIri),
+			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
+			this.fetchAllIndividualClassRelations(namespaceBaseIri)
+		]);
 
 		const constraintByPath = new Map(constraints.map((c) => [c.path, c]));
 		const mergeCardinality = (props: FetchedPropertyBase[]): FetchedProperty[] =>
@@ -1918,7 +2863,8 @@ export class SparqlConnector {
 				...genericObjectProperties
 			],
 			subClassOf,
-			individuals
+			individuals,
+			individualClassRelations
 		};
 	}
 
@@ -1936,7 +2882,8 @@ export class SparqlConnector {
 			datatypeProperties: schemas.flatMap((s) => s.datatypeProperties),
 			objectProperties: schemas.flatMap((s) => s.objectProperties),
 			subClassOf: schemas.flatMap((s) => s.subClassOf),
-			individuals: schemas.flatMap((s) => s.individuals)
+			individuals: schemas.flatMap((s) => s.individuals),
+			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations)
 		};
 	}
 
@@ -1992,7 +2939,7 @@ export class SparqlConnector {
 
 	/** STORY-011: the whole schema graph, serialized as Turtle. Prefixes cover every registered
 	 *  namespace (STORY-048's `buildDisplayPrefixes`) plus every registered external vocabulary
-	 *  (STORY-050), not just the default `rse`/`rse-sh` pair, so e.g. `core:BusinessProcess` and
+	 *  (STORY-050), not just the default `rse`/`rse_sh` pair, so e.g. `core:BusinessProcess` and
 	 *  `gist:System` both display and round-trip on save without a hand-written `@prefix`. */
 	async fetchAllTriplesAsTurtle(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<string> {
 		const [quads, namespaces, externalVocabularies] = await Promise.all([

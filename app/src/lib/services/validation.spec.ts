@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { checkShaclWellFormedness, checkStructural } from './validation';
+import { checkShaclWellFormedness, checkStructural, checkCatalogStructural } from './validation';
 import { parseTurtle } from './turtle';
 
 const PREFIXES = `
@@ -7,6 +7,11 @@ const PREFIXES = `
 	@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 	@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
 	@prefix sh: <http://www.w3.org/ns/shacl#> .
+`;
+
+const CATALOG_PREFIXES = `
+	@prefix dcat: <http://www.w3.org/ns/dcat#> .
+	@prefix dct: <http://purl.org/dc/terms/> .
 `;
 
 describe('checkShaclWellFormedness (STORY-013)', () => {
@@ -123,5 +128,120 @@ describe('checkStructural (STORY-013)', () => {
 				(i) => i.layer === 'structural' && /urn:nutzt/.test(i.message) && /urn:Ghost/.test(i.message) && /not declared as owl:Class/.test(i.message)
 			)
 		).toBe(true);
+	});
+});
+
+describe('checkCatalogStructural (data-catalog Story 010)', () => {
+	const COMPLETE_DATASET = `
+		${CATALOG_PREFIXES}
+		<urn:ApplicationDataset> a dcat:Dataset ;
+			dct:identifier "core-application" ;
+			dct:title "Application Inventory" ;
+			dct:conformsTo <urn:Application> ;
+			dct:publisher "Application Architecture Authority" ;
+			dct:license <https://example.com/license/v1> ;
+			dcat:distribution <urn:ApplicationTurtleDistribution> .
+		<urn:ApplicationTurtleDistribution> a dcat:Distribution ;
+			dct:format <https://www.iana.org/assignments/media-types/text/turtle> ;
+			dcat:mediaType <https://www.iana.org/assignments/media-types/text/turtle> ;
+			dcat:accessURL <https://example.com/distribution/application.ttl> .
+	`;
+
+	it('passes a fully-populated catalog draft (matching catalog-v2.ttl\'s shape)', () => {
+		const quads = parseTurtle(COMPLETE_DATASET);
+		expect(checkCatalogStructural(quads)).toEqual([]);
+	});
+
+	it('a draft with dcat:theme/dcat:keyword omitted produces no issue for those fields', () => {
+		const quads = parseTurtle(COMPLETE_DATASET);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => /theme/.test(i.message) || /keyword/.test(i.message))).toBe(false);
+	});
+
+	it('flags a missing dct:publisher', () => {
+		const quads = parseTurtle(`
+			${CATALOG_PREFIXES}
+			<urn:ApplicationDataset> a dcat:Dataset ;
+				dct:identifier "core-application" ;
+				dct:title "Application Inventory" ;
+				dct:conformsTo <urn:Application> ;
+				dct:license <https://example.com/license/v1> ;
+				dcat:distribution <urn:ApplicationTurtleDistribution> .
+			<urn:ApplicationTurtleDistribution> a dcat:Distribution ;
+				dct:format <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:mediaType <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:accessURL <https://example.com/distribution/application.ttl> .
+		`);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => i.layer === 'structural' && /dct:publisher/.test(i.message))).toBe(true);
+	});
+
+	it('flags an empty-placeholder dct:license', () => {
+		const quads = parseTurtle(`
+			${CATALOG_PREFIXES}
+			<urn:ApplicationDataset> a dcat:Dataset ;
+				dct:identifier "core-application" ;
+				dct:title "Application Inventory" ;
+				dct:conformsTo <urn:Application> ;
+				dct:publisher "Application Architecture Authority" ;
+				dct:license "" ;
+				dcat:distribution <urn:ApplicationTurtleDistribution> .
+			<urn:ApplicationTurtleDistribution> a dcat:Distribution ;
+				dct:format <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:mediaType <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:accessURL <https://example.com/distribution/application.ttl> .
+		`);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => i.layer === 'structural' && /dct:license/.test(i.message))).toBe(true);
+	});
+
+	it('flags a missing dcat:Distribution entirely', () => {
+		const quads = parseTurtle(`
+			${CATALOG_PREFIXES}
+			<urn:ApplicationDataset> a dcat:Dataset ;
+				dct:identifier "core-application" ;
+				dct:title "Application Inventory" ;
+				dct:conformsTo <urn:Application> ;
+				dct:publisher "Application Architecture Authority" ;
+				dct:license <https://example.com/license/v1> .
+		`);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => /dcat:Distribution/.test(i.message))).toBe(true);
+	});
+
+	it('flags an incomplete dcat:Distribution block (missing dct:format)', () => {
+		const quads = parseTurtle(`
+			${CATALOG_PREFIXES}
+			<urn:ApplicationDataset> a dcat:Dataset ;
+				dct:identifier "core-application" ;
+				dct:title "Application Inventory" ;
+				dct:conformsTo <urn:Application> ;
+				dct:publisher "Application Architecture Authority" ;
+				dct:license <https://example.com/license/v1> ;
+				dcat:distribution <urn:ApplicationTurtleDistribution> .
+			<urn:ApplicationTurtleDistribution> a dcat:Distribution ;
+				dcat:mediaType <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:accessURL <https://example.com/distribution/application.ttl> .
+		`);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => /dct:format/.test(i.message))).toBe(true);
+	});
+
+	it('flags a hand-deleted dct:title even though it is normally inferable', () => {
+		const quads = parseTurtle(`
+			${CATALOG_PREFIXES}
+			<urn:ApplicationDataset> a dcat:Dataset ;
+				dct:identifier "core-application" ;
+				dct:conformsTo <urn:Application> ;
+				dct:publisher "Application Architecture Authority" ;
+				dct:license <https://example.com/license/v1> ;
+				dcat:distribution <urn:ApplicationTurtleDistribution> .
+			<urn:ApplicationTurtleDistribution> a dcat:Distribution ;
+				dct:format <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:mediaType <https://www.iana.org/assignments/media-types/text/turtle> ;
+				dcat:accessURL <https://example.com/distribution/application.ttl> .
+		`);
+		const issues = checkCatalogStructural(quads);
+		expect(issues.some((i) => /dct:title/.test(i.message))).toBe(true);
 	});
 });

@@ -1,7 +1,22 @@
 import { describe, it, expect } from 'vitest';
-import { buildCanvasModel } from './canvas-model';
-import type { FetchedSchema, FetchedClass, FetchedProperty, FetchedObjectProperty, FetchedSubClassOf, FetchedIndividual } from './sparql-connector';
-import { classIri, propertyIri, xsdIri, ATTRIBUTED_RELATIONSHIP_IRI, type XsdDatatype } from '$lib/utils/iri';
+import { buildCanvasModel, isAuthoritativeEntity } from './canvas-model';
+import type {
+	FetchedSchema,
+	FetchedClass,
+	FetchedProperty,
+	FetchedObjectProperty,
+	FetchedSubClassOf,
+	FetchedIndividual,
+	FetchedIndividualClassRelation
+} from './sparql-connector';
+import {
+	classIri,
+	propertyIri,
+	xsdIri,
+	ATTRIBUTED_RELATIONSHIP_IRI,
+	AUTHORITATIVE_ENTITY_IRI,
+	type XsdDatatype
+} from '$lib/utils/iri';
 
 const NS = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
 const NS_A = 'http://example.com/ns-a#';
@@ -51,6 +66,16 @@ function individual(iri: string, label: string, classIriValue: string, namespace
 	return { iri, label, classIri: classIriValue, namespaceBaseIri };
 }
 
+function individualClassRelation(
+	individualIri: string,
+	predicateIri: string,
+	name: string,
+	classIriValue: string,
+	namespaceBaseIri = NS
+): FetchedIndividualClassRelation {
+	return { individualIri, predicateIri, name, classIri: classIriValue, namespaceBaseIri };
+}
+
 function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
 	return {
 		classes: [],
@@ -58,6 +83,7 @@ function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
 		objectProperties: [],
 		subClassOf: [],
 		individuals: [],
+		individualClassRelations: [],
 		...overrides
 	};
 }
@@ -335,6 +361,35 @@ describe('buildCanvasModel', () => {
 		expect(inheritanceEdge?.namespace).toBe(NS_B);
 	});
 
+	it('produces authoritativeEntityIris: true for a class subclassed under AuthoritativeEntity (data-catalog Story 003)', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			subClassOf: [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)]
+		});
+		const model = buildCanvasModel(schema);
+		expect(model.authoritativeEntityIris.has(person)).toBe(true);
+	});
+
+	it('produces authoritativeEntityIris: false for a class not subclassed under AuthoritativeEntity', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({ classes: [fetchedClass(person, 'Person')] });
+		const model = buildCanvasModel(schema);
+		expect(model.authoritativeEntityIris.has(person)).toBe(false);
+	});
+
+	it('excludes the AuthoritativeEntity marker class itself from the rendered nodes/edges', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({
+			classes: [fetchedClass(AUTHORITATIVE_ENTITY_IRI, 'AuthoritativeEntity'), fetchedClass(person, 'Person')],
+			subClassOf: [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)]
+		});
+		const model = buildCanvasModel(schema);
+		expect(model.nodes.some((n) => n.iri === AUTHORITATIVE_ENTITY_IRI)).toBe(false);
+		expect(model.edges.some((e) => e.kind === 'inheritance')).toBe(false);
+		expect(model.nodes.some((n) => n.kind === 'entity' && n.iri === person)).toBe(true);
+	});
+
 	it('is idempotent: building twice from the same schema produces an identical model', () => {
 		const person = classIri('Person');
 		const car = classIri('Car');
@@ -346,5 +401,184 @@ describe('buildCanvasModel', () => {
 		const second = buildCanvasModel(schema);
 		expect(second.nodes).toEqual(first.nodes);
 		expect(second.edges).toEqual(first.edges);
+	});
+});
+
+describe('isAuthoritativeEntity (data-catalog Story 003)', () => {
+	it('returns true when classIri is directly subClassOf AuthoritativeEntity', () => {
+		const person = classIri('Person');
+		expect(isAuthoritativeEntity(person, [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)])).toBe(true);
+	});
+
+	it('returns false when classIri has no subClassOf triple to AuthoritativeEntity', () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		expect(isAuthoritativeEntity(person, [subClassOf(car, AUTHORITATIVE_ENTITY_IRI)])).toBe(false);
+		expect(isAuthoritativeEntity(person, [])).toBe(false);
+	});
+});
+
+describe('buildCanvasModel — instances view mode (data-catalog Story 005/006)', () => {
+	it('defaults to "schema" mode (omitted parameter) and produces identical output to today\'s buildCanvasModel', () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person'), fetchedClass(car, 'Car')],
+			objectProperties: [objectProp(person, car, 'owns')],
+			individuals: [individual(`${NS}#alice`, 'Alice', person)]
+		});
+		const withoutOption = buildCanvasModel(schema);
+		const withExplicitSchema = buildCanvasModel(schema, undefined, { viewMode: 'schema' });
+		expect(withoutOption).toEqual(withExplicitSchema);
+		expect(withoutOption.nodes.every((n) => n.kind !== 'individual')).toBe(true);
+	});
+
+	it('"instances" mode emits one IndividualNodeSpec per individual, resolving its owning class\'s label', () => {
+		const person = classIri('Person');
+		const aliceIri = `${NS}#alice`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [individual(aliceIri, 'Alice', person)]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const individualNodes = model.nodes.filter((n) => n.kind === 'individual');
+		expect(individualNodes).toHaveLength(1);
+		expect(individualNodes[0]).toMatchObject({
+			iri: aliceIri,
+			label: 'Alice',
+			classIri: person,
+			className: 'Person',
+			namespace: NS
+		});
+	});
+
+	it('"instances" mode includes every namespace-visible entity, not just classes individuals/relations reference (data-catalog Story 016)', () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const application = classIri('Application');
+		const adoitIri = `${NS}#adoit`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person'), fetchedClass(car, 'Car'), fetchedClass(application, 'Application')],
+			individuals: [individual(`${NS}#alice`, 'Alice', person)],
+			individualClassRelations: [individualClassRelation(adoitIri, `${NS}#isMasterFor`, 'isMasterFor', application)]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const entityNodeIris = model.nodes.filter((n) => n.kind === 'entity').map((n) => n.iri);
+		expect(entityNodeIris.sort()).toEqual([application, car, person].sort());
+	});
+
+	it('"instances" mode returns the same entity-node set as "schema" mode for an identical fixture', () => {
+		const person = classIri('Person');
+		const car = classIri('Car');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person'), fetchedClass(car, 'Car')],
+			individuals: [individual(`${NS}#alice`, 'Alice', person)]
+		});
+		const schemaMode = buildCanvasModel(schema, undefined, { viewMode: 'schema' });
+		const instancesMode = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const entityNodes = (n: (typeof schemaMode.nodes)[number]) => n.kind === 'entity';
+		expect(instancesMode.nodes.filter(entityNodes)).toEqual(schemaMode.nodes.filter(entityNodes));
+	});
+
+	it('"instances" mode emits a derived InstanceOfEdgeSpec connecting every individual to its own rdf:type class', () => {
+		const person = classIri('Person');
+		const aliceIri = `${NS}#alice`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [individual(aliceIri, 'Alice', person)]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		expect(model.edges).toContainEqual({
+			kind: 'instanceOf',
+			source: aliceIri,
+			target: person,
+			namespace: NS
+		});
+	});
+
+	it('"schema" mode never emits InstanceOfEdgeSpecs, even when the schema has individuals', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [individual(`${NS}#alice`, 'Alice', person)]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'schema' });
+		expect(model.edges.some((e) => e.kind === 'instanceOf')).toBe(false);
+	});
+
+	it('"instances" mode still includes a class with no individuals and no relations (data-catalog Story 016)', () => {
+		const application = classIri('Application');
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application')]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		expect(model.nodes.some((n) => n.kind === 'entity' && n.iri === application)).toBe(true);
+	});
+
+	it('"instances" mode reconstructs an IndividualClassRelationEdgeSpec per individual→class relation, including one labeled "isMasterFor"', () => {
+		const application = classIri('Application');
+		const adoitIri = `${NS}#adoit`;
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application')],
+			individualClassRelations: [
+				individualClassRelation(adoitIri, `${NS_A}#isMasterFor`, 'isMasterFor', application, NS_A)
+			]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		expect(model.edges).toEqual([
+			{
+				kind: 'individualRelation',
+				source: adoitIri,
+				target: application,
+				predicateIri: `${NS_A}#isMasterFor`,
+				name: 'isMasterFor',
+				namespace: NS_A
+			}
+		]);
+	});
+
+	it('"schema" mode never emits individual nodes or individual-relation edges, even when the schema has both', () => {
+		const application = classIri('Application');
+		const adoitIri = `${NS}#adoit`;
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application')],
+			individuals: [individual(`${NS}#alice`, 'Alice', application)],
+			individualClassRelations: [individualClassRelation(adoitIri, `${NS}#isMasterFor`, 'isMasterFor', application)]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'schema' });
+		expect(model.nodes.some((n) => n.kind === 'individual')).toBe(false);
+		expect(model.edges.some((e) => e.kind === 'individualRelation')).toBe(false);
+	});
+
+	it('"instances" mode reconstructs an IndividualClassRelationEdgeSpec per generalized relation, alongside one labeled "isMasterFor" (data-catalog Story 017)', () => {
+		const application = classIri('Application', NS_A);
+		const architectureIri = `${NS_B}#applicationArchitecture`;
+		const adoitIri = `${NS_A}#adoit`;
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application', null, NS_A)],
+			individualClassRelations: [
+				individualClassRelation(adoitIri, `${NS_A}#isMasterFor`, 'isMasterFor', application, NS_A),
+				individualClassRelation(architectureIri, `${NS_B}#isAuthorityFor`, 'isAuthorityFor', application, NS_B)
+			]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		expect(model.edges).toEqual([
+			{
+				kind: 'individualRelation',
+				source: adoitIri,
+				target: application,
+				predicateIri: `${NS_A}#isMasterFor`,
+				name: 'isMasterFor',
+				namespace: NS_A
+			},
+			{
+				kind: 'individualRelation',
+				source: architectureIri,
+				target: application,
+				predicateIri: `${NS_B}#isAuthorityFor`,
+				name: 'isAuthorityFor',
+				namespace: NS_B
+			}
+		]);
 	});
 });

@@ -15,6 +15,9 @@ import {
 	OWL,
 	RDFS,
 	SH,
+	DCAT,
+	DCT,
+	PROV,
 	type Quad
 } from './turtle';
 import type { SparqlBinding } from './sparql-connector';
@@ -51,6 +54,32 @@ describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 	});
 });
 
+describe('DCAT/DCT/PROV vocabulary constants (data-catalog Story 001)', () => {
+	it('serializes a quad using DCAT/DCT/PROV constants with dcat:/dct:/prov: prefixes, not full IRIs', async () => {
+		const datasetIri = 'urn:example:dataset';
+		const activityIri = 'urn:example:activity';
+		const quads = parseTurtle(`
+			<${datasetIri}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <${DCAT.Dataset}> ;
+				<${DCT.title}> "A dataset" ;
+				<${PROV.wasGeneratedBy}> <${activityIri}> .
+		`);
+		const turtle = await quadsToTurtle(quads);
+		expect(turtle).toContain('dcat:Dataset');
+		expect(turtle).toContain('dct:title');
+		expect(turtle).toContain('prov:wasGeneratedBy');
+		expect(turtle).not.toContain(DCAT.Dataset);
+		expect(turtle).not.toContain(DCT.title);
+		expect(turtle).not.toContain(PROV.wasGeneratedBy);
+	});
+
+	it('buildDisplayPrefixes() includes dcat/dct/prov prefix mappings for a namespace', () => {
+		const prefixes = buildDisplayPrefixes([{ prefix: 'core', baseIri: 'http://example.org/core' }]);
+		expect(prefixes.dcat).toBe('http://www.w3.org/ns/dcat#');
+		expect(prefixes.dct).toBe('http://purl.org/dc/terms/');
+		expect(prefixes.prov).toBe('http://www.w3.org/ns/prov#');
+	});
+});
+
 describe('buildDisplayPrefixes (STORY-048)', () => {
 	it('adds a schema/shapes/instances prefix triple per registered namespace, keyed by its own prefix', () => {
 		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
@@ -59,11 +88,11 @@ describe('buildDisplayPrefixes (STORY-048)', () => {
 		const prefixes = buildDisplayPrefixes([{ prefix: 'core', baseIri: coreBase }]);
 
 		expect(prefixes.core).toBe(`${coreGraphs.schema}#`);
-		expect(prefixes['core-sh']).toBe(`${coreGraphs.shapes}#`);
-		expect(prefixes['core-i']).toBe(`${coreGraphs.instances}#`);
+		expect(prefixes['core_sh']).toBe(`${coreGraphs.shapes}#`);
+		expect(prefixes['core_i']).toBe(`${coreGraphs.instances}#`);
 	});
 
-	it('round-trips an individual IRI (plain instances base, STORY-062) through its own -i prefix', async () => {
+	it('round-trips an individual IRI (plain instances base, STORY-062) through its own _i prefix', async () => {
 		const coreBase = 'http://ld.pageagent.com/rdf-schema-editor/core';
 		const coreGraphs = namespaceGraphs(coreBase);
 		const individualIri = `${coreGraphs.instances}#SomeIndividual`;
@@ -75,7 +104,7 @@ describe('buildDisplayPrefixes (STORY-048)', () => {
 		const prefixes = buildDisplayPrefixes([{ prefix: 'core', baseIri: coreBase }]);
 		const turtle = await quadsToTurtle(quads, prefixes);
 
-		expect(turtle).toContain('core-i:SomeIndividual');
+		expect(turtle).toContain('core_i:SomeIndividual');
 		expect(turtle).not.toContain(individualIri);
 
 		const reparsed = parseTurtle(turtle);
@@ -127,7 +156,7 @@ describe('buildDisplayPrefixes (STORY-048)', () => {
 		);
 
 		expect(prefixes.gist).toBe('https://ontologies.semanticarts.com/gist/');
-		expect(prefixes['gist-sh']).toBeUndefined();
+		expect(prefixes['gist_sh']).toBeUndefined();
 	});
 
 	it('round-trips an external-vocabulary reference (e.g. rdfs:subClassOf gist:System) using its own prefix', async () => {
