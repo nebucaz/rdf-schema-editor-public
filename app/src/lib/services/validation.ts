@@ -165,7 +165,16 @@ export function checkStructural(quads: Quad[]): ValidationIssue[] {
 	// domain/range check above, closing the gap that let a hand-typed
 	// `core:nutzt a core:Ghost` pass validation untouched before individuals became a first-class,
 	// canvas-created capability.
-	const recognizedTypeObjects = new Set<string>([OWL.Class, OWL.DatatypeProperty, OWL.ObjectProperty, SH.NodeShape]);
+	// relation-assertions Story 003: `RDF.Statement` is an external RDF-vocabulary meta-type, like
+	// the OWL/SHACL ones above — a reified relation's `<stmt> a rdf:Statement` triple must not be
+	// held to the "declared local owl:Class" bar the loop below applies to individuals.
+	const recognizedTypeObjects = new Set<string>([
+		OWL.Class,
+		OWL.DatatypeProperty,
+		OWL.ObjectProperty,
+		SH.NodeShape,
+		RDF.Statement
+	]);
 	for (const q of quads) {
 		if (q.predicate.value !== RDF.type || recognizedTypeObjects.has(q.object.value)) continue;
 		if (!declaredClasses.has(q.object.value)) {

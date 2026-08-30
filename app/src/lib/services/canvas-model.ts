@@ -99,10 +99,12 @@ export interface InheritanceEdgeSpec {
 	namespace: string;
 }
 
-/** A generalized individual→class relation (data-catalog Story 017) — any predicate connecting an
- *  individual to a class, only emitted in `'instances'` view mode. `source` is the individual's IRI,
- *  `target` the class's IRI. Reused for every individual→class relation regardless of predicate
- *  (including one labeled "isMasterFor") — see `FetchedIndividualClassRelation`. */
+/** A generalized individual→class *or* individual→individual relation (data-catalog Story 017;
+ *  widened to individual targets by relation-assertions Sprint 3 Story 007) — any predicate
+ *  connecting an individual to a class or to another individual, only emitted in `'instances'` view
+ *  mode. `source` is the individual's IRI, `target` the class's or target individual's IRI. Reused
+ *  for every such relation regardless of predicate (including one labeled "isMasterFor") — see
+ *  `FetchedIndividualClassRelation`/`FetchedIndividualIndividualRelation`. */
 export interface IndividualClassRelationEdgeSpec {
 	kind: 'individualRelation';
 	source: string;
@@ -294,16 +296,31 @@ export function buildCanvasModel(
 		namespace: individual.namespaceBaseIri
 	}));
 
-	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = schema.individualClassRelations.map(
-		(relation) => ({
-			kind: 'individualRelation',
-			source: relation.individualIri,
-			target: relation.classIri,
-			predicateIri: relation.predicateIri,
-			name: relation.name,
-			namespace: relation.namespaceBaseIri
-		})
-	);
+	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = [
+		...schema.individualClassRelations.map(
+			(relation): IndividualClassRelationEdgeSpec => ({
+				kind: 'individualRelation',
+				source: relation.individualIri,
+				target: relation.classIri,
+				predicateIri: relation.predicateIri,
+				name: relation.name,
+				namespace: relation.namespaceBaseIri
+			})
+		),
+		// Story 007: individual→individual assertions (Story 019's `insertAssertion`, or Story 006's
+		// drag-connect gesture) rendered as the same edge kind/component as individual→class
+		// relations — reusing one generalized spec rather than forking a second parallel type.
+		...schema.individualIndividualRelations.map(
+			(relation): IndividualClassRelationEdgeSpec => ({
+				kind: 'individualRelation',
+				source: relation.individualIri,
+				target: relation.targetIndividualIri,
+				predicateIri: relation.predicateIri,
+				name: relation.name,
+				namespace: relation.namespaceBaseIri
+			})
+		)
+	];
 
 	const instanceOfEdges: InstanceOfEdgeSpec[] = schema.individuals.map((individual) => ({
 		kind: 'instanceOf',

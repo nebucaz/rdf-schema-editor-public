@@ -1,5 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { debounce, LocalStorageLayoutStore, gridPosition, resolvePositions, type MinimalStorage } from './layout-store';
+import {
+	debounce,
+	LocalStorageLayoutStore,
+	GraphDbLayoutStore,
+	gridPosition,
+	resolvePositions,
+	type MinimalStorage,
+	type WorkspaceMemberPositionsSource
+} from './layout-store';
+
+function fakeConnector(
+	members: { elementIri: string; x: number; y: number }[] = []
+): WorkspaceMemberPositionsSource & {
+	fetchWorkspaceMembers: ReturnType<typeof vi.fn>;
+	updateWorkspaceMemberPosition: ReturnType<typeof vi.fn>;
+} {
+	return {
+		fetchWorkspaceMembers: vi.fn(async () => members),
+		updateWorkspaceMemberPosition: vi.fn(async () => undefined)
+	};
+}
 
 function fakeStorage(): MinimalStorage & { data: Record<string, string> } {
 	const data: Record<string, string> = {};
@@ -97,6 +117,107 @@ describe('LocalStorageLayoutStore', () => {
 		expect(store.getPosition('urn:x')).toBeUndefined();
 		expect(() => store.setPosition('urn:x', 1, 2)).not.toThrow();
 		vi.advanceTimersByTime(300);
+	});
+});
+
+describe('GraphDbLayoutStore (STORY-074)', () => {
+	beforeEach(() => vi.useFakeTimers());
+	afterEach(() => vi.useRealTimers());
+
+	it('returns undefined for any IRI before reload() has primed the cache', () => {
+		const store = new GraphDbLayoutStore(fakeConnector(), 300);
+		expect(store.getPosition('urn:x')).toBeUndefined();
+	});
+
+	it('reload() primes the cache from fetchWorkspaceMembers', async () => {
+		const connector = fakeConnector([{ elementIri: 'urn:x', x: 10, y: 20 }]);
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		expect(connector.fetchWorkspaceMembers).toHaveBeenCalledWith('urn:ws');
+		expect(store.getPosition('urn:x')).toEqual({ x: 10, y: 20 });
+	});
+
+	it('getPosition returns undefined for an element that is not a member of the loaded workspace', async () => {
+		const connector = fakeConnector([{ elementIri: 'urn:x', x: 10, y: 20 }]);
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		expect(store.getPosition('urn:other')).toBeUndefined();
+	});
+
+	it('getPosition reflects a just-set position immediately, before the debounced write fires', async () => {
+		const connector = fakeConnector();
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		store.setPosition('urn:x', 5, 6);
+		expect(store.getPosition('urn:x')).toEqual({ x: 5, y: 6 });
+	});
+
+	it('debounces the underlying updateWorkspaceMemberPosition write — not fired until the delay elapses', async () => {
+		const connector = fakeConnector();
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		store.setPosition('urn:x', 5, 6);
+		expect(connector.updateWorkspaceMemberPosition).not.toHaveBeenCalled();
+		vi.advanceTimersByTime(300);
+		expect(connector.updateWorkspaceMemberPosition).toHaveBeenCalledExactlyOnceWith('urn:ws', 'urn:x', 5, 6);
+	});
+
+	it('coalesces several rapid moves of the same node into a single debounced write of the last value', async () => {
+		const connector = fakeConnector();
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		store.setPosition('urn:x', 1, 1);
+		store.setPosition('urn:x', 2, 2);
+		store.setPosition('urn:x', 3, 3);
+		vi.advanceTimersByTime(300);
+
+		expect(connector.updateWorkspaceMemberPosition).toHaveBeenCalledExactlyOnceWith('urn:ws', 'urn:x', 3, 3);
+	});
+
+	it('keys the debounce per-element — moving one node does not delay another\'s write', async () => {
+		const connector = fakeConnector();
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		store.setPosition('urn:x', 1, 1);
+		vi.advanceTimersByTime(200);
+		store.setPosition('urn:y', 2, 2);
+		vi.advanceTimersByTime(100);
+
+		// urn:x's debounce (started at t=0) fires at t=300; urn:y's (started at t=200) hasn't yet.
+		expect(connector.updateWorkspaceMemberPosition).toHaveBeenCalledExactlyOnceWith('urn:ws', 'urn:x', 1, 1);
+		vi.advanceTimersByTime(200);
+		expect(connector.updateWorkspaceMemberPosition).toHaveBeenCalledWith('urn:ws', 'urn:y', 2, 2);
+	});
+
+	it('reload() replaces the previous workspace\'s cached positions entirely', async () => {
+		const connectorA = fakeConnector([{ elementIri: 'urn:x', x: 1, y: 1 }]);
+		const store = new GraphDbLayoutStore(connectorA, 300);
+		await store.reload('urn:ws-a');
+		expect(store.getPosition('urn:x')).toEqual({ x: 1, y: 1 });
+
+		(connectorA.fetchWorkspaceMembers as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+			{ elementIri: 'urn:y', x: 9, y: 9 }
+		]);
+		await store.reload('urn:ws-b');
+
+		expect(store.getPosition('urn:x')).toBeUndefined();
+		expect(store.getPosition('urn:y')).toEqual({ x: 9, y: 9 });
+	});
+
+	it('resolvePositions/gridPosition work unchanged against GraphDbLayoutStore', async () => {
+		const connector = fakeConnector([{ elementIri: 'urn:a', x: 100, y: 200 }]);
+		const store = new GraphDbLayoutStore(connector, 300);
+		await store.reload('urn:ws');
+
+		const result = resolvePositions(['urn:a', 'urn:b'], store);
+		expect(result.get('urn:a')).toEqual({ x: 100, y: 200 });
+		expect(result.get('urn:b')).toEqual(gridPosition(0));
 	});
 });
 

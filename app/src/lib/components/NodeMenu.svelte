@@ -139,8 +139,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 20px;
-		height: 20px;
+		min-width: 20px;
+		min-height: 20px;
 		border-radius: 4px;
 		background: transparent;
 		color: inherit;

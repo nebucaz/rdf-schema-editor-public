@@ -29,6 +29,13 @@
 		/** The relation's current kind when editing — fixed (not user-editable) once created, since
 		 *  switching kinds isn't supported. Defaults to 'specific' when creating. */
 		initialKind?: RelationKind;
+		/** Hides the Required/Repeatable checkboxes (relation-assertions unified edit modal) — those
+		 *  are SHACL `sh:property` cardinality constraints on a schema relation between two classes;
+		 *  an individual-involving relation is a plain ground triple with no such shape, so the fields
+		 *  don't apply. `required`/`repeatable` are still passed through to `onSubmit` unchanged
+		 *  (`false`/`false`) when hidden — callers that don't use them for that relation kind simply
+		 *  ignore the values. */
+		showConstraints?: boolean;
 		onSubmit: (
 			name: string,
 			targetIri: string,
@@ -50,6 +57,7 @@
 		allowGeneric = false,
 		genericRelationOptions = [],
 		initialKind = 'specific',
+		showConstraints = true,
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -127,7 +135,7 @@
 		{/if}
 	</label>
 	<label>
-		Target entity
+		Target
 		{#if allowRetarget}
 			<select bind:value={selectedTarget}>
 				{#each targetOptions as option (option.iri)}
@@ -138,14 +146,16 @@
 			<span class="static-value">{targetName}</span>
 		{/if}
 	</label>
-	<label class="checkbox">
-		<input type="checkbox" bind:checked={required} />
-		Required (sh:minCount 1)
-	</label>
-	<label class="checkbox">
-		<input type="checkbox" bind:checked={repeatable} />
-		Repeatable (allows multiple values)
-	</label>
+	{#if showConstraints}
+		<label class="checkbox">
+			<input type="checkbox" bind:checked={required} />
+			Required (sh:minCount 1)
+		</label>
+		<label class="checkbox">
+			<input type="checkbox" bind:checked={repeatable} />
+			Repeatable (allows multiple values)
+		</label>
+	{/if}
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}

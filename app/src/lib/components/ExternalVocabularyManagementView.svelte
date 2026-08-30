@@ -143,8 +143,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		min-width: 22px;
+		min-height: 22px;
 		border-radius: 4px;
 		background: transparent;
 		color: var(--color-text-muted);

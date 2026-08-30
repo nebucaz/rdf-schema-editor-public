@@ -6,6 +6,11 @@
 		 *  relations (data-catalog Story 017) reuse this same component with their own relation
 		 *  name here, instead of `isMasterFor`'s fixed "isMasterFor" label. */
 		label?: string;
+		/** Opens the unified relation-edit modal scoped to this edge — lets the user rename/retarget
+		 *  the relation itself and author/list/delete assertions against it. The assertions section
+		 *  reifies the edge's own ground triple lazily, in the background, the first time it's opened
+		 *  (`ensureReifiedStatement`); the modal doesn't wait on that round-trip to open. */
+		onEdit: () => void;
 		onDelete: () => void;
 	}
 
@@ -66,6 +71,14 @@
 			title={data.label ?? 'isMasterFor — this SystemOfWork is the authoritative source for this class'}
 			>{data.label ?? 'isMasterFor'}</span
 		>
+		<button
+			class="icon-button"
+			onclick={data.onEdit}
+			aria-label={`Edit relation ${data.label ?? 'isMasterFor'}`}
+			title="Edit"
+		>
+			<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
+		</button>
 		<button class="delete-ismasterfor" onclick={data.onDelete} aria-label="Delete relation" title="Delete relation">
 			×
 		</button>
@@ -86,12 +99,30 @@
 		white-space: nowrap;
 	}
 
+	.icon-button {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 14px;
+		min-height: 14px;
+		border-radius: 3px;
+		background: transparent;
+		color: var(--color-text-muted, #666);
+		border: none;
+		cursor: pointer;
+	}
+
+	.icon-button:hover {
+		background: var(--color-hover, rgba(0, 0, 0, 0.08));
+		color: var(--color-text, #333);
+	}
+
 	.delete-ismasterfor {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 14px;
-		height: 14px;
+		min-width: 14px;
+		min-height: 14px;
 		border-radius: 3px;
 		background: transparent;
 		color: var(--color-text-muted, #666);

@@ -7,7 +7,8 @@ import type {
 	FetchedObjectProperty,
 	FetchedSubClassOf,
 	FetchedIndividual,
-	FetchedIndividualClassRelation
+	FetchedIndividualClassRelation,
+	FetchedIndividualIndividualRelation
 } from './sparql-connector';
 import {
 	classIri,
@@ -76,6 +77,16 @@ function individualClassRelation(
 	return { individualIri, predicateIri, name, classIri: classIriValue, namespaceBaseIri };
 }
 
+function individualIndividualRelation(
+	individualIri: string,
+	predicateIri: string,
+	name: string,
+	targetIndividualIri: string,
+	namespaceBaseIri = NS
+): FetchedIndividualIndividualRelation {
+	return { individualIri, predicateIri, name, targetIndividualIri, namespaceBaseIri };
+}
+
 function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
 	return {
 		classes: [],
@@ -84,6 +95,7 @@ function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
 		subClassOf: [],
 		individuals: [],
 		individualClassRelations: [],
+		individualIndividualRelations: [],
 		...overrides
 	};
 }
@@ -533,6 +545,44 @@ describe('buildCanvasModel — instances view mode (data-catalog Story 005/006)'
 				predicateIri: `${NS_A}#isMasterFor`,
 				name: 'isMasterFor',
 				namespace: NS_A
+			}
+		]);
+	});
+
+	it('"instances" mode reconstructs an IndividualClassRelationEdgeSpec per individual→individual relation, alongside individual→class relations (relation-assertions Sprint 3 Story 007)', () => {
+		const application = classIri('Application');
+		const person = classIri('Person');
+		const adoitIri = `${NS}#adoit`;
+		const aliceIri = `${NS}#alice`;
+		const bobIri = `${NS}#bob`;
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application'), fetchedClass(person, 'Person')],
+			individuals: [individual(aliceIri, 'Alice', person), individual(bobIri, 'Bob', person)],
+			individualClassRelations: [
+				individualClassRelation(adoitIri, `${NS}#isMasterFor`, 'isMasterFor', application)
+			],
+			individualIndividualRelations: [
+				individualIndividualRelation(aliceIri, `${NS}#isOperatedBy`, 'isOperatedBy', bobIri)
+			]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const individualRelationEdges = model.edges.filter((e) => e.kind === 'individualRelation');
+		expect(individualRelationEdges).toEqual([
+			{
+				kind: 'individualRelation',
+				source: adoitIri,
+				target: application,
+				predicateIri: `${NS}#isMasterFor`,
+				name: 'isMasterFor',
+				namespace: NS
+			},
+			{
+				kind: 'individualRelation',
+				source: aliceIri,
+				target: bobIri,
+				predicateIri: `${NS}#isOperatedBy`,
+				name: 'isOperatedBy',
+				namespace: NS
 			}
 		]);
 	});

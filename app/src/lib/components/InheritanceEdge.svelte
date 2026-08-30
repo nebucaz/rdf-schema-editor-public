@@ -68,8 +68,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 14px;
-		height: 14px;
+		min-width: 14px;
+		min-height: 14px;
 		border-radius: 50%;
 		background: var(--color-bg-secondary, #fff);
 		border: 1px solid var(--color-border, #ccc);

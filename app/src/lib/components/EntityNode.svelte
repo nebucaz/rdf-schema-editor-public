@@ -49,6 +49,9 @@
 		/** Data-catalog Story 014: opens the Triples panel with the Catalog tab active. Only ever
 		 *  invoked when `isAuthoritativeEntity` is true (the menu entry is hidden otherwise). */
 		onViewCatalog: () => void;
+		/** STORY-081: removes just this one Workspace-membership row — the class itself and its
+		 *  membership in every other Workspace are untouched, unlike `onDelete`. */
+		onRemoveFromWorkspace: () => void;
 	}
 
 	export type EntityNodeType = Node<EntityNodeData, 'entity'>;
@@ -78,6 +81,7 @@
 			hidden: !data.isAuthoritativeEntity
 		},
 		{ label: 'Edit', icon: editIcon, onClick: data.onEdit },
+		{ label: 'Remove from workspace', icon: removeFromWorkspaceIcon, onClick: data.onRemoveFromWorkspace },
 		{ label: 'Delete', icon: deleteIcon, onClick: data.onDelete }
 	]);
 </script>
@@ -100,6 +104,10 @@
 
 {#snippet deleteIcon()}
 	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+{/snippet}
+
+{#snippet removeFromWorkspaceIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>
 {/snippet}
 
 <div
@@ -224,8 +232,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 20px;
-		height: 20px;
+		min-width: 20px;
+		min-height: 20px;
 		border-radius: 4px;
 		background: transparent;
 		color: inherit;

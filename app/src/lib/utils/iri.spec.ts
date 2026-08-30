@@ -5,9 +5,13 @@ import {
 	genericPropertyIri,
 	individualIri,
 	nodeShapeIri,
+	workspaceIri,
+	workspaceMembershipIri,
+	savedQueryIri,
 	catalogIri,
 	datasetIri,
 	publicationActivityIri,
+	statementIri,
 	extractLocalName,
 	pascalCase,
 	camelCase,
@@ -115,6 +119,74 @@ describe('nodeShapeIri', () => {
 	});
 });
 
+describe('workspaceIri (STORY-071)', () => {
+	it('derives a PascalCase local name suffixed "Workspace" under the default schema namespace', () => {
+		expect(workspaceIri('Project Overview')).toBe(`${SCHEMA_NAMESPACE}ProjectOverviewWorkspace`);
+	});
+
+	it('is deterministic — calling it twice with the same name returns the identical IRI', () => {
+		expect(workspaceIri('Default')).toBe(workspaceIri('Default'));
+	});
+
+	it('mints under an explicitly passed namespace base IRI', () => {
+		expect(workspaceIri('Default', 'http://example.org/gov')).toBe(
+			'http://example.org/gov/schema#DefaultWorkspace'
+		);
+	});
+});
+
+describe('savedQueryIri (STORY-086)', () => {
+	it('derives a PascalCase local name suffixed "SavedQuery" under the default schema namespace', () => {
+		expect(savedQueryIri('Undocumented Classes')).toBe(
+			`${SCHEMA_NAMESPACE}UndocumentedClassesSavedQuery`
+		);
+	});
+
+	it('is deterministic — calling it twice with the same name returns the identical IRI', () => {
+		expect(savedQueryIri('Undocumented Classes')).toBe(savedQueryIri('Undocumented Classes'));
+	});
+
+	it('normalizes names that pascal-case to the same value to the identical IRI', () => {
+		expect(savedQueryIri('undocumented classes')).toBe(savedQueryIri('Undocumented Classes'));
+	});
+
+	it('mints under an explicitly passed namespace base IRI', () => {
+		expect(savedQueryIri('Undocumented Classes', 'http://example.org/gov')).toBe(
+			'http://example.org/gov/schema#UndocumentedClassesSavedQuery'
+		);
+	});
+});
+
+describe('workspaceMembershipIri (STORY-071)', () => {
+	it('is deterministic — calling it twice with the same pair returns the identical IRI', () => {
+		const ws = workspaceIri('Project Overview');
+		const element = classIri('Application');
+		expect(workspaceMembershipIri(ws, element)).toBe(workspaceMembershipIri(ws, element));
+	});
+
+	it('derives from both owning IRIs\' local names under the default schema namespace', () => {
+		const ws = workspaceIri('Project Overview');
+		const element = classIri('Application');
+		expect(workspaceMembershipIri(ws, element)).toBe(
+			`${SCHEMA_NAMESPACE}ProjectOverviewWorkspace-Application`
+		);
+	});
+
+	it('produces distinct membership IRIs for different elements in the same workspace', () => {
+		const ws = workspaceIri('Project Overview');
+		const a = workspaceMembershipIri(ws, classIri('Application'));
+		const b = workspaceMembershipIri(ws, classIri('Server'));
+		expect(a).not.toBe(b);
+	});
+
+	it('produces distinct membership IRIs for the same element in different workspaces', () => {
+		const element = classIri('Application');
+		const a = workspaceMembershipIri(workspaceIri('Project Overview'), element);
+		const b = workspaceMembershipIri(workspaceIri('Infrastructure'), element);
+		expect(a).not.toBe(b);
+	});
+});
+
 describe('individualIri (STORY-019)', () => {
 	it('scopes the member local name by its owning class, avoiding cross-class collisions', () => {
 		const relationType = classIri('RelationType');
@@ -169,6 +241,20 @@ describe('catalogIri / datasetIri / publicationActivityIri (data-catalog Story 0
 		const second = publicationActivityIri(govBase, 'Person', '2026-08-27T00:00:01Z');
 		expect(first).not.toBe(second);
 		expect(first).toContain(namespaceGraphs(govBase).catalog);
+	});
+});
+
+describe('statementIri (relation-assertions Story 008)', () => {
+	const govBase = 'http://example.org/gov';
+
+	it('produces distinct IRIs for two calls with different timestamps in the same namespace', () => {
+		const first = statementIri(govBase, '20260827000000');
+		const second = statementIri(govBase, '20260827000001');
+		expect(first).not.toBe(second);
+	});
+
+	it('mints under the namespace base IRI directly (graphs.instances), not the /catalog graph', () => {
+		expect(statementIri(govBase, '20260827000000')).toBe(`${govBase}#Statement20260827000000`);
 	});
 });
 

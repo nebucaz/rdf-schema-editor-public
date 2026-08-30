@@ -51,6 +51,93 @@ export const NAMESPACE_PREFIX_PREDICATE_IRI = `${SCHEMA_NAMESPACE}prefix`;
 export const NAMESPACE_COLOR_PREDICATE_IRI = `${SCHEMA_NAMESPACE}color`;
 
 /**
+ * Workspace-management vocabulary (STORY-071, `spec/views/plan.md`): a named container a schema
+ * author places elements onto so only that container's members render on the canvas at once.
+ * Always stored in the default namespace's own `/schema` graph regardless of a Workspace's own
+ * optional `defaultNamespace` (research Decision 4), alongside `NAMESPACE_CLASS_IRI`.
+ */
+export const WORKSPACE_CLASS_IRI = `${SCHEMA_NAMESPACE}Workspace`;
+
+/**
+ * A stable, named `(workspace, element)` link resource — not a blank node, so per-member position
+ * can be re-targeted by a `DELETE {old} INSERT {new} WHERE {...}` update the way a blank subject
+ * can't (research §4).
+ */
+export const WORKSPACE_MEMBERSHIP_CLASS_IRI = `${SCHEMA_NAMESPACE}WorkspaceMembership`;
+
+/** Links a `WorkspaceMembership` instance to the `Workspace`/element it connects. */
+export const WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}workspace`;
+export const WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}element`;
+
+/**
+ * Per-member canvas position on a `WorkspaceMembership` instance — `xsd:decimal`, not
+ * `xsd:integer`, since Svelte Flow drag positions aren't guaranteed integers (research §10, the
+ * plan's ADR).
+ */
+export const WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI = `${SCHEMA_NAMESPACE}x`;
+export const WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI = `${SCHEMA_NAMESPACE}y`;
+
+/**
+ * A Workspace's optional default namespace — a UI convenience that pre-fills the namespace for new
+ * items created while it's active, **not** a storage-location signal (research Decision 4):
+ * `Workspace`/`WorkspaceMembership` triples always live in the default namespace's `/schema` graph
+ * regardless of this value.
+ */
+export const WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}defaultNamespace`;
+
+/**
+ * Boolean marker set once STORY-075's Default-Workspace migration backfill finishes, letting every
+ * later app load skip straight to an `ASK` instead of re-enumerating every element (see STORY-075's
+ * concurrency notes, `spec/views/plan.md`'s risk assessment).
+ */
+export const WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}backfillComplete`;
+
+/**
+ * SavedQuery vocabulary (STORY-086, `spec/sparql/plan.md`): a named, reusable SPARQL query a
+ * schema author can list and re-run later (research Decision 4, §5, §8). Always stored in the
+ * default namespace's own `/schema` graph, alongside `NAMESPACE_CLASS_IRI`/`WORKSPACE_CLASS_IRI` —
+ * management metadata, not namespace-scoped content.
+ */
+export const SAVED_QUERY_CLASS_IRI = `${SCHEMA_NAMESPACE}SavedQuery`;
+
+/** The saved query's raw SPARQL text, stored as a plain string literal (escaped via the same
+ *  `escapeString()` convention every other literal-bearing insert/update already uses). */
+export const SAVED_QUERY_TEXT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sparqlText`;
+
+/**
+ * Note vocabulary (STORY-083, `spec/sparql/story-083-workspace-notes.md`): a free-text sticky note
+ * on a Workspace's canvas, optionally pointing at a specific class/individual. Unlike
+ * `WorkspaceMembership` (a many-to-many join resource), a Note is a direct 1:1 child of its owning
+ * Workspace — one `noteWorkspace` predicate on the Note itself, no join table — so deleting the
+ * Workspace deletes its Notes outright. Mirrors the `WORKSPACE_CLASS_IRI`/
+ * `WORKSPACE_MEMBERSHIP_CLASS_IRI` block exactly: same file, same `${SCHEMA_NAMESPACE}` prefix,
+ * always the default namespace's own `/schema` graph (research Decision 4).
+ */
+export const NOTE_CLASS_IRI = `${SCHEMA_NAMESPACE}Note`;
+export const NOTE_WORKSPACE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteWorkspace`;
+export const NOTE_TEXT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteText`;
+export const NOTE_COLOR_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteColor`;
+
+/** `xsd:decimal`, matching `WORKSPACE_MEMBERSHIP_X/Y_PREDICATE_IRI`'s reasoning — Svelte Flow drag
+ *  positions aren't guaranteed integers. */
+export const NOTE_X_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteX`;
+export const NOTE_Y_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteY`;
+
+/** Optional pointer at the class/individual a Note annotates. */
+export const NOTE_LINKED_ELEMENT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}noteLinkedElement`;
+
+/**
+ * Fresh Note IRI (STORY-083) — unlike `classIri`/`workspaceIri`, a Note has no user-entered name to
+ * derive a stable IRI from, and several blank notes can exist side by side in the same Workspace,
+ * so its IRI is **non-deterministic**, minted fresh per creation, mirroring `statementIri`'s
+ * `timestamp`-uniqueness pattern rather than `workspaceMembershipIri`'s deterministic
+ * two-owner derivation.
+ */
+export function noteIri(workspaceIriValue: string, timestamp: string): string {
+	return `${DEFAULT_SCHEMA_NAMESPACE_BASE}#${extractLocalName(workspaceIriValue)}Note${timestamp}`;
+}
+
+/**
  * Split a human-entered name into lowercase word fragments: breaks on non-alphanumeric
  * separators *and* on camelCase/PascalCase boundaries, so a name typed as "VerifyPerson" or
  * "birthDate" round-trips through `pascalCase`/`camelCase` instead of collapsing into one word.
@@ -97,6 +184,32 @@ export function classIri(name: string, namespaceBaseIri: string = DEFAULT_SCHEMA
 }
 
 /**
+ * Derive a Workspace's IRI from its user-entered name (STORY-071) — unlike `classIri`'s second
+ * parameter (already the resolved `/schema` graph base), this takes a plain namespace *base* IRI
+ * and resolves `.schema` itself, because a Workspace always mints under the **default** namespace's
+ * `/schema` base regardless of its own optional `defaultNamespace` (research Decision 4) — there is
+ * no legitimate reason for a caller to pass anything but the default. Deterministic and stable
+ * across renames (rename only updates `rdfs:label`, matching `classIri`'s convention); concurrent
+ * callers minting "the Default workspace" independently converge on the identical IRI, which is
+ * what makes STORY-075's client-triggered migration safe under concurrent execution.
+ */
+export function workspaceIri(name: string, namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): string {
+	return `${namespaceGraphs(namespaceBaseIri).schema}#${pascalCase(name)}Workspace`;
+}
+
+/**
+ * Derive a SavedQuery's IRI from its user-entered name (STORY-086) — mirrors `workspaceIri`
+ * exactly: mints under the default namespace's `/schema` base regardless of the caller's active
+ * namespace (research Decision 4). Deterministic and stable across renames.
+ */
+export function savedQueryIri(
+	name: string,
+	namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+): string {
+	return `${namespaceGraphs(namespaceBaseIri).schema}#${pascalCase(name)}SavedQuery`;
+}
+
+/**
  * Derive a datatype/object property's IRI, scoped by its owning class so that two different
  * classes can each have their own "name" or "description" attribute without an IRI clash
  * (uniqueness only needs to hold "on the same entity", per STORY-005's acceptance criteria).
@@ -137,6 +250,19 @@ export function nodeShapeIri(
 	namespaceBaseIri: string = DEFAULT_SHAPES_NAMESPACE_BASE
 ): string {
 	return `${namespaceBaseIri}#${extractLocalName(ownerClassIri)}Shape`;
+}
+
+/**
+ * Deterministic `WorkspaceMembership` IRI for one `(workspace, element)` pair (STORY-071), mirroring
+ * `nodeShapeIri`'s two-owning-resource derivation so "does this membership already exist" is an
+ * `ASK` against a computed IRI rather than a search. Derived from both inputs' local names (e.g.
+ * `#ProjectOverviewWorkspace-Application`, research §8's sketch), minted under the same default
+ * `/schema` base as the owning Workspace itself.
+ */
+export function workspaceMembershipIri(workspaceIriValue: string, elementIri: string): string {
+	const workspaceLocal = extractLocalName(workspaceIriValue);
+	const elementLocal = extractLocalName(elementIri);
+	return `${DEFAULT_SCHEMA_NAMESPACE_BASE}#${workspaceLocal}-${elementLocal}`;
 }
 
 /**
@@ -189,6 +315,20 @@ export function publicationActivityIri(
 	timestamp: string
 ): string {
 	return `${namespaceGraphs(namespaceBaseIri).catalog}#${pascalCase(className)}PublicationActivity${timestamp}`;
+}
+
+/**
+ * Fresh `rdf:Statement` reification IRI for one relation-edge annotation (relation-assertions
+ * Story 008) — like `publicationActivityIri`, intentionally **not** deterministic: reifying the
+ * same `(subject, predicate, object)` triple twice would collide unless each occurrence carries
+ * its own uniqueness token (a timestamp, or any other caller-supplied unique component). Minted
+ * under `namespaceBaseIri` directly (the plain instances base, matching `individualIri`'s own
+ * base), not `namespaceGraphs(...).catalog` — a reified statement lives in `graphs.instances`
+ * alongside the ground triple it annotates (plan.md's "Reification graph placement" ADR), unlike
+ * `publicationActivityIri`'s catalog-graph placement.
+ */
+export function statementIri(namespaceBaseIri: string, timestamp: string): string {
+	return `${namespaceBaseIri}#Statement${timestamp}`;
 }
 
 /**

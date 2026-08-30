@@ -15,11 +15,20 @@ function createWorkbenchActionsStore() {
 	let exportingSvg = $state(false);
 	let hiddenNamespaces = $state<Set<string>>(new Set());
 	let viewMode = $state<'schema' | 'instances'>('schema');
+	let activeWorkspace = $state<string | null>(null);
+	let addElementOpen = $state(false);
+	/** STORY-082: a one-shot request to open the Triples panel scoped to one Workspace — set by
+	 *  `WorkspaceManagementView`'s "View triples" button (rendered inside `+layout.svelte`), read and
+	 *  cleared by `+page.svelte` (which owns `showTriplesPanel`/`TriplesPanel`), mirroring
+	 *  `externalVocabManagementOpen`'s cross-sibling bridge shape. A fresh object every call (even for
+	 *  the same Workspace clicked twice in a row) so `+page.svelte`'s `$effect` reliably re-fires. */
+	let triplesWorkspaceScope = $state<{ workspaceIri: string; label: string } | null>(null);
 	let onReload: () => void = () => {};
 	let onToggleTriples: () => void = () => {};
 	let onExportSvg: () => void = () => {};
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
 	let onSetViewMode: (mode: 'schema' | 'instances') => void = () => {};
+	let onSetActiveWorkspace: (workspaceIri: string) => void = () => {};
 
 	return {
 		get loading() {
@@ -66,6 +75,35 @@ function createWorkbenchActionsStore() {
 		set viewMode(value: 'schema' | 'instances') {
 			viewMode = value;
 		},
+		/** Active Workspace (STORY-077): `+page.svelte` owns the resolved current value (it drives
+		 *  `GraphDbLayoutStore`/the workspace-membership visibility gate and persists via
+		 *  `activeWorkspaceStore`), the navbar's Workspace `<select>` (`+layout.svelte`) only displays
+		 *  it and triggers changes — same bridge shape as `hiddenNamespaces`/`viewMode`. */
+		get activeWorkspace() {
+			return activeWorkspace;
+		},
+		set activeWorkspace(value: string | null) {
+			activeWorkspace = value;
+		},
+		/** "Add Element" typeahead modal (STORY-080): `+layout.svelte`'s hamburger entry opens it,
+		 *  `+page.svelte` owns the rendered `Modal`/`AddElementForm` (it needs the canvas's
+		 *  `nextPosition()`/`addWorkspaceMember` wiring) — same bridge shape as
+		 *  `externalVocabManagementOpen`. */
+		get addElementOpen() {
+			return addElementOpen;
+		},
+		set addElementOpen(value: boolean) {
+			addElementOpen = value;
+		},
+		openAddElement() {
+			addElementOpen = true;
+		},
+		get triplesWorkspaceScope() {
+			return triplesWorkspaceScope;
+		},
+		set triplesWorkspaceScope(value: { workspaceIri: string; label: string } | null) {
+			triplesWorkspaceScope = value;
+		},
 		registerReload(fn: () => void) {
 			onReload = fn;
 		},
@@ -81,6 +119,9 @@ function createWorkbenchActionsStore() {
 		registerSetViewMode(fn: (mode: 'schema' | 'instances') => void) {
 			onSetViewMode = fn;
 		},
+		registerSetActiveWorkspace(fn: (workspaceIri: string) => void) {
+			onSetActiveWorkspace = fn;
+		},
 		reload() {
 			onReload();
 		},
@@ -95,6 +136,9 @@ function createWorkbenchActionsStore() {
 		},
 		setViewMode(mode: 'schema' | 'instances') {
 			onSetViewMode(mode);
+		},
+		setActiveWorkspace(workspaceIri: string) {
+			onSetActiveWorkspace(workspaceIri);
 		},
 		openExternalVocabManagement() {
 			externalVocabManagementOpen = true;

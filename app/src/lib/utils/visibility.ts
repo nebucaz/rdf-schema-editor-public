@@ -2,24 +2,36 @@
  * Namespace-visibility helpers shared by the initial canvas build and the live namespace-filter
  * toggle (STORY-033/`+page.svelte`). Extracted as pure functions so they're unit-testable without
  * a component-testing harness — this repo has none set up yet (see `CLAUDE.md`).
+ *
+ * STORY-076 composes an optional, second, independent `workspaceMembers` gate on top of the
+ * pre-existing namespace-only gate — both are ORed as "should hide" conditions. `workspaceMembers`
+ * stays optional (defaulting to "no workspace filtering") so every pre-existing namespace-only call
+ * site/test keeps its exact prior behavior unmodified (the plan's risk assessment).
  */
 
 /**
- * Whether `nodeId` is visible given its namespace tag and the current hidden-namespace set.
+ * Whether `nodeId` is visible given its namespace tag, the current hidden-namespace set, and
+ * (STORY-076) the active Workspace's member set.
  *
  * A node with no `namespaces` entry is an external vocabulary stub (`ExternalNodeSpec` carries no
  * `namespace` field) — its visibility is instead derived from the local entities that reference it
- * via inheritance (data-catalog Story 015), via `externalReferencingSources`.
+ * via inheritance (data-catalog Story 015), via `externalReferencingSources`. An external stub has
+ * no `WorkspaceMembership` of its own (research §8: "no standalone existence"), so `workspaceMembers`
+ * is never consulted for it directly — only for the local entities referencing it, via
+ * `isExternalNodeHidden`.
  */
 export function isEndpointVisible(
 	nodeId: string,
 	namespaces: Map<string, string>,
 	hidden: Set<string>,
-	externalReferencingSources: Map<string, string[]>
+	externalReferencingSources: Map<string, string[]>,
+	workspaceMembers?: Set<string>
 ): boolean {
 	const ns = namespaces.get(nodeId);
-	if (ns !== undefined) return !hidden.has(ns);
-	return !isExternalNodeHidden(externalReferencingSources.get(nodeId), namespaces, hidden);
+	if (ns !== undefined) {
+		return !hidden.has(ns) && (workspaceMembers === undefined || workspaceMembers.has(nodeId));
+	}
+	return !isExternalNodeHidden(externalReferencingSources.get(nodeId), namespaces, hidden, workspaceMembers);
 }
 
 export function isEdgeHidden(
@@ -27,11 +39,12 @@ export function isEdgeHidden(
 	target: string,
 	namespaces: Map<string, string>,
 	hidden: Set<string>,
-	externalReferencingSources: Map<string, string[]>
+	externalReferencingSources: Map<string, string[]>,
+	workspaceMembers?: Set<string>
 ): boolean {
 	return (
-		!isEndpointVisible(source, namespaces, hidden, externalReferencingSources) ||
-		!isEndpointVisible(target, namespaces, hidden, externalReferencingSources)
+		!isEndpointVisible(source, namespaces, hidden, externalReferencingSources, workspaceMembers) ||
+		!isEndpointVisible(target, namespaces, hidden, externalReferencingSources, workspaceMembers)
 	);
 }
 
@@ -45,12 +58,13 @@ export function isEdgeHidden(
 export function isExternalNodeHidden(
 	sources: string[] | undefined,
 	namespaces: Map<string, string>,
-	hidden: Set<string>
+	hidden: Set<string>,
+	workspaceMembers?: Set<string>
 ): boolean {
 	if (!sources || sources.length === 0) return false;
 	return sources.every((sourceId) => {
 		const ns = namespaces.get(sourceId);
-		return ns !== undefined && hidden.has(ns);
+		return ns !== undefined && (hidden.has(ns) || (workspaceMembers !== undefined && !workspaceMembers.has(sourceId)));
 	});
 }
 

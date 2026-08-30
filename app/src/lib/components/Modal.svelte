@@ -6,9 +6,12 @@
 		title: string;
 		onClose: () => void;
 		children: Snippet;
+		/** Overrides the default 500px content width — e.g. the Query Console needs room for a
+		 *  results table (`ResultsTable.svelte`), which most modal content here doesn't. */
+		maxWidth?: string;
 	}
 
-	let { isOpen, title, onClose, children }: Props = $props();
+	let { isOpen, title, onClose, children, maxWidth = '500px' }: Props = $props();
 
 	function handleBackdropClick(event: MouseEvent) {
 		if (event.target === event.currentTarget) {
@@ -28,7 +31,7 @@
 {#if isOpen}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div class="modal-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
-		<div class="modal-content">
+		<div class="modal-content" style:max-width={maxWidth}>
 			<div class="modal-header">
 				<h2 id="modal-title">{title}</h2>
 				<button class="close-button" onclick={onClose} aria-label="Close">
@@ -90,8 +93,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 32px;
-		height: 32px;
+		min-width: 32px;
+		min-height: 32px;
 		border-radius: 6px;
 		background: transparent;
 		color: var(--color-text-muted);

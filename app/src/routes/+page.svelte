@@ -24,8 +24,10 @@
 		type ExternalClassNodeType
 	} from '$lib/components/ExternalClassNode.svelte';
 	import IndividualNode, { type IndividualNodeData, type IndividualNodeType } from '$lib/components/IndividualNode.svelte';
+	import NoteNode, { type NoteNodeData, type NoteNodeType } from '$lib/components/NoteNode.svelte';
 	import RelationEdge, { type RelationEdgeData } from '$lib/components/RelationEdge.svelte';
 	import AttributedLinkEdge, { type AttributedLinkEdgeData } from '$lib/components/AttributedLinkEdge.svelte';
+	import NoteLinkEdge from '$lib/components/NoteLinkEdge.svelte';
 	import InheritanceEdge, { type InheritanceEdgeData } from '$lib/components/InheritanceEdge.svelte';
 	import IsMasterForEdge, { type IsMasterForEdgeData } from '$lib/components/IsMasterForEdge.svelte';
 	import InstanceOfEdge from '$lib/components/InstanceOfEdge.svelte';
@@ -40,30 +42,35 @@
 	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
+	import AddElementForm from '$lib/components/AddElementForm.svelte';
 	import {
 		sparqlConnector,
 		type AssociationLink,
 		type FetchedSchema,
 		type FetchedAssertion,
+		type FetchedNote,
 		type NameableEntity
 	} from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import { buildCanvasModel } from '$lib/services/canvas-model';
-	import { layoutStore, resolvePositions } from '$lib/stores/layout-store';
+	import { GraphDbLayoutStore, KeyedDebouncer, resolvePositions } from '$lib/stores/layout-store';
+	import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
 	import { nodeColorStore } from '$lib/stores/node-color-store';
 	import { activeNamespaceStore } from '$lib/stores/active-namespace-store';
+	import { activeWorkspaceStore } from '$lib/stores/active-workspace-store';
+	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { namespaceVisibilityStore } from '$lib/stores/namespace-visibility-store';
 	import { viewModeStore, type ViewMode } from '$lib/stores/view-mode-store';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
-	import { extractLocalName, type XsdDatatype } from '$lib/utils/iri';
+	import { extractLocalName, workspaceIri, type XsdDatatype } from '$lib/utils/iri';
 	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
 	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
 
-	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType;
+	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
 
-	const nodeTypes = { entity: EntityNode, external: ExternalClassNode, individual: IndividualNode };
+	const nodeTypes = { entity: EntityNode, external: ExternalClassNode, individual: IndividualNode, note: NoteNode };
 	const edgeTypes = {
 		relation: RelationEdge,
 		attributedLink: AttributedLinkEdge,
@@ -74,13 +81,36 @@
 		individualRelation: IsMasterForEdge,
 		// Derived rdf:type connector (instances view) — not a stored relation, so its own
 		// non-interactive, undeletable edge component instead of reusing IsMasterForEdge.
-		instanceOf: InstanceOfEdge
+		instanceOf: InstanceOfEdge,
+		// STORY-083: a Note's optional pointer at the element it annotates — dashed, no arrowhead,
+		// no delete button (unlinking is a Note menu action, not an edge action).
+		noteLink: NoteLinkEdge
 	};
 
 	let nodes = $state.raw<CanvasNode[]>([]);
 	let edges = $state.raw<Edge[]>([]);
 	let errorMessage = $state<string | null>(null);
 	let loading = $state(false);
+
+	// -- Workspace-scoped canvas visibility and positions (STORY-076/077) -------------------------
+	// The canvas always has an active Workspace (research Decision 3) — `activeWorkspaceIri` starts
+	// pointed at the deterministic Default IRI so it's never empty even before the first
+	// `loadSchemaFromGraphDB` round-trip resolves it for real (STORY-075's `ensureDefaultWorkspace`).
+	let activeWorkspaceIri = $state<string>(workspaceIri('Default'));
+	/** The active Workspace's member IRIs, primed by `graphDbLayoutStore.reload()` — the second,
+	 *  ANDed hidden gate `buildAndApplyCanvasModel` composes alongside `hiddenNamespaces`. */
+	let workspaceMembers = $state<Set<string>>(new Set());
+	const graphDbLayoutStore = new GraphDbLayoutStore(sparqlConnector);
+
+	// -- Workspace Notes (STORY-083) ---------------------------------------------------------------
+	// Notes aren't part of `fetchFullSchemaForAllNamespaces()` (they're not classes/properties), so
+	// `noteRecords` is fetched/refreshed as its own step and merged into `nodes`/`edges` on top of
+	// whatever `buildAndApplyCanvasModel` most recently produced (which knows nothing about notes).
+	let noteRecords = $state<FetchedNote[]>([]);
+	/** Reuses `GraphDbLayoutStore`'s own per-key debounce mechanism (`KeyedDebouncer`) rather than
+	 *  inventing a second one — a Note is just another elementIri-shaped position client, even though
+	 *  its persistence call is `updateNotePosition` instead of `updateWorkspaceMemberPosition`. */
+	const noteLayoutDebouncer = new KeyedDebouncer<[x: number, y: number]>();
 
 	// -- Viewport-aware placement for newly created nodes ------------------------------------------
 	// Tracks the live pan/zoom state (bound two-way to <SvelteFlow>) and the canvas container's
@@ -165,6 +195,40 @@
 	 *  `namespace` field) — its visibility is derived from its referencing inheritance edges instead
 	 *  (data-catalog Story 015), via `isEdgeHidden`/`isExternalNodeHidden` in `utils/visibility.ts`. */
 
+	/** Recomputes every node/edge's `hidden` flag from the current `hiddenNamespaces`/`workspaceMembers`
+	 *  gates, without touching positions or re-fetching from GraphDB — the shared recompute
+	 *  `toggleNamespaceVisibility` (STORY-033) and the Workspace-membership gate's own mutators
+	 *  (STORY-080's "Add Element", STORY-081's "Remove from workspace") all funnel through, so the two
+	 *  ANDed gates (research/plan's ADR) can never independently drift out of sync (the plan's own risk
+	 *  assessment for STORY-076). */
+	function applyVisibilityFilters() {
+		const externalReferencingSources = buildExternalReferencingSources(
+			edges.filter((e) => e.type === 'inheritance'),
+			nodeNamespaces
+		);
+
+		nodes = nodes.map((n) => {
+			// STORY-083: a Note belongs to exactly one Workspace by construction (not a
+			// `WorkspaceMembership` row) — `noteRecords`/`fetchNotesForWorkspace` already scope it to
+			// the active Workspace server-side, so it's never subject to the namespace-visibility or
+			// external-stub gates below, which don't apply to it at all.
+			if (n.type === 'note') return n;
+			const ns = nodeNamespaces.get(n.id);
+			if (ns !== undefined) return { ...n, hidden: hiddenNamespaces.has(ns) || !workspaceMembers.has(n.id) };
+			return {
+				...n,
+				hidden: isExternalNodeHidden(externalReferencingSources.get(n.id), nodeNamespaces, hiddenNamespaces, workspaceMembers)
+			};
+		});
+		edges = edges.map((e) => {
+			if (e.type === 'noteLink') return e;
+			return {
+				...e,
+				hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, hiddenNamespaces, externalReferencingSources, workspaceMembers)
+			};
+		});
+	}
+
 	function toggleNamespaceVisibility(baseIri: string) {
 		const next = new Set(hiddenNamespaces);
 		if (next.has(baseIri)) {
@@ -175,24 +239,7 @@
 			namespaceVisibilityStore.setHidden(baseIri, true);
 		}
 		hiddenNamespaces = next;
-
-		const externalReferencingSources = buildExternalReferencingSources(
-			edges.filter((e) => e.type === 'inheritance'),
-			nodeNamespaces
-		);
-
-		nodes = nodes.map((n) => {
-			const ns = nodeNamespaces.get(n.id);
-			if (ns !== undefined) return { ...n, hidden: next.has(ns) };
-			return {
-				...n,
-				hidden: isExternalNodeHidden(externalReferencingSources.get(n.id), nodeNamespaces, next)
-			};
-		});
-		edges = edges.map((e) => ({
-			...e,
-			hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, next, externalReferencingSources)
-		}));
+		applyVisibilityFilters();
 	}
 
 	// -- Schema/Instances view mode (data-catalog Story 007) ---------------------------------------
@@ -209,6 +256,7 @@
 		viewMode = mode;
 		viewModeStore.setViewMode(mode);
 		if (lastFetchedSchema) buildAndApplyCanvasModel(lastFetchedSchema);
+		applyNoteNodesAndEdges();
 	}
 
 	// -- Raw triples view (STORY-011/012/013) ----------------------------------------------------
@@ -233,6 +281,23 @@
 	 *  requests `'catalog'`; every other opener (hamburger "View Triples", per-node "View triples")
 	 *  requests `'schema'`, matching pre-Story-014 behavior. */
 	let triplesPanelInitialTab = $state<'schema' | 'shapes' | 'catalog'>('schema');
+
+	/** STORY-082: set only by the Workspace-scoped "View triples" entry point
+	 *  (`WorkspaceManagementView`, via the `workbenchActions.triplesWorkspaceScope` bridge above) —
+	 *  every other opener clears this back to `null` alongside setting `triplesPanelScopeIri`, so the
+	 *  two scope kinds stay mutually exclusive. */
+	let triplesPanelWorkspaceScope = $state<{ workspaceIri: string; label: string } | null>(null);
+
+	/** The discriminated scope `TriplesPanel` renders (STORY-082) — memoized via `$derived` so it
+	 *  only produces a new object when one of the three underlying state values actually changes,
+	 *  not on every unrelated re-render (which would otherwise retrigger the panel's fetch). */
+	const triplesPanelScope = $derived(
+		triplesPanelWorkspaceScope
+			? ({ kind: 'workspace', workspaceIri: triplesPanelWorkspaceScope.workspaceIri, label: triplesPanelWorkspaceScope.label } as const)
+			: triplesPanelScopeIri !== null
+				? ({ kind: 'node', iri: triplesPanelScopeIri, namespaceBaseIri: triplesPanelNamespaceBaseIri ?? activeNamespaceBaseIri() } as const)
+				: ({ kind: 'all' } as const)
+	);
 
 	function findNode(id: string | null): CanvasNode | undefined {
 		return id ? nodes.find((n) => n.id === id) : undefined;
@@ -264,9 +329,24 @@
 			.map((n) => ({ iri: n.id, name: n.data.name }))
 	);
 
+	/** Display name for any connection endpoint (relation-assertions Sprint 3 Story 006/007) — an
+	 *  entity node's `name` or an individual node's `label`, falling back to the bare IRI when the
+	 *  node isn't found on canvas. Generalizes `entityOptions`' name lookup (class-only) to also
+	 *  cover an individual→individual connection's target. */
+	function connectionTargetName(iri: string): string {
+		const n = findNode(iri);
+		if (n?.type === 'entity') return n.data.name;
+		if (n?.type === 'individual') return n.data.label;
+		return iri;
+	}
+
 	// -- Entities (STORY-004) -------------------------------------------------------------------
 
 	let showAddEntity = $state(false);
+	/** Existing classes/individuals for the "Add Entity" dialog's name-lookup typeahead — refetched
+	 *  each time the dialog opens so picking a name that already exists places it instead of erroring
+	 *  on `insertClass`'s duplicate-name guard. */
+	let addEntityExistingOptions = $state<NameableEntity[]>([]);
 	/** STORY-066: Option/Alt+drag a connection from an entity's handle onto empty canvas — captures the
 	 *  drag's origin node and drop position while the "Create Entity" dialog it opens is pending, so
 	 *  the entity created from it can chain straight into `pendingRelationCreate` on submit. */
@@ -288,6 +368,24 @@
 	let pendingExternalClassFromConnection = $state<{ sourceNodeId: string; position: { x: number; y: number } } | null>(
 		null
 	);
+
+	/** Option/Alt+click directly on empty canvas (not a connection drag — see
+	 *  `pendingConnectionContextMenu` above for that gesture): offers "+ Add Entity"/
+	 *  "+ Add External Class"/"+ Add Note" at the exact click position. Unlike the connection-drag
+	 *  menu, there's no origin node and nothing chains into a relation afterwards. */
+	let pendingCanvasContextMenu = $state<{
+		screenPosition: { x: number; y: number };
+		flowPosition: { x: number; y: number };
+	} | null>(null);
+	/** Set right before opening `showAddEntity` from `pendingCanvasContextMenu`'s "+ Add Entity"
+	 *  choice, overriding `nextPosition()`'s viewport-centered slot with the exact click position —
+	 *  `null` (the toolbar button's own path) means "no override". Consumed and reset to `null` by
+	 *  every path that closes the dialog (submit *or* cancel), so a stale position can never leak
+	 *  into the next, unrelated "+ Add Entity" click. */
+	let addEntityAtPosition = $state<{ x: number; y: number } | null>(null);
+	/** Same override for `showAddExternalClass`, mirroring `addEntityAtPosition`. */
+	let addExternalClassAtPosition = $state<{ x: number; y: number } | null>(null);
+
 	let editEntityId = $state<string | null>(null);
 	let deleteEntityId = $state<string | null>(null);
 	let deleteEntityWarning = $state<{ externalReferences: string[]; subClassReferences: string[] } | null>(
@@ -346,16 +444,21 @@
 				manageMembersClassIri = classIriValue;
 			},
 			onViewTriples: () => {
+				triplesPanelWorkspaceScope = null;
 				triplesPanelScopeIri = classIriValue;
 				triplesPanelNamespaceBaseIri = namespaceBaseIri;
 				triplesPanelInitialTab = 'schema';
 				showTriplesPanel = true;
 			},
 			onViewCatalog: () => {
+				triplesPanelWorkspaceScope = null;
 				triplesPanelScopeIri = classIriValue;
 				triplesPanelNamespaceBaseIri = namespaceBaseIri;
 				triplesPanelInitialTab = 'catalog';
 				showTriplesPanel = true;
+			},
+			onRemoveFromWorkspace: () => {
+				void handleRemoveFromWorkspace(classIriValue);
 			}
 		};
 	}
@@ -374,13 +477,41 @@
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
+		// The Option/Alt+click-on-canvas context menu's "+ Add Entity" choice overrides the
+		// viewport-centered grid slot with the exact click position (see `addEntityAtPosition`).
+		const position = addEntityAtPosition ?? nextPosition();
+		addEntityAtPosition = null;
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		workspaceMembers = new Set([...workspaceMembers, iri]);
 		const newNode: EntityNodeType = {
 			id: iri,
 			type: 'entity',
-			position: nextPosition(),
+			position,
 			data: makeNodeData(iri, name, description, [], resolvedNamespaceBaseIri, color)
 		};
 		nodes = [...nodes, newNode];
+		showAddEntity = false;
+	}
+
+	/** Opens the "Add Entity" dialog and loads existing classes/individuals for its name-lookup
+	 *  typeahead (`fetchAddableWorkspaceElements` — same narrowed list STORY-080's standalone "Add
+	 *  Element" flow uses), so a name that already exists in the graph can be placed instead of
+	 *  hitting `insertClass`'s duplicate-name error. */
+	async function openAddEntityDialog() {
+		showAddEntity = true;
+		try {
+			addEntityExistingOptions = await sparqlConnector.fetchAddableWorkspaceElements();
+		} catch {
+			addEntityExistingOptions = [];
+		}
+	}
+
+	/** "Add Entity" dialog's name lookup matched an existing class/individual — join it to the active
+	 *  Workspace (never mint a new one) and close the dialog, mirroring `handleAddElementToWorkspace`. */
+	async function handleSelectExistingEntityForAdd(entity: NameableEntity) {
+		const position = addEntityAtPosition;
+		addEntityAtPosition = null;
+		await handleAddElementToWorkspace(entity.iri, position ?? undefined);
 		showAddEntity = false;
 	}
 
@@ -402,6 +533,8 @@
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		workspaceMembers = new Set([...workspaceMembers, iri]);
 		const newNode: EntityNodeType = {
 			id: iri,
 			type: 'entity',
@@ -450,6 +583,13 @@
 			}
 			nodes = nodes.filter((n) => n.id !== classIriValue);
 			edges = edges.filter((e) => e.source !== classIriValue && e.target !== classIriValue);
+			// STORY-083: the connector's own cascade already cleared `noteLinkedElement` in GraphDB —
+			// mirror that client-side so a Note that pointed at this class shows as unlinked (not still
+			// "linked" to an IRI that no longer resolves to anything on canvas) without a full reload.
+			noteRecords = noteRecords.map((n) =>
+				n.linkedElementIri === classIriValue ? { ...n, linkedElementIri: null } : n
+			);
+			applyNoteNodesAndEdges();
 			deleteEntityId = null;
 			deleteEntityWarning = null;
 		} catch (err) {
@@ -552,6 +692,9 @@
 			label,
 			namespaceBaseIri ?? activeNamespaceBaseIri()
 		);
+		const position = nextPosition();
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		workspaceMembers = new Set([...workspaceMembers, iri]);
 		updateNodeData(manageMembersClassIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
 	}
 
@@ -573,6 +716,10 @@
 			...d,
 			members: d.members.filter((m) => m.iri !== member.iri)
 		}));
+		// STORY-083: mirror the connector's own noteLinkedElement-unlink cascade client-side (see
+		// handleDeleteEntityConfirm's identical comment).
+		noteRecords = noteRecords.map((n) => (n.linkedElementIri === member.iri ? { ...n, linkedElementIri: null } : n));
+		applyNoteNodesAndEdges();
 	}
 
 	// -- Generic instance assertion editor (data-catalog Story 019) ------------------------------
@@ -600,10 +747,11 @@
 	/**
 	 * Draws the just-authored assertion as a canvas edge, immediately, without a full schema reload —
 	 * mirroring `handleCreateIndividualRelationSubmit` below, which appends to `edges` the same way.
-	 * Only fires when both endpoints are already on canvas (an individual node and an *entity* node
-	 * specifically — an assertion targeting an attribute/relation/other-individual has no entity node
-	 * to draw to) and only in `'instances'` view mode, matching `buildCanvasModel`'s own restriction
-	 * of these edge kinds to that mode.
+	 * Only fires when both endpoints are already on canvas (an individual node and an *entity* or
+	 * *individual* node specifically — an assertion targeting an attribute/relation has no node of
+	 * its own to draw to) and only in `'instances'` view mode, matching `buildCanvasModel`'s own
+	 * restriction of these edge kinds to that mode. The entity-target case is data-catalog Story 019;
+	 * the individual-target case is relation-assertions Sprint 3 Story 007.
 	 */
 	function addAssertionEdgeIfVisible(
 		individualIri: string,
@@ -612,7 +760,9 @@
 		objectIri: string
 	) {
 		if (viewMode !== 'instances') return;
-		if (findNode(individualIri)?.type !== 'individual' || findNode(objectIri)?.type !== 'entity') return;
+		if (findNode(individualIri)?.type !== 'individual') return;
+		const targetType = findNode(objectIri)?.type;
+		if (targetType !== 'entity' && targetType !== 'individual') return;
 		const edgeId = individualRelationEdgeId(individualIri, predicateIri, objectIri);
 		if (findEdge(edgeId)) return;
 		edges = [
@@ -682,6 +832,188 @@
 		nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
 	}
 
+	// -- Unified relation edit modal (change relation + assertions), any node-type combination ---
+	// One modal now covers all three relation shapes drawn on canvas — class→class (`relation`
+	// edges), individual→class, and individual→individual (both `individualRelation` edges) —
+	// instead of the previous split (class→class could only change name/target/cardinality/kind via
+	// `RelationForm`; individual-involving edges could only manage assertions via `MemberForm`'s
+	// Assertions section, reached through eager reification). `editRelationTarget` identifies which
+	// edge is open and, for the individual-involving case, the exact ground triple it currently
+	// asserts (needed to call `updateIndividualRelation`/`ensureReifiedStatement`, which take the
+	// triple's parts rather than an edge id).
+
+	interface EditingClassRelationTarget {
+		edgeKind: 'class';
+		edgeId: string;
+	}
+	interface EditingIndividualRelationTarget {
+		edgeKind: 'individual';
+		edgeId: string;
+		subjectIri: string;
+		predicateIri: string;
+		objectIri: string;
+	}
+	let editRelationTarget = $state<EditingClassRelationTarget | EditingIndividualRelationTarget | null>(null);
+
+	/** The assertion subject IRI for the relation currently open for editing — a class→class
+	 *  relation's own property IRI (already a real resource, so assertions attach to it directly, no
+	 *  reification needed) or, for an individual-involving relation, the reified statement IRI
+	 *  standing in for its ground triple (Story 009's `ensureReifiedStatement`, minted lazily on first
+	 *  open since reifying an unreified edge needs a round-trip). `null` while that round-trip is
+	 *  still in flight, or when the modal is closed. */
+	let editRelationAssertionSubjectIri = $state<string | null>(null);
+	let editRelationAssertions = $state<FetchedAssertion[]>([]);
+
+	async function reloadEditRelationAssertions() {
+		if (!editRelationAssertionSubjectIri) return;
+		editRelationAssertions = await sparqlConnector.fetchAssertionsForIndividual(editRelationAssertionSubjectIri);
+	}
+
+	$effect(() => {
+		const target = editRelationTarget;
+		if (!target) {
+			editRelationAssertionSubjectIri = null;
+			return;
+		}
+		void ensureAssertionOptionsLoaded();
+		if (target.edgeKind === 'class') {
+			const edge = findEdge(target.edgeId) as (Edge & { data: RelationEdgeData }) | undefined;
+			editRelationAssertionSubjectIri = edge?.data.propIri ?? null;
+			return;
+		}
+		errorMessage = null;
+		sparqlConnector
+			.ensureReifiedStatement(target.subjectIri, target.predicateIri, target.objectIri)
+			.then((stmt) => {
+				// Guards against a stale round-trip landing after the user closed the modal or saved a
+				// rename/retarget (which swaps in a new `target` object referencing the new triple).
+				if (editRelationTarget === target) editRelationAssertionSubjectIri = stmt;
+			})
+			.catch((err) => {
+				errorMessage = err instanceof Error ? `Failed to open relation: ${err.message}` : 'Failed to open relation';
+			});
+	});
+
+	$effect(() => {
+		if (editRelationAssertionSubjectIri) void reloadEditRelationAssertions();
+		else editRelationAssertions = [];
+	});
+
+	/** Combined class + individual target options for retargeting an individual-involving relation
+	 *  (an individual can connect to either, see `handleConnect`), excluding the relation's own
+	 *  subject — an individual can't relate to itself. */
+	const individualRelationTargetOptions = $derived.by(() => {
+		const subjectIri = editRelationTarget?.edgeKind === 'individual' ? editRelationTarget.subjectIri : undefined;
+		return nodes
+			.filter((n): n is EntityNodeType | IndividualNodeType => n.type === 'entity' || n.type === 'individual')
+			.filter((n) => n.id !== subjectIri)
+			.map((n) => ({ iri: n.id, name: n.type === 'entity' ? n.data.name : n.data.label }));
+	});
+
+	/** Normalizes the two edge shapes into one view model for the unified "change the relation"
+	 *  fields — `RelationForm`'s required/repeatable/kind fields only mean anything for a class→class
+	 *  relation's SHACL `sh:property` shape, so they're hidden (`showConstraints`/`allowGeneric`
+	 *  false) rather than shown-but-meaningless for an individual-involving relation, which is always
+	 *  a plain generic ground triple. */
+	const editingRelationView = $derived.by(() => {
+		const target = editRelationTarget;
+		if (!target) return null;
+		const edge = findEdge(target.edgeId);
+		if (!edge) return null;
+		if (target.edgeKind === 'class') {
+			const data = edge.data as RelationEdgeData;
+			return {
+				edgeKind: 'class' as const,
+				name: data.name,
+				required: data.required,
+				repeatable: data.repeatable,
+				kind: data.kind,
+				targetIri: edge.target,
+				targetOptions: entityOptions,
+				allowGeneric: true,
+				showConstraints: true
+			};
+		}
+		const data = edge.data as IsMasterForEdgeData;
+		return {
+			edgeKind: 'individual' as const,
+			name: data.label ?? '',
+			required: false,
+			repeatable: false,
+			kind: 'specific' as const,
+			targetIri: edge.target,
+			targetOptions: individualRelationTargetOptions,
+			allowGeneric: false,
+			showConstraints: false
+		};
+	});
+
+	/** Dispatches the unified edit modal's "change the relation" submit to whichever backend call
+	 *  fits the edge's kind, then updates `editRelationTarget`/the canvas edge in place — the modal
+	 *  stays open afterward (mirroring `handleRenameIndividualNode`'s "Edit Individual" modal) so the
+	 *  user can keep managing assertions right after saving, closing only via Cancel/X. */
+	async function handleEditRelationFormSubmit(
+		name: string,
+		targetIri: string,
+		required: boolean,
+		repeatable: boolean,
+		kind: 'specific' | 'generic'
+	) {
+		const target = editRelationTarget;
+		if (!target) return;
+		if (target.edgeKind === 'class') {
+			const edge = findEdge(target.edgeId) as (Edge & { data: RelationEdgeData }) | undefined;
+			if (!edge) return;
+			const propIri = edge.data.propIri;
+			const oldTargetClassIri = edge.target;
+			await sparqlConnector.updateObjectProperty(
+				edge.source,
+				propIri,
+				{ name, targetClassIri: targetIri, required, repeatable },
+				{ kind, oldTargetClassIri }
+			);
+			const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
+			edges = edges.map((e) =>
+				e.id === target.edgeId
+					? {
+							...e,
+							id: newEdgeId,
+							target: targetIri,
+							data: makeRelationEdgeData(newEdgeId, propIri, edge.source, name, required, repeatable, kind)
+						}
+					: e
+			);
+			editRelationTarget = { edgeKind: 'class', edgeId: newEdgeId };
+			return;
+		}
+
+		const { predicateIri: newPredicateIri } = await sparqlConnector.updateIndividualRelation(
+			target.subjectIri,
+			target.predicateIri,
+			target.objectIri,
+			name,
+			targetIri
+		);
+		const newEdgeId = individualRelationEdgeId(target.subjectIri, newPredicateIri, targetIri);
+		edges = edges.map((e) =>
+			e.id === target.edgeId
+				? {
+						...e,
+						id: newEdgeId,
+						target: targetIri,
+						data: makeIndividualRelationEdgeData(newEdgeId, target.subjectIri, newPredicateIri, targetIri, name)
+					}
+				: e
+		);
+		editRelationTarget = {
+			edgeKind: 'individual',
+			edgeId: newEdgeId,
+			subjectIri: target.subjectIri,
+			predicateIri: newPredicateIri,
+			objectIri: targetIri
+		};
+	}
+
 	/** Classes currently carrying the `AttributedRelationship` marker (STORY-020) — read directly
 	 *  off `buildCanvasModel`'s output, itself derived from the persisted `rdfs:subClassOf` triple. */
 	let lastAssociationClassIris = $state<Set<string>>(new Set());
@@ -694,7 +1026,6 @@
 
 	let pendingConnectionChoice = $state<Connection | null>(null);
 	let pendingRelationCreate = $state<Connection | null>(null);
-	let editRelationEdgeId = $state<string | null>(null);
 	let deleteRelationEdgeId = $state<string | null>(null);
 	let deleteRelationBusy = $state(false);
 	let deleteInheritanceEdgeId = $state<string | null>(null);
@@ -712,7 +1043,7 @@
 		edgeId: string;
 		individualIri: string;
 		predicateIri: string;
-		classIri: string;
+		targetIri: string;
 	} | null>(null);
 	let deleteIndividualRelationBusy = $state(false);
 
@@ -780,7 +1111,7 @@
 			kind,
 			propIri,
 			onEdit: () => {
-				editRelationEdgeId = edgeId;
+				editRelationTarget = { edgeKind: 'class', edgeId };
 				void loadGenericRelationOptions(sourceClassIri);
 			},
 			onDelete: () => {
@@ -801,17 +1132,37 @@
 		const sourceNode = findNode(connection.source);
 		const targetNode = findNode(connection.target);
 
+		// STORY-083 follow-up: dragging a connection between a Note and an entity/individual sets
+		// `linkedElementIri` directly — replaces the old "Link to element" typeahead as the only way
+		// to create the link. Checked before the individual/entity branches below since either side
+		// of the drag can be the Note (the gesture is symmetric: note→element or element→note).
+		if (sourceNode?.type === 'note' || targetNode?.type === 'note') {
+			const [noteId, elementNode] =
+				sourceNode?.type === 'note' ? [connection.source, targetNode] : [connection.target, sourceNode];
+			if (elementNode?.type !== 'entity' && elementNode?.type !== 'individual') {
+				errorMessage = 'A note can only be linked to a class or individual on the canvas.';
+				return;
+			}
+			void handleNoteLinkElement(noteId, elementNode.id);
+			return;
+		}
+
 		if (sourceNode?.type === 'individual') {
-			// data-catalog Story 017: every individual→class connection prompts for a relation name,
-			// the same gesture drawing a new generic class-to-class relation already uses — no
+			// data-catalog Story 017 (individual→class) / relation-assertions Sprint 3 Story 006
+			// (individual→individual): every connection out of an individual prompts for a relation
+			// name, the same gesture drawing a new generic class-to-class relation already uses — no
 			// hardcoded predicate, no auto-pick; the name-resolution step (`resolveOrMintPredicate`)
 			// reuses an existing declared property (e.g. `gov:systemOfWorkIsMasterFor`) if the typed
 			// name matches one, or mints a new generic one.
-			if (targetNode?.type === 'entity') {
+			if (connection.source === connection.target) {
+				errorMessage = 'An individual cannot connect to itself.';
+				return;
+			}
+			if (targetNode?.type === 'entity' || targetNode?.type === 'individual') {
 				pendingIndividualRelationCreate = connection;
 				void ensureAssertionOptionsLoaded();
 			} else {
-				errorMessage = 'Individual connections must target a class node.';
+				errorMessage = 'Individual connections must target a class or individual node.';
 			}
 			return;
 		}
@@ -823,28 +1174,43 @@
 		}
 	}
 
-	/** Generalized individual→class relation edge id (data-catalog Story 017) — includes
-	 *  `predicateIri` since two differently-named relations can connect the same individual/class
+	/** Generalized individual→class *or* individual→individual relation edge id (data-catalog Story
+	 *  017; widened to individual targets by relation-assertions Sprint 3 Story 007) — includes
+	 *  `predicateIri` since two differently-named relations can connect the same individual/target
 	 *  pair. */
-	function individualRelationEdgeId(individualIri: string, predicateIri: string, classIri: string): string {
-		return `individual-relation-${predicateIri} ${individualIri} ${classIri}`;
+	function individualRelationEdgeId(individualIri: string, predicateIri: string, targetIri: string): string {
+		return `individual-relation-${predicateIri} ${individualIri} ${targetIri}`;
 	}
 
 	function makeIndividualRelationEdgeData(
 		edgeId: string,
 		individualIri: string,
 		predicateIri: string,
-		classIri: string,
+		targetIri: string,
 		label: string
 	): IsMasterForEdgeData {
 		return {
 			label,
+			onEdit: () => {
+				editRelationTarget = {
+					edgeKind: 'individual',
+					edgeId,
+					subjectIri: individualIri,
+					predicateIri,
+					objectIri: targetIri
+				};
+			},
 			onDelete: () => {
-				deleteIndividualRelationTarget = { edgeId, individualIri, predicateIri, classIri };
+				deleteIndividualRelationTarget = { edgeId, individualIri, predicateIri, targetIri };
 			}
 		};
 	}
 
+	/** Persists a relation drawn out of an individual (Story 017's individual→class gesture, or
+	 *  Story 006's individual→individual widening). `insertIndividualClassRelation` writes the same
+	 *  `<individualIri> <predicateIri> <targetIri> .` triple shape regardless of whether `target`
+	 *  resolves to a class or another individual, so no branching on the target node's type is
+	 *  needed here — see its own doc comment. */
 	async function handleCreateIndividualRelationSubmit(relationName: string) {
 		if (!pendingIndividualRelationCreate?.source || !pendingIndividualRelationCreate?.target) return;
 		const { source, target } = pendingIndividualRelationCreate;
@@ -865,11 +1231,14 @@
 
 	async function handleDeleteIndividualRelationConfirm() {
 		if (!deleteIndividualRelationTarget) return;
-		const { edgeId, individualIri, predicateIri, classIri } = deleteIndividualRelationTarget;
+		const { edgeId, individualIri, predicateIri, targetIri } = deleteIndividualRelationTarget;
 		deleteIndividualRelationBusy = true;
 		errorMessage = null;
 		try {
-			await sparqlConnector.deleteIndividualClassRelation(individualIri, predicateIri, classIri);
+			// `deleteIndividualClassRelation` just removes `<individualIri> <predicateIri> <targetIri>
+			// .` wholesale — it never inspects the object's kind, so it deletes an individual→individual
+			// relation's triple exactly as well as an individual→class one's.
+			await sparqlConnector.deleteIndividualClassRelation(individualIri, predicateIri, targetIri);
 			edges = edges.filter((e) => e.id !== edgeId);
 			deleteIndividualRelationTarget = null;
 		} catch (err) {
@@ -927,12 +1296,56 @@
 		pendingConnectionContextMenu = null;
 	}
 
+	/** Option/Alt+click directly on the empty canvas (not a connection drag) opens
+	 *  `pendingCanvasContextMenu` at the click position — offering "+ Add Entity"/
+	 *  "+ Add External Class"/"+ Add Note", all placed at the exact click position rather than
+	 *  `nextPosition()`'s viewport-centered slot. */
+	function handlePaneClick({ event }: { event: MouseEvent }) {
+		if (!event.altKey) return;
+		pendingCanvasContextMenu = {
+			screenPosition: { x: event.clientX, y: event.clientY },
+			flowPosition: screenToFlowPosition(event.clientX, event.clientY)
+		};
+	}
+
+	/** "+ Add Entity" chosen from the canvas context menu: reuses the same "Add Entity" dialog the
+	 *  toolbar button opens (create-new *or* select-existing, via `EntityForm`'s typeahead), just
+	 *  with `addEntityAtPosition` set so the result lands at the click position instead of
+	 *  `nextPosition()`. */
+	async function chooseAddEntityFromCanvasMenu() {
+		if (!pendingCanvasContextMenu) return;
+		addEntityAtPosition = pendingCanvasContextMenu.flowPosition;
+		pendingCanvasContextMenu = null;
+		await openAddEntityDialog();
+	}
+
+	/** "+ Add External Class" chosen from the canvas context menu — same override pattern as
+	 *  `chooseAddEntityFromCanvasMenu`. */
+	function chooseAddExternalClassFromCanvasMenu() {
+		if (!pendingCanvasContextMenu) return;
+		addExternalClassAtPosition = pendingCanvasContextMenu.flowPosition;
+		pendingCanvasContextMenu = null;
+		showAddExternalClass = true;
+	}
+
+	/** "+ Add Note" chosen from the canvas context menu — places the note directly at the click
+	 *  position (no dialog needed, matching the toolbar button's own one-step behavior). */
+	function chooseAddNoteFromCanvasMenu() {
+		if (!pendingCanvasContextMenu) return;
+		const position = pendingCanvasContextMenu.flowPosition;
+		pendingCanvasContextMenu = null;
+		void handleAddNote(position);
+	}
+
 	/** Submit handler for `pendingExternalClassFromConnection`'s `ExternalClassForm`: places the
 	 *  external stub at the drag's drop position (mirroring `handleCreateEntityFromConnectionSubmit`,
 	 *  unlike the stand-alone "+ Add External Class" flow's `nextPosition()`), then immediately links
 	 *  it back to the drag's origin with an inheritance edge — no relation-kind dialog, matching
-	 *  `handleConnect`'s existing rule that any connection landing on an external class is "is-a". */
-	function handleAddExternalClassFromConnectionSubmit(prefixedName: string, iri: string) {
+	 *  `handleConnect`'s existing rule that any connection landing on an external class is "is-a".
+	 *  Also registers a `WorkspaceMembership` row for the stub (like `handleCreateEntityFromConnectionSubmit`
+	 *  does for a new entity) so `graphDbLayoutStore` has somewhere to persist its position — without
+	 *  this an external stub's position silently reverted to an auto-grid slot on every reload. */
+	async function handleAddExternalClassFromConnectionSubmit(prefixedName: string, iri: string) {
 		if (!pendingExternalClassFromConnection) return;
 		const { sourceNodeId, position } = pendingExternalClassFromConnection;
 		if (nodes.some((n) => n.id === iri)) {
@@ -940,6 +1353,8 @@
 			pendingExternalClassFromConnection = null;
 			return;
 		}
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		graphDbLayoutStore.setPosition(iri, position.x, position.y);
 		const newNode: ExternalClassNodeType = {
 			id: iri,
 			type: 'external',
@@ -1031,38 +1446,6 @@
 		pendingRelationCreate = null;
 	}
 
-	async function handleEditRelationSubmit(
-		name: string,
-		targetIri: string,
-		required: boolean,
-		repeatable: boolean,
-		kind: 'specific' | 'generic'
-	) {
-		if (!editRelationEdgeId) return;
-		const edge = findEdge(editRelationEdgeId) as (Edge & { data: RelationEdgeData }) | undefined;
-		if (!edge) return;
-		const propIri = edge.data.propIri;
-		const oldTargetClassIri = edge.target;
-		await sparqlConnector.updateObjectProperty(
-			edge.source,
-			propIri,
-			{ name, targetClassIri: targetIri, required, repeatable },
-			{ kind, oldTargetClassIri }
-		);
-		const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
-		edges = edges.map((e) =>
-			e.id === editRelationEdgeId
-				? {
-						...e,
-						id: newEdgeId,
-						target: targetIri,
-						data: makeRelationEdgeData(newEdgeId, propIri, edge.source, name, required, repeatable, kind)
-					}
-				: e
-		);
-		editRelationEdgeId = null;
-	}
-
 	async function handleDeleteRelationConfirm() {
 		if (!deleteRelationEdgeId) return;
 		const edge = findEdge(deleteRelationEdgeId) as (Edge & { data: RelationEdgeData }) | undefined;
@@ -1098,8 +1481,6 @@
 		}
 	}
 
-	const editingRelationEdge = $derived(findEdge(editRelationEdgeId) as (Edge & { data: RelationEdgeData }) | undefined);
-
 	// -- Attributed relationships (STORY-007) ----------------------------------------------------
 
 	let showAddAssociation = $state(false);
@@ -1132,10 +1513,13 @@
 	) {
 		const result = await sparqlConnector.insertAssociationClass(name, description || undefined, links, namespaceBaseIri);
 		nodeNamespaces.set(result.iri, namespaceBaseIri);
+		const position = nextPosition();
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), result.iri, position.x, position.y);
+		workspaceMembers = new Set([...workspaceMembers, result.iri]);
 		const newNode: EntityNodeType = {
 			id: result.iri,
 			type: 'entity',
-			position: nextPosition(),
+			position,
 			data: makeNodeData(result.iri, name, description, [], namespaceBaseIri, nodeColorStore.getColor(result.iri))
 		};
 		const newEdges: Edge[] = result.links.map((link) => ({
@@ -1326,16 +1710,26 @@
 
 	let showAddExternalClass = $state(false);
 
-	function handleAddExternalClass(prefixedName: string, iri: string) {
+	/** Also registers a `WorkspaceMembership` row for the new stub (mirroring `handleAddElementToWorkspace`)
+	 *  so `graphDbLayoutStore` has somewhere to persist its position — without this an external stub's
+	 *  position silently reverted to an auto-grid slot on every reload. */
+	async function handleAddExternalClass(prefixedName: string, iri: string) {
 		if (nodes.some((n) => n.id === iri)) {
 			errorMessage = `${prefixedName} is already on the canvas`;
 			showAddExternalClass = false;
+			addExternalClassAtPosition = null;
 			return;
 		}
+		// The Option/Alt+click-on-canvas context menu's "+ Add External Class" choice overrides the
+		// viewport-centered grid slot with the exact click position (see `addExternalClassAtPosition`).
+		const position = addExternalClassAtPosition ?? nextPosition();
+		addExternalClassAtPosition = null;
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		graphDbLayoutStore.setPosition(iri, position.x, position.y);
 		const newNode: ExternalClassNodeType = {
 			id: iri,
 			type: 'external',
-			position: nextPosition(),
+			position,
 			data: {
 				prefixedName,
 				onRemove: () => {
@@ -1355,6 +1749,10 @@
 				const namespaceBaseIri = nodeNamespaces.get(e.source) ?? activeNamespaceBaseIri();
 				await sparqlConnector.deleteSubClassOf(e.source, e.target, namespaceBaseIri);
 			}
+			// Drops the `WorkspaceMembership` row `handleAddExternalClass`/
+			// `handleAddExternalClassFromConnectionSubmit` created for its position, so a re-added stub
+			// with the same IRI doesn't inherit a stale position from before it was removed.
+			await sparqlConnector.removeWorkspaceMember(currentWorkspaceIri(), nodeId);
 			nodes = nodes.filter((n) => n.id !== nodeId);
 			edges = edges.filter((e) => e.source !== nodeId && e.target !== nodeId);
 		} catch (err) {
@@ -1375,7 +1773,7 @@
 
 		const positions = resolvePositions(
 			model.nodes.map((n) => n.iri),
-			layoutStore
+			graphDbLayoutStore
 		);
 
 		const newNodeNamespaces = new Map<string, string>();
@@ -1399,7 +1797,7 @@
 					id: spec.iri,
 					type: 'entity',
 					position,
-					hidden: hiddenNamespaces.has(spec.namespace),
+					hidden: hiddenNamespaces.has(spec.namespace) || !workspaceMembers.has(spec.iri),
 					data: makeNodeData(
 						spec.iri,
 						spec.name,
@@ -1416,7 +1814,7 @@
 					id: spec.iri,
 					type: 'individual',
 					position,
-					hidden: hiddenNamespaces.has(spec.namespace),
+					hidden: hiddenNamespaces.has(spec.namespace) || !workspaceMembers.has(spec.iri),
 					data: {
 						label: spec.label,
 						classIri: spec.classIri,
@@ -1425,6 +1823,7 @@
 							editIndividualId = spec.iri;
 						},
 						onViewTriples: () => {
+							triplesPanelWorkspaceScope = null;
 							triplesPanelScopeIri = spec.iri;
 							triplesPanelNamespaceBaseIri = spec.namespace;
 							triplesPanelInitialTab = 'schema';
@@ -1437,7 +1836,12 @@
 				id: spec.iri,
 				type: 'external',
 				position,
-				hidden: isExternalNodeHidden(externalReferencingSources.get(spec.iri), newNodeNamespaces, hiddenNamespaces),
+				hidden: isExternalNodeHidden(
+					externalReferencingSources.get(spec.iri),
+					newNodeNamespaces,
+					hiddenNamespaces,
+					workspaceMembers
+				),
 				data: {
 					prefixedName: spec.prefixedName,
 					onRemove: () => {
@@ -1455,7 +1859,14 @@
 					source: spec.source,
 					target: spec.target,
 					type: 'relation',
-					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					hidden: isEdgeHidden(
+						spec.source,
+						spec.target,
+						newNodeNamespaces,
+						hiddenNamespaces,
+						externalReferencingSources,
+						workspaceMembers
+					),
 					data: makeRelationEdgeData(
 						edgeId,
 						spec.iri,
@@ -1473,7 +1884,14 @@
 					source: spec.source,
 					target: spec.target,
 					type: 'attributedLink',
-					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					hidden: isEdgeHidden(
+						spec.source,
+						spec.target,
+						newNodeNamespaces,
+						hiddenNamespaces,
+						externalReferencingSources,
+						workspaceMembers
+					),
 					data: makeAttributedLinkEdgeData(spec.iri, spec.propName, spec.required, spec.repeatable)
 				};
 			}
@@ -1484,7 +1902,14 @@
 					source: spec.source,
 					target: spec.target,
 					type: 'individualRelation',
-					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+					hidden: isEdgeHidden(
+						spec.source,
+						spec.target,
+						newNodeNamespaces,
+						hiddenNamespaces,
+						externalReferencingSources,
+						workspaceMembers
+					),
 					data: makeIndividualRelationEdgeData(edgeId, spec.source, spec.predicateIri, spec.target, spec.name)
 				};
 			}
@@ -1494,7 +1919,14 @@
 					source: spec.source,
 					target: spec.target,
 					type: 'instanceOf',
-					hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources)
+					hidden: isEdgeHidden(
+						spec.source,
+						spec.target,
+						newNodeNamespaces,
+						hiddenNamespaces,
+						externalReferencingSources,
+						workspaceMembers
+					)
 				};
 			}
 			const edgeId = `subclassof-${spec.source}-${spec.target}`;
@@ -1503,7 +1935,14 @@
 				source: spec.source,
 				target: spec.target,
 				type: 'inheritance',
-				hidden: isEdgeHidden(spec.source, spec.target, newNodeNamespaces, hiddenNamespaces, externalReferencingSources),
+				hidden: isEdgeHidden(
+					spec.source,
+					spec.target,
+					newNodeNamespaces,
+					hiddenNamespaces,
+					externalReferencingSources,
+					workspaceMembers
+				),
 				data: {
 					onDelete: () => {
 						deleteInheritanceEdgeId = edgeId;
@@ -1517,6 +1956,135 @@
 		edges = newEdges;
 	}
 
+	// -- Workspace Notes (STORY-083) ---------------------------------------------------------------
+
+	/** Display name for an entity/individual node, used for a Note's linked-element label — falls
+	 *  back to the bare IRI when the node isn't found on canvas (e.g. a stale link). */
+	function noteLinkedElementLabel(iri: string): string {
+		const n = findNode(iri);
+		if (n?.type === 'entity') return n.data.name;
+		if (n?.type === 'individual') return n.data.label;
+		return iri;
+	}
+
+	function makeNoteNode(note: FetchedNote): NoteNodeType {
+		return {
+			id: note.iri,
+			type: 'note',
+			position: { x: note.x, y: note.y },
+			data: {
+				text: note.text,
+				color: note.color,
+				linkedElementIri: note.linkedElementIri,
+				linkedElementLabel: note.linkedElementIri ? noteLinkedElementLabel(note.linkedElementIri) : null,
+				onTextChange: (text) => void sparqlConnector.updateNoteText(note.iri, text),
+				onColorChange: (color) => void handleNoteColorChange(note.iri, color),
+				onUnlink: () => void handleNoteUnlink(note.iri),
+				onDelete: () => void handleDeleteNote(note.iri)
+			} satisfies NoteNodeData
+		};
+	}
+
+	function makeNoteLinkEdge(note: FetchedNote): Edge | null {
+		if (!note.linkedElementIri) return null;
+		return { id: `notelink-${note.iri}`, source: note.iri, target: note.linkedElementIri, type: 'noteLink' };
+	}
+
+	/** Rebuilds every Note node/edge from `noteRecords` and merges them onto whatever
+	 *  `buildAndApplyCanvasModel` most recently produced — `buildCanvasModel` knows nothing about
+	 *  Notes (STORY-083 AC: not part of `fetchFullSchemaForAllNamespaces()`), so this always runs as
+	 *  its own step right after it, and again whenever a Note/its links/the workspace-membership set
+	 *  changes. */
+	function applyNoteNodesAndEdges() {
+		const nonNoteNodes = nodes.filter((n) => n.type !== 'note');
+		const nonNoteEdges = edges.filter((e) => e.type !== 'noteLink');
+		nodes = [...nonNoteNodes, ...noteRecords.map(makeNoteNode)];
+		edges = [...nonNoteEdges, ...noteRecords.map(makeNoteLinkEdge).filter((e): e is Edge => e !== null)];
+	}
+
+	async function loadNotesForActiveWorkspace() {
+		noteRecords = await sparqlConnector.fetchNotesForWorkspace(activeWorkspaceIri);
+		applyNoteNodesAndEdges();
+	}
+
+	/** Places a blank pastel note at `overridePosition` (the Option/Alt+click-on-canvas menu's exact
+	 *  click position) if given, otherwise `nextPosition()`'s viewport-centered slot (the toolbar
+	 *  button's own path). */
+	async function handleAddNote(overridePosition?: { x: number; y: number }) {
+		errorMessage = null;
+		try {
+			const position = overridePosition ?? nextPosition();
+			const { iri } = await sparqlConnector.insertNote(
+				currentWorkspaceIri(),
+				position.x,
+				position.y,
+				NOTE_PASTEL_COLORS[0]
+			);
+			noteRecords = [
+				...noteRecords,
+				{ iri, text: '', color: NOTE_PASTEL_COLORS[0], x: position.x, y: position.y, linkedElementIri: null }
+			];
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to add note';
+		}
+	}
+
+	async function handleNoteColorChange(noteIriValue: string, color: string) {
+		errorMessage = null;
+		try {
+			await sparqlConnector.updateNoteColor(noteIriValue, color);
+			noteRecords = noteRecords.map((n) => (n.iri === noteIriValue ? { ...n, color } : n));
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to update note color';
+		}
+	}
+
+	async function handleNoteLinkElement(noteIriValue: string, elementIri: string) {
+		errorMessage = null;
+		try {
+			await sparqlConnector.updateNoteLinkedElement(noteIriValue, elementIri);
+			noteRecords = noteRecords.map((n) => (n.iri === noteIriValue ? { ...n, linkedElementIri: elementIri } : n));
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to link note';
+		}
+	}
+
+	async function handleNoteUnlink(noteIriValue: string) {
+		errorMessage = null;
+		try {
+			await sparqlConnector.updateNoteLinkedElement(noteIriValue, null);
+			noteRecords = noteRecords.map((n) => (n.iri === noteIriValue ? { ...n, linkedElementIri: null } : n));
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to unlink note';
+		}
+	}
+
+	async function handleDeleteNote(noteIriValue: string) {
+		errorMessage = null;
+		try {
+			await sparqlConnector.deleteNote(noteIriValue);
+			noteRecords = noteRecords.filter((n) => n.iri !== noteIriValue);
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to delete note';
+		}
+	}
+
+	/** Resolves which Workspace should be active: the persisted selection if it still names a real
+	 *  Workspace (from the just-refreshed `workspaceStore`), otherwise the Default workspace, otherwise
+	 *  (STORY-079 AC — the active Workspace was deleted, and it happened to be Default) any remaining
+	 *  Workspace, since the canvas always needs an active one (research Decision 3). */
+	function resolveActiveWorkspaceIri(defaultWorkspaceIri: string): string {
+		const persisted = activeWorkspaceStore.getActive();
+		if (persisted && workspaceStore.workspaces.some((ws) => ws.iri === persisted)) return persisted;
+		if (workspaceStore.workspaces.some((ws) => ws.iri === defaultWorkspaceIri)) return defaultWorkspaceIri;
+		return workspaceStore.workspaces[0]?.iri ?? defaultWorkspaceIri;
+	}
+
 	async function loadSchemaFromGraphDB() {
 		loading = true;
 		errorMessage = null;
@@ -1526,13 +2094,82 @@
 			await sparqlConnector.ensureDefaultNamespaceMigrated();
 			await sparqlConnector.ensureAttributedRelationshipClass();
 			await sparqlConnector.ensureAuthoritativeEntityClass();
+			const defaultWorkspaceIri = await sparqlConnector.ensureDefaultWorkspace();
+			await workspaceStore.refresh();
+			activeWorkspaceIri = resolveActiveWorkspaceIri(defaultWorkspaceIri);
+			await graphDbLayoutStore.reload(activeWorkspaceIri);
+			workspaceMembers = graphDbLayoutStore.getMemberIris();
 			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
 			lastFetchedSchema = schema;
 			buildAndApplyCanvasModel(schema);
+			await loadNotesForActiveWorkspace();
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to load schema from GraphDB';
 		} finally {
 			loading = false;
+		}
+	}
+
+	/** STORY-077: fired when the navbar's Workspace `<select>` changes — reprimes
+	 *  `graphDbLayoutStore`'s position cache and the workspace-membership visibility gate for the
+	 *  newly-selected Workspace, then rebuilds the canvas from `lastFetchedSchema` (no re-fetch from
+	 *  GraphDB, matching `handleViewModeChange`'s "recompute from already-fetched data" shape). */
+	async function handleActiveWorkspaceChange(newWorkspaceIri: string) {
+		if (newWorkspaceIri === activeWorkspaceIri) return;
+		activeWorkspaceIri = newWorkspaceIri;
+		activeWorkspaceStore.setActive(newWorkspaceIri);
+		await graphDbLayoutStore.reload(newWorkspaceIri);
+		workspaceMembers = graphDbLayoutStore.getMemberIris();
+		if (lastFetchedSchema) buildAndApplyCanvasModel(lastFetchedSchema);
+		await loadNotesForActiveWorkspace();
+	}
+
+	/** The currently active Workspace, falling back to the deterministic Default IRI if somehow
+	 *  unset (STORY-078 AC — should be unreachable after STORY-075/077, but defensive). */
+	function currentWorkspaceIri(): string {
+		return activeWorkspaceIri || workspaceIri('Default');
+	}
+
+	/** STORY-080's "Add Element" typeahead selection handler: joins an *existing* class/individual
+	 *  (never mints one) to the active Workspace at `nextPosition()`'s viewport-centered position
+	 *  (the plan's ADR — not `gridPosition()`, reserved for bulk no-single-viewport cases), unless
+	 *  `overridePosition` is given (the Option/Alt+click-on-canvas menu's exact click position, via
+	 *  `handleSelectExistingEntityForAdd`). The picked element is already present in `nodes`/`edges`
+	 *  (built at load time from the full schema fetch, just currently `hidden`) — no canvas rebuild
+	 *  needed, only its position and every node/edge's `hidden` flag via `applyVisibilityFilters`. A
+	 *  no-op re-add (already a member) skips repositioning an already-placed node the user may have
+	 *  since dragged. */
+	async function handleAddElementToWorkspace(
+		iri: string,
+		overridePosition?: { x: number; y: number }
+	): Promise<{ alreadyMember: boolean }> {
+		const alreadyMember = workspaceMembers.has(iri);
+		const position = overridePosition ?? nextPosition();
+		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		if (!alreadyMember) {
+			workspaceMembers = new Set([...workspaceMembers, iri]);
+			graphDbLayoutStore.setPosition(iri, position.x, position.y);
+			nodes = nodes.map((n) => (n.id === iri ? { ...n, position } : n));
+			applyVisibilityFilters();
+		}
+		return { alreadyMember };
+	}
+
+	/** STORY-081's "Remove from workspace" menu entry: deletes just this one `WorkspaceMembership`
+	 *  row — the class itself and its membership in every other Workspace are untouched, and it only
+	 *  stops rendering in the currently active Workspace's canvas view (via `applyVisibilityFilters`),
+	 *  unlike "Delete" (`handleDeleteEntityConfirm`, which destroys the resource everywhere). */
+	async function handleRemoveFromWorkspace(classIriValue: string) {
+		errorMessage = null;
+		try {
+			await sparqlConnector.removeWorkspaceMember(currentWorkspaceIri(), classIriValue);
+			const next = new Set(workspaceMembers);
+			next.delete(classIriValue);
+			workspaceMembers = next;
+			applyVisibilityFilters();
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to remove from workspace';
 		}
 	}
 
@@ -1547,11 +2184,28 @@
 		}
 	}
 
-	/** Persists dragged nodes' new positions (debounced inside `layoutStore`) — fires once per drag
-	 *  gesture (`onnodedragstop`), not on every animation frame. */
+	/** Persists dragged nodes' new positions, debounced per node, fires once per drag gesture
+	 *  (`onnodedragstop`), not on every animation frame. A dragged Note writes through
+	 *  `updateNotePosition` (via `noteLayoutDebouncer`, STORY-083) instead of
+	 *  `graphDbLayoutStore`'s `WorkspaceMembership`-row write — the same debounce mechanism, a
+	 *  different persistence call, since a Note isn't a `WorkspaceMembership` row. */
 	function handleNodeDragStop({ nodes: draggedNodes }: { nodes: Node[] }) {
 		for (const n of draggedNodes) {
-			layoutStore.setPosition(n.id, n.position.x, n.position.y);
+			if (n.type === 'note') {
+				// Keeps `noteRecords` (the source of truth `applyNoteNodesAndEdges` rebuilds every Note
+				// node's `position` from) in sync with the drag — without this, any later unrelated
+				// rebuild (e.g. a color change on this or another note) would snap the note back to its
+				// stale pre-drag position, since `makeNoteNode` positions strictly from `noteRecords`.
+				noteRecords = noteRecords.map((note) =>
+					note.iri === n.id ? { ...note, x: n.position.x, y: n.position.y } : note
+				);
+				const write = noteLayoutDebouncer.forKey(n.id, (x: number, y: number) => {
+					void sparqlConnector.updateNotePosition(n.id, x, y);
+				});
+				write(n.position.x, n.position.y);
+			} else {
+				graphDbLayoutStore.setPosition(n.id, n.position.x, n.position.y);
+			}
 		}
 	}
 
@@ -1575,11 +2229,15 @@
 	$effect(() => {
 		workbenchActions.viewMode = viewMode;
 	});
+	$effect(() => {
+		workbenchActions.activeWorkspace = activeWorkspaceIri;
+	});
 
 	onMount(() => {
 		workbenchActions.registerReload(() => void loadSchemaFromGraphDB());
 		workbenchActions.registerToggleTriples(() => {
 			if (!showTriplesPanel) {
+				triplesPanelWorkspaceScope = null;
 				triplesPanelScopeIri = null;
 				triplesPanelNamespaceBaseIri = undefined;
 				triplesPanelInitialTab = 'schema';
@@ -1589,7 +2247,37 @@
 		workbenchActions.registerExportSvg(() => void handleExportSvg());
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
 		workbenchActions.registerSetViewMode(handleViewModeChange);
+		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
 		void loadSchemaFromGraphDB();
+	});
+
+	// -- Workspace-scoped Triples entry point (STORY-082) -------------------------------------------
+	// `WorkspaceManagementView` (rendered inside `+layout.svelte`, a sibling) sets
+	// `workbenchActions.triplesWorkspaceScope` as a one-shot request; this page owns
+	// `showTriplesPanel`/`TriplesPanel` and consumes + clears the request here, mirroring the
+	// `externalVocabManagementOpen` bridge shape used elsewhere.
+	$effect(() => {
+		const request = workbenchActions.triplesWorkspaceScope;
+		if (!request) return;
+		triplesPanelWorkspaceScope = request;
+		triplesPanelScopeIri = null;
+		triplesPanelNamespaceBaseIri = undefined;
+		triplesPanelInitialTab = 'schema';
+		showTriplesPanel = true;
+		workbenchActions.triplesWorkspaceScope = null;
+	});
+
+	// -- Active-Workspace fallback when the active one is deleted elsewhere (STORY-079 AC) -----------
+	// `WorkspaceManagementView` deletes via the connector directly and refreshes `workspaceStore`;
+	// this effect watches for the currently active Workspace disappearing from that refreshed list
+	// and switches to a remaining one, so the canvas never ends up scoped to a Workspace that no
+	// longer exists.
+	$effect(() => {
+		if (workspaceStore.workspaces.length === 0) return;
+		const stillExists = workspaceStore.workspaces.some((ws) => ws.iri === activeWorkspaceIri);
+		if (!stillExists) {
+			void handleActiveWorkspaceChange(resolveActiveWorkspaceIri(workspaceIri('Default')));
+		}
 	});
 </script>
 
@@ -1666,13 +2354,14 @@
 
 <div class="editor">
 	<div class="toolbar">
-		<button class="add-entity" onclick={() => (showAddEntity = true)}>+ Add Entity</button>
+		<button class="add-entity" onclick={() => void openAddEntityDialog()}>+ Add Entity</button>
 		<button class="add-entity secondary-action" onclick={() => (showAddAssociation = true)}>
 			+ Add Attributed Relationship
 		</button>
 		<button class="add-entity secondary-action" onclick={() => (showAddExternalClass = true)}>
 			+ Add External Class
 		</button>
+		<button class="add-entity secondary-action" onclick={() => void handleAddNote()}>+ Add Note</button>
 		{#if errorMessage}
 			<span class="error-banner">{errorMessage}</span>
 		{/if}
@@ -1688,6 +2377,7 @@
 			onconnect={handleConnect}
 			onconnectend={handleConnectEnd}
 			onnodedragstop={handleNodeDragStop}
+			onpaneclick={handlePaneClick}
 			fitView
 			colorMode={mode.current}
 		>
@@ -1698,7 +2388,7 @@
 	</div>
 	{#if showTriplesPanel}
 		<TriplesPanel
-			selectedIri={triplesPanelScopeIri}
+			scope={triplesPanelScope}
 			namespaces={namespaceStore.namespaces}
 			initialNamespaceBaseIri={triplesPanelNamespaceBaseIri ?? activeNamespaceBaseIri()}
 			showCatalogTab={triplesPanelScopeIri !== null && lastAuthoritativeEntityIris.has(triplesPanelScopeIri)}
@@ -1708,6 +2398,12 @@
 		/>
 	{/if}
 </div>
+
+{#if workbenchActions.addElementOpen}
+	<Modal isOpen title="Add Element" onClose={() => (workbenchActions.addElementOpen = false)}>
+		<AddElementForm onAdd={handleAddElementToWorkspace} onClose={() => (workbenchActions.addElementOpen = false)} />
+	</Modal>
+{/if}
 
 {#if pendingConnectionContextMenu}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -1729,20 +2425,54 @@
 	</div>
 {/if}
 
+{#if pendingCanvasContextMenu}
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div
+		class="connection-context-menu-backdrop"
+		onclick={() => (pendingCanvasContextMenu = null)}
+		role="presentation"
+		tabindex="-1"
+	></div>
+	<div
+		class="connection-context-menu"
+		role="menu"
+		style="left: {pendingCanvasContextMenu.screenPosition.x}px; top: {pendingCanvasContextMenu.screenPosition.y}px;"
+	>
+		<button type="button" class="menu-item" onclick={() => void chooseAddEntityFromCanvasMenu()}>+ Add Entity</button>
+		<button type="button" class="menu-item" onclick={chooseAddExternalClassFromCanvasMenu}>
+			+ Add External Class
+		</button>
+		<button type="button" class="menu-item" onclick={chooseAddNoteFromCanvasMenu}>+ Add Note</button>
+	</div>
+{/if}
+
 <svelte:window
 	onkeydown={(event) => {
 		if (event.key === 'Escape' && pendingConnectionContextMenu) pendingConnectionContextMenu = null;
+		if (event.key === 'Escape' && pendingCanvasContextMenu) pendingCanvasContextMenu = null;
 	}}
 />
 
-<Modal isOpen={showAddEntity} title="Add Entity" onClose={() => (showAddEntity = false)}>
+<Modal
+	isOpen={showAddEntity}
+	title="Add Entity"
+	onClose={() => {
+		showAddEntity = false;
+		addEntityAtPosition = null;
+	}}
+>
 	<EntityForm
 		mode="create"
 		namespaceOptions={namespaceStore.namespaces}
 		initialNamespaceBaseIri={activeNamespaceBaseIri()}
+		existingOptions={addEntityExistingOptions}
 		submitLabel="Create"
-		onCancel={() => (showAddEntity = false)}
+		onCancel={() => {
+			showAddEntity = false;
+			addEntityAtPosition = null;
+		}}
 		onSubmit={handleCreateEntity}
+		onSelectExisting={handleSelectExistingEntityForAdd}
 	/>
 </Modal>
 
@@ -1960,22 +2690,44 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={editRelationEdgeId !== null} title="Edit Relation" onClose={() => (editRelationEdgeId = null)}>
-	{#if editingRelationEdge}
+<Modal isOpen={editRelationTarget !== null} title="Edit Relation" onClose={() => (editRelationTarget = null)}>
+	{#if editingRelationView}
 		<RelationForm
-			initialName={editingRelationEdge.data.name}
-			initialRequired={editingRelationEdge.data.required}
-			initialRepeatable={editingRelationEdge.data.repeatable}
-			targetIri={editingRelationEdge.target}
-			targetOptions={entityOptions}
+			initialName={editingRelationView.name}
+			initialRequired={editingRelationView.required}
+			initialRepeatable={editingRelationView.repeatable}
+			targetIri={editingRelationView.targetIri}
+			targetOptions={editingRelationView.targetOptions}
 			allowRetarget={true}
 			submitLabel="Save"
-			allowGeneric={true}
+			allowGeneric={editingRelationView.allowGeneric}
 			{genericRelationOptions}
-			initialKind={editingRelationEdge.data.kind}
-			onCancel={() => (editRelationEdgeId = null)}
-			onSubmit={handleEditRelationSubmit}
+			initialKind={editingRelationView.kind}
+			showConstraints={editingRelationView.showConstraints}
+			onCancel={() => (editRelationTarget = null)}
+			onSubmit={handleEditRelationFormSubmit}
 		/>
+		{#if editRelationAssertionSubjectIri}
+			<MemberForm
+				mode="edit"
+				hideNameForm
+				onCancel={() => (editRelationTarget = null)}
+				individualIri={editRelationAssertionSubjectIri}
+				assertions={editRelationAssertions}
+				predicateOptions={assertionPredicateOptions}
+				objectOptions={assertionObjectOptions}
+				onAddAssertion={async (predicateLabel, objectIri) => {
+					if (!editRelationAssertionSubjectIri) return;
+					await handleAddAssertion(editRelationAssertionSubjectIri, predicateLabel, objectIri);
+					await reloadEditRelationAssertions();
+				}}
+				onDeleteAssertion={async (predicateIri, objectIri) => {
+					if (!editRelationAssertionSubjectIri) return;
+					await handleDeleteAssertion(editRelationAssertionSubjectIri, predicateIri, objectIri);
+					await reloadEditRelationAssertions();
+				}}
+			/>
+		{/if}
 	{/if}
 </Modal>
 
@@ -2051,8 +2803,7 @@
 >
 	{#if pendingIndividualRelationCreate?.target}
 		<IndividualRelationForm
-			targetName={entityOptions.find((o) => o.iri === pendingIndividualRelationCreate?.target)?.name ??
-				pendingIndividualRelationCreate.target}
+			targetName={connectionTargetName(pendingIndividualRelationCreate.target)}
 			predicateOptions={assertionPredicateOptions}
 			submitLabel="Create"
 			onCancel={() => (pendingIndividualRelationCreate = null)}
@@ -2116,11 +2867,21 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={showAddExternalClass} title="Add External Class Reference" onClose={() => (showAddExternalClass = false)}>
+<Modal
+	isOpen={showAddExternalClass}
+	title="Add External Class Reference"
+	onClose={() => {
+		showAddExternalClass = false;
+		addExternalClassAtPosition = null;
+	}}
+>
 	<ExternalClassForm
 		prefixes={externalVocabStore.asPrefixMap()}
 		onManageVocabularies={() => workbenchActions.openExternalVocabManagement()}
-		onCancel={() => (showAddExternalClass = false)}
+		onCancel={() => {
+			showAddExternalClass = false;
+			addExternalClassAtPosition = null;
+		}}
 		onSubmit={handleAddExternalClass}
 	/>
 </Modal>

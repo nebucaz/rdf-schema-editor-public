@@ -45,7 +45,7 @@
 		</datalist>
 	</label>
 	<div class="field">
-		<span class="field-label">Target class</span>
+		<span class="field-label">Target</span>
 		<span class="static-value">{targetName}</span>
 	</div>
 	{#if error}

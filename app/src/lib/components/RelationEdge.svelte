@@ -103,8 +103,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 14px;
-		height: 14px;
+		min-width: 14px;
+		min-height: 14px;
 		border-radius: 3px;
 		background: transparent;
 		color: var(--color-text-muted, #666);

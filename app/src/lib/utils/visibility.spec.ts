@@ -77,3 +77,65 @@ describe('isEdgeHidden', () => {
 		expect(isEdgeHidden('core:A', 'ext:Vocab', namespaces, new Set(), externalReferencingSources)).toBe(false);
 	});
 });
+
+// -- Workspace-membership composition (STORY-076) --------------------------------------------------
+// `workspaceMembers` is a second, independent, ANDed hidden gate alongside the pre-existing
+// namespace-only gate above — every test above omits it entirely (stays `undefined`, meaning "no
+// workspace filtering"), pinning that the namespace-only behavior is unchanged when the new
+// parameter isn't supplied at all (the plan's risk assessment).
+
+describe('isEndpointVisible — combined namespace + workspace-membership gate', () => {
+	const namespaces = new Map([['core:A', 'ns1']]);
+
+	it('is hidden when visible by namespace but absent from the active Workspace', () => {
+		const workspaceMembers = new Set<string>(); // core:A is not a member
+		expect(isEndpointVisible('core:A', namespaces, new Set(), new Map(), workspaceMembers)).toBe(false);
+	});
+
+	it('is hidden when a Workspace member but hidden by namespace (both gates independently sufficient)', () => {
+		const workspaceMembers = new Set(['core:A']);
+		expect(isEndpointVisible('core:A', namespaces, new Set(['ns1']), new Map(), workspaceMembers)).toBe(false);
+	});
+
+	it('is visible only when namespace-visible AND a Workspace member', () => {
+		const workspaceMembers = new Set(['core:A']);
+		expect(isEndpointVisible('core:A', namespaces, new Set(), new Map(), workspaceMembers)).toBe(true);
+	});
+});
+
+describe('isExternalNodeHidden — workspace-membership composition', () => {
+	const namespaces = new Map([
+		['core:A', 'ns1'],
+		['core:B', 'ns2']
+	]);
+
+	it('is hidden when its sole referencing source is namespace-visible but not a Workspace member', () => {
+		const workspaceMembers = new Set<string>(); // core:A is not a member
+		expect(isExternalNodeHidden(['core:A'], namespaces, new Set(), workspaceMembers)).toBe(true);
+	});
+
+	it('stays visible when any referencing source is both namespace-visible and a Workspace member', () => {
+		const workspaceMembers = new Set(['core:B']); // only core:B is a member; core:A isn't
+		expect(isExternalNodeHidden(['core:A', 'core:B'], namespaces, new Set(), workspaceMembers)).toBe(false);
+	});
+});
+
+describe('isEdgeHidden — workspace-membership composition', () => {
+	it('hides an edge whose target is namespace-visible but not a Workspace member', () => {
+		const namespaces = new Map([
+			['core:A', 'ns1'],
+			['core:B', 'ns1']
+		]);
+		const workspaceMembers = new Set(['core:A']); // core:B is not a member
+		expect(isEdgeHidden('core:A', 'core:B', namespaces, new Set(), new Map(), workspaceMembers)).toBe(true);
+	});
+
+	it('keeps an edge visible when both endpoints are namespace-visible and Workspace members', () => {
+		const namespaces = new Map([
+			['core:A', 'ns1'],
+			['core:B', 'ns1']
+		]);
+		const workspaceMembers = new Set(['core:A', 'core:B']);
+		expect(isEdgeHidden('core:A', 'core:B', namespaces, new Set(), new Map(), workspaceMembers)).toBe(false);
+	});
+});

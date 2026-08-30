@@ -95,8 +95,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 36px;
-		height: 36px;
+		min-width: 36px;
+		min-height: 36px;
 		border-radius: 8px;
 		background: transparent;
 		border: 1px solid var(--color-border);

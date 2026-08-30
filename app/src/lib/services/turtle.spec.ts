@@ -13,6 +13,7 @@ import {
 	buildDisplayPrefixes,
 	isRdfType,
 	OWL,
+	RDF,
 	RDFS,
 	SH,
 	DCAT,
@@ -21,7 +22,7 @@ import {
 	type Quad
 } from './turtle';
 import type { SparqlBinding } from './sparql-connector';
-import { classIri, nodeShapeIri, propertyIri, xsdIri, SCHEMA_NAMESPACE } from '$lib/utils/iri';
+import { classIri, individualIri, nodeShapeIri, propertyIri, xsdIri, SCHEMA_NAMESPACE } from '$lib/utils/iri';
 import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
 
 describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
@@ -51,6 +52,17 @@ describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 		const body = await quadsToGroundTriples(quads);
 		expect(body).toContain('_:');
 		expect(body).not.toContain('@prefix');
+	});
+});
+
+describe('RDF reification vocabulary constants (relation-assertions Story 002)', () => {
+	it('RDF.subject/predicate/object/Statement resolve under the standard rdf: syntax-ns IRI', () => {
+		const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+		expect(RDF.subject).toBe(`${RDF_NS}subject`);
+		expect(RDF.predicate).toBe(`${RDF_NS}predicate`);
+		expect(RDF.object).toBe(`${RDF_NS}object`);
+		expect(RDF.Statement).toBe(`${RDF_NS}Statement`);
+		expect(RDF.type).toBe(`${RDF_NS}type`);
 	});
 });
 
@@ -334,6 +346,99 @@ describe('selectScope (shared by STORY-011 view and STORY-012 save)', () => {
 	});
 });
 
+describe('selectScope class scope widened to incoming individual relations (relation-assertions Story 001)', () => {
+	const applicationIri = classIri('Application');
+	const systemOfWorkIri = classIri('SystemOfWork');
+	const applicationNameIri = propertyIri(applicationIri, 'applicationName');
+	const isMasterForIri = propertyIri(systemOfWorkIri, 'isMasterFor');
+	const itamIri = individualIri(systemOfWorkIri, 'systemOfWorkItam');
+
+	function makeAllQuads() {
+		return parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${applicationIri}> a owl:Class ; rdfs:label "Application" .
+			<${systemOfWorkIri}> a owl:Class ; rdfs:label "SystemOfWork" .
+			<${applicationNameIri}> a owl:DatatypeProperty ; rdfs:domain <${applicationIri}> ; rdfs:label "applicationName" .
+			<${isMasterForIri}> a owl:ObjectProperty ; rdfs:domain <${systemOfWorkIri}> ; rdfs:label "isMasterFor" .
+			<${itamIri}> a <${systemOfWorkIri}> ; rdfs:label "itam" ;
+				<${isMasterForIri}> <${applicationIri}> , <${applicationNameIri}> .
+		`);
+	}
+
+	it("includes a triple where the class is the object of another individual's relation", () => {
+		const all = makeAllQuads();
+		const scoped = selectScope(all, applicationIri);
+
+		expect(
+			scoped.some(
+				(q) =>
+					q.subject.value === itamIri &&
+					q.predicate.value === isMasterForIri &&
+					q.object.value === applicationIri
+			)
+		).toBe(true);
+	});
+
+	it("includes a triple targeting one of the class's own attributes", () => {
+		const all = makeAllQuads();
+		const scoped = selectScope(all, applicationIri);
+
+		expect(
+			scoped.some(
+				(q) =>
+					q.subject.value === itamIri &&
+					q.predicate.value === isMasterForIri &&
+					q.object.value === applicationNameIri
+			)
+		).toBe(true);
+	});
+
+	it("excludes class-to-class relations (e.g. rdfs:subClassOf) — schema constructs, not individual assertions", () => {
+		const subclassIri = classIri('WebApplication');
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${applicationIri}> a owl:Class ; rdfs:label "Application" .
+			<${subclassIri}> a owl:Class ; rdfs:label "WebApplication" ; rdfs:subClassOf <${applicationIri}> .
+		`);
+		const scoped = selectScope(all, applicationIri);
+
+		expect(scoped.some((q) => q.subject.value === subclassIri)).toBe(false);
+	});
+
+	it("excludes another property's rdfs:range/rdfs:domain pointing at the class — structural predicates, not individual assertions", () => {
+		const externalPropIri = propertyIri(classIri('Company'), 'employee');
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${applicationIri}> a owl:Class ; rdfs:label "Application" .
+			<${externalPropIri}> rdfs:range <${applicationIri}> .
+		`);
+		const scoped = selectScope(all, applicationIri);
+
+		expect(scoped.some((q) => q.subject.value === externalPropIri)).toBe(false);
+	});
+
+	it("still includes the class's own individuals unchanged (regression)", () => {
+		const all = makeAllQuads();
+		const scoped = selectScope(all, systemOfWorkIri);
+
+		expect(scoped.some((q) => q.subject.value === itamIri && isRdfType(q, systemOfWorkIri))).toBe(true);
+		expect(
+			scoped.some(
+				(q) =>
+					q.subject.value === itamIri &&
+					q.predicate.value === isMasterForIri &&
+					q.object.value === applicationIri
+			)
+		).toBe(true);
+	});
+});
+
 describe('selectScope partition parameter (STORY-017)', () => {
 	const personIri = classIri('Person');
 	const carIri = classIri('Car');
@@ -469,6 +574,32 @@ describe('partitionQuads (STORY-014)', () => {
 
 		expect(shapes).toHaveLength(1);
 		expect(schema).toHaveLength(0);
+	});
+
+	it("routes a reified statement's four quads to the instances bucket, out of schema and shapes (relation-assertions Story 004)", () => {
+		const stmtIri = `${SCHEMA_NAMESPACE}Statement1`;
+		const subjIri = individualIri(personIri, 'alice');
+		const quads = parseTurtle(`
+			@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+			<${stmtIri}> a rdf:Statement ;
+				rdf:subject <${subjIri}> ;
+				rdf:predicate <${ownsIri}> ;
+				rdf:object <${carIri}> .
+		`);
+
+		const { schema, shapes, instances } = partitionQuads(quads);
+
+		expect(instances).toHaveLength(quads.length);
+		expect(schema).toHaveLength(0);
+		expect(shapes).toHaveLength(0);
+	});
+
+	it('leaves existing schema/shapes partitioning of a mixed graph unchanged when no reification quads are present (regression)', () => {
+		const all = makeMixedQuads();
+		const { schema, shapes, instances } = partitionQuads(all);
+
+		expect(instances).toHaveLength(0);
+		expect(schema.length + shapes.length).toBe(all.length);
 	});
 });
 

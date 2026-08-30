@@ -10,8 +10,10 @@
 	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
+	import WorkspaceManagementView from '$lib/components/WorkspaceManagementView.svelte';
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
 	import ImportResultView from '$lib/components/ImportResultView.svelte';
+	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import { sparqlConnector, type ImportSummary } from '$lib/services/sparql-connector';
 	import { quadsToNQuads } from '$lib/services/turtle';
 	import { SchemaValidationError } from '$lib/services/validation';
@@ -19,12 +21,15 @@
 	import { activeNamespaceStore } from '$lib/stores/active-namespace-store';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
+	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 
 	let { children } = $props();
 
 	let showNamespaceManagement = $state(false);
+	let showWorkspaceManagement = $state(false);
 	let showExternalVocabManagement = $state(false);
+	let showQueryConsole = $state(false);
 	let exportingQuads = $state(false);
 
 	let importFileInput = $state<HTMLInputElement | undefined>();
@@ -36,6 +41,7 @@
 
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
+		void workspaceStore.ensureLoaded();
 		void externalVocabStore.ensureLoaded();
 	});
 
@@ -126,11 +132,25 @@
 				<select
 					class="namespace-select"
 					aria-label="Active namespace"
+					title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
 					value={activeNamespace}
 					onchange={(e) => handleActiveNamespaceChange(e.currentTarget.value)}
 				>
 					{#each namespaceStore.namespaces as ns (ns.baseIri)}
 						<option value={ns.baseIri}>{ns.prefix}</option>
+					{/each}
+				</select>
+			{/if}
+			{#if workspaceStore.workspaces.length > 0}
+				<select
+					class="workspace-select"
+					aria-label="Active workspace"
+					title="Active workspace — which diagram is shown on the canvas"
+					value={workbenchActions.activeWorkspace}
+					onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
+				>
+					{#each workspaceStore.workspaces as ws (ws.iri)}
+						<option value={ws.iri}>{ws.label}</option>
 					{/each}
 				</select>
 			{/if}
@@ -150,8 +170,14 @@
 					<button type="button" class="menu-item" onclick={() => (showNamespaceManagement = true)}>
 						Namespaces
 					</button>
+					<button type="button" class="menu-item" onclick={() => (showWorkspaceManagement = true)}>
+						Workspaces
+					</button>
 					<button type="button" class="menu-item" onclick={() => (showExternalVocabManagement = true)}>
 						External Vocabularies
+					</button>
+					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
+						Queries
 					</button>
 					<button
 						type="button"
@@ -163,6 +189,9 @@
 					</button>
 					<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
 						{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
+					</button>
+					<button type="button" class="menu-item" onclick={() => workbenchActions.openAddElement()}>
+						Add Element…
 					</button>
 					<button
 						type="button"
@@ -210,6 +239,21 @@
 </Modal>
 
 <Modal
+	isOpen={showWorkspaceManagement}
+	title="Workspaces"
+	onClose={() => {
+		showWorkspaceManagement = false;
+		// Belt-and-suspenders re-sync: the navbar `<select>` below reads the same `workspaceStore`
+		// singleton `WorkspaceManagementView` already refreshes on create/rename/delete, but closing
+		// the dialog is a reliable point to force one more fetch so a newly created Workspace is never
+		// left looking unselectable in the dropdown.
+		void workspaceStore.refresh();
+	}}
+>
+	<WorkspaceManagementView />
+</Modal>
+
+<Modal
 	isOpen={showExternalVocabManagement || workbenchActions.externalVocabManagementOpen}
 	title="External Vocabularies"
 	onClose={() => {
@@ -218,6 +262,15 @@
 	}}
 >
 	<ExternalVocabularyManagementView />
+</Modal>
+
+<Modal
+	isOpen={showQueryConsole}
+	title="Queries"
+	maxWidth="900px"
+	onClose={() => (showQueryConsole = false)}
+>
+	<QueryConsoleView />
 </Modal>
 
 <Modal
@@ -273,7 +326,8 @@
 		gap: 0.5rem;
 	}
 
-	.namespace-select {
+	.namespace-select,
+	.workspace-select {
 		padding: 0.3rem 0.5rem;
 		border-radius: 6px;
 		border: 1px solid var(--color-border);

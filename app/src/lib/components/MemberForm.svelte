@@ -11,13 +11,18 @@
 		initialLabel?: string;
 		namespaceOptions?: FetchedNamespace[];
 		initialNamespaceBaseIri?: string;
-		submitLabel: string;
-		onSubmit: (label: string, namespaceBaseIri?: string) => Promise<void>;
+		submitLabel?: string;
+		onSubmit?: (label: string, namespaceBaseIri?: string) => Promise<void>;
 		onCancel: () => void;
 		/** data-catalog Story 019: the edited individual's own IRI — present only in edit mode, since
 		 *  a brand-new individual has no IRI yet to be a triple subject. The Assertions section below
 		 *  renders only when this is set. */
 		individualIri?: string;
+		/** Hides the name/namespace form above the Assertions section (relation-assertions Story 010)
+		 *  — a reified `rdf:Statement` has no `rdfs:label` identity of its own to rename, unlike a
+		 *  standalone individual, so the pencil-on-edge relation-assertion form reuses this component
+		 *  for just its Assertions section (`individualIri` set to the statement IRI, `mode="edit"`). */
+		hideNameForm?: boolean;
 		assertions?: FetchedAssertion[];
 		predicateOptions?: PredicateOption[];
 		objectOptions?: NameableEntity[];
@@ -34,6 +39,7 @@
 		onSubmit,
 		onCancel,
 		individualIri,
+		hideNameForm = false,
 		assertions = [],
 		predicateOptions = [],
 		objectOptions = [],
@@ -52,6 +58,7 @@
 			error = 'Name must not be empty';
 			return;
 		}
+		if (!onSubmit) return;
 		error = null;
 		submitting = true;
 		try {
@@ -67,7 +74,8 @@
 		class: 'Class',
 		attribute: 'Attribute',
 		relation: 'Relation',
-		individual: 'Individual'
+		individual: 'Individual',
+		relationInstance: 'Relation instance'
 	};
 
 	let showAddAssertion = $state(false);
@@ -123,29 +131,31 @@
 	}
 </script>
 
-<form onsubmit={handleSubmit}>
-	<label>
-		Name
-		<input type="text" bind:value={label} placeholder="e.g. nutzt" />
-	</label>
-	{#if mode === 'create' && namespaceOptions.length > 0}
+{#if !hideNameForm}
+	<form onsubmit={handleSubmit}>
 		<label>
-			Namespace
-			<select bind:value={namespaceBaseIri}>
-				{#each namespaceOptions as ns (ns.baseIri)}
-					<option value={ns.baseIri}>{ns.prefix}</option>
-				{/each}
-			</select>
+			Name
+			<input type="text" bind:value={label} placeholder="e.g. nutzt" />
 		</label>
-	{/if}
-	{#if error}
-		<p class="error">{error}</p>
-	{/if}
-	<div class="actions">
-		<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
-		<button type="submit" class="primary" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
-	</div>
-</form>
+		{#if mode === 'create' && namespaceOptions.length > 0}
+			<label>
+				Namespace
+				<select bind:value={namespaceBaseIri}>
+					{#each namespaceOptions as ns (ns.baseIri)}
+						<option value={ns.baseIri}>{ns.prefix}</option>
+					{/each}
+				</select>
+			</label>
+		{/if}
+		{#if error}
+			<p class="error">{error}</p>
+		{/if}
+		<div class="actions">
+			<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
+			<button type="submit" class="primary" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
+		</div>
+	</form>
+{/if}
 
 {#if mode === 'edit' && individualIri}
 	<div class="assertions">
@@ -339,8 +349,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 22px;
-		height: 22px;
+		min-width: 22px;
+		min-height: 22px;
 		border-radius: 4px;
 		background: transparent;
 		color: var(--color-text-muted);

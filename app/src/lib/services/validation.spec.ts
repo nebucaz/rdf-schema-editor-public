@@ -129,6 +129,40 @@ describe('checkStructural (STORY-013)', () => {
 			)
 		).toBe(true);
 	});
+
+	it('accepts a reified statement (`a rdf:Statement`) without requiring it declared as owl:Class (relation-assertions Story 003)', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+			<urn:Person> a owl:Class .
+			<urn:owns> a owl:ObjectProperty ; rdfs:domain <urn:Person> ; rdfs:range <urn:Person> .
+			<urn:alice> a <urn:Person> .
+			<urn:stmt1> a rdf:Statement ;
+				rdf:subject <urn:alice> ;
+				rdf:predicate <urn:owns> ;
+				rdf:object <urn:alice> .
+		`);
+		expect(checkStructural(quads)).toEqual([]);
+	});
+
+	it('still rejects an unlisted a-typed subject alongside a reified statement, unchanged (regression)', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+			<urn:stmt1> a rdf:Statement ;
+				rdf:subject <urn:alice> ;
+				rdf:predicate <urn:owns> ;
+				rdf:object <urn:alice> .
+			<urn:nutzt> a <urn:Ghost> ; rdfs:label "nutzt" .
+		`);
+		const issues = checkStructural(quads);
+		expect(
+			issues.some(
+				(i) => i.layer === 'structural' && /urn:nutzt/.test(i.message) && /urn:Ghost/.test(i.message) && /not declared as owl:Class/.test(i.message)
+			)
+		).toBe(true);
+		expect(issues.some((i) => /urn:stmt1/.test(i.message))).toBe(false);
+	});
 });
 
 describe('checkCatalogStructural (data-catalog Story 010)', () => {

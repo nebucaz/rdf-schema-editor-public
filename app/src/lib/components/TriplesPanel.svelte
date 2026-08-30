@@ -8,16 +8,26 @@
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import CatalogMetadataForm from './CatalogMetadataForm.svelte';
 
+	/**
+	 * The panel's scope (STORY-082 widens this from a bare `selectedIri: string | null`): a single
+	 * node (editable), the whole schema graph (editable, `selectedIri === null`'s old meaning), or a
+	 * Workspace (read-only — a multi-node union has no single addressable subject to structurally
+	 * replace the way node-level `saveScopedTurtle` does, research §9).
+	 */
+	type TriplesPanelScope =
+		| { kind: 'node'; iri: string; namespaceBaseIri: string }
+		| { kind: 'workspace'; workspaceIri: string; label: string }
+		| { kind: 'all' };
+
 	interface Props {
-		/** `null` means "whole schema graph"; otherwise the IRI of the selected entity/relation. */
-		selectedIri: string | null;
+		scope: TriplesPanelScope;
 		/** Every registered namespace (STORY-027's `fetchNamespaces()`), for the panel's selector. */
 		namespaces: FetchedNamespace[];
 		/** Base IRI the selector defaults to (STORY-031's active namespace) when the panel opens. */
 		initialNamespaceBaseIri: string;
-		/** Whether `selectedIri` carries the `AuthoritativeEntity` marker (data-catalog Story 003) —
-		 *  gates the Catalog tab (Story 009): catalog entries only exist for such classes, and
-		 *  `selectedIri` itself must be non-null for the tab to make sense. */
+		/** Whether the node-scope entity carries the `AuthoritativeEntity` marker (data-catalog Story
+		 *  003) — gates the Catalog tab (Story 009): catalog entries only exist for such classes, and
+		 *  `scope.kind` must be `'node'` for the tab to make sense. */
 		showCatalogTab: boolean;
 		/** Data-catalog Story 014: which tab to activate. Defaults to `'schema'`; per-node "View
 		 *  catalog" passes `'catalog'` so the panel opens straight onto the requested tab. Re-applied
@@ -30,7 +40,7 @@
 	}
 
 	let {
-		selectedIri,
+		scope,
 		namespaces,
 		initialNamespaceBaseIri,
 		showCatalogTab,
@@ -40,8 +50,20 @@
 	}: Props = $props();
 
 	// Set once from `initialNamespaceBaseIri` when the panel mounts; the user's own selection then
-	// persists across `selectedIri` changes (canvas selection) without resetting to the default.
+	// persists across `scope` changes (canvas selection) without resetting to the default.
 	let selectedNamespace = $state(initialNamespaceBaseIri);
+
+	/** The node-scope IRI, or `null` for `'all'`/`'workspace'` scope — the single place every
+	 *  catalog/save/download helper below reads "is there one addressable node" from, so a Workspace's
+	 *  multi-node union is never mistaken for a single editable subject (STORY-082). */
+	function nodeIri(): string | null {
+		return scope.kind === 'node' ? scope.iri : null;
+	}
+
+	/** STORY-082: a Workspace's multi-node union has no single addressable subject to structurally
+	 *  replace the way node-level `saveScopedTurtle` does — editing is out of scope entirely at this
+	 *  level (research §9), so the pencil/save controls are absent, not merely disabled. */
+	const editingAllowed = $derived(scope.kind !== 'workspace');
 
 	/** STORY-018's Schema/Shapes tabs, plus Story 009's Catalog tab — unlike Schema/Shapes (a
 	 *  `turtle.ts` `Partition` filtered out of one whole-graph fetch), Catalog lives in its own
@@ -85,7 +107,7 @@
 		highlightEl.scrollLeft = textareaEl.scrollLeft;
 	}
 
-	async function load(iri: string | null, namespaceBaseIri: string) {
+	async function load(currentScope: TriplesPanelScope, namespaceBaseIri: string) {
 		loading = true;
 		loadError = null;
 		schemaTab.issues = [];
@@ -95,6 +117,17 @@
 		catalogTab.issues = [];
 		catalogTab.editing = false;
 		try {
+			if (currentScope.kind === 'workspace') {
+				const pair = await sparqlConnector.fetchScopedTurtleForWorkspace(currentScope.workspaceIri);
+				schemaTab.savedText = pair.schema;
+				schemaTab.draftText = pair.schema;
+				shapesTab.savedText = pair.shapes;
+				shapesTab.draftText = pair.shapes;
+				catalogTab.savedText = '';
+				catalogTab.draftText = '';
+				return;
+			}
+			const iri = currentScope.kind === 'node' ? currentScope.iri : null;
 			const [pair, catalogText] = await Promise.all([
 				sparqlConnector.fetchScopedTurtlePair(iri, namespaceBaseIri),
 				iri !== null && showCatalogTab
@@ -118,8 +151,9 @@
 	 *  `CatalogMetadataForm`'s direct-to-GraphDB writes, neither of which need a full reload of the
 	 *  Schema/Shapes tabs. */
 	async function reloadCatalogTab() {
-		if (selectedIri === null) return;
-		const text = await sparqlConnector.fetchCatalogTurtleForClass(selectedIri, selectedNamespace);
+		const iri = nodeIri();
+		if (iri === null) return;
+		const text = await sparqlConnector.fetchCatalogTurtleForClass(iri, selectedNamespace);
 		catalogTab.savedText = text;
 		catalogTab.draftText = text;
 		catalogTab.editing = false;
@@ -130,11 +164,12 @@
 	 *  and regeneration; `generateCatalogForClass` itself decides which, and never clobbers
 	 *  user-entered `publisher`/`license`/`distribution` fields on a regeneration. */
 	async function generateCatalog() {
-		if (selectedIri === null) return;
+		const iri = nodeIri();
+		if (iri === null) return;
 		generatingCatalog = true;
 		catalogTab.issues = [];
 		try {
-			await sparqlConnector.generateCatalogForClass(selectedIri, selectedNamespace);
+			await sparqlConnector.generateCatalogForClass(iri, selectedNamespace);
 			await reloadCatalogTab();
 		} catch (err) {
 			catalogTab.issues = [
@@ -145,9 +180,9 @@
 		}
 	}
 
-	// Re-fetches whenever the canvas selection or the chosen namespace changes while the panel is open.
+	// Re-fetches whenever the scope or the chosen namespace changes while the panel is open.
 	$effect(() => {
-		void load(selectedIri, selectedNamespace);
+		void load(scope, selectedNamespace);
 	});
 
 	// Jumps to the requested tab whenever the caller passes a new `initialTab` — e.g. clicking "View
@@ -169,18 +204,19 @@
 	}
 
 	async function save() {
+		const iri = nodeIri();
 		currentTab.saving = true;
 		currentTab.issues = [];
 		try {
 			if (activeTab === 'catalog') {
-				if (selectedIri === null) throw new Error('Catalog entries require a selected entity');
-				await sparqlConnector.saveCatalogTurtleForClass(selectedIri, currentTab.draftText, selectedNamespace);
+				if (iri === null) throw new Error('Catalog entries require a selected entity');
+				await sparqlConnector.saveCatalogTurtleForClass(iri, currentTab.draftText, selectedNamespace);
 			} else {
-				await sparqlConnector.saveScopedTurtle(selectedIri, currentTab.draftText, activeTab, selectedNamespace);
+				await sparqlConnector.saveScopedTurtle(iri, currentTab.draftText, activeTab, selectedNamespace);
 			}
 			currentTab.editing = false;
 			onSaved();
-			await load(selectedIri, selectedNamespace);
+			await load(scope, selectedNamespace);
 		} catch (err) {
 			currentTab.issues =
 				err instanceof SchemaValidationError ? err.issues : [{ layer: 'syntax', message: String(err) }];
@@ -201,7 +237,12 @@
 	}
 
 	function handleDownload() {
-		const base = selectedIri ? extractLocalName(selectedIri) : null;
+		const base =
+			scope.kind === 'node'
+				? extractLocalName(scope.iri)
+				: scope.kind === 'workspace'
+					? scope.label.replace(/\s+/g, '-')
+					: null;
 		const filename = base ? `${base}.${activeTab}.ttl` : `${activeTab}.ttl`;
 		downloadTurtle(filename, currentTab.draftText);
 	}
@@ -248,7 +289,9 @@
 		structural: 'OWL/RDFS structural'
 	};
 
-	const scopeLabel = $derived(selectedIri ? extractLocalName(selectedIri) : 'Whole schema graph');
+	const scopeLabel = $derived(
+		scope.kind === 'node' ? extractLocalName(scope.iri) : scope.kind === 'workspace' ? scope.label : 'Whole schema graph'
+	);
 	const tabLabel: Record<TabPartition, string> = { schema: 'Schema', shapes: 'Shapes', catalog: 'Catalog' };
 	const visibleTabs = $derived(
 		showCatalogTab ? (['schema', 'shapes', 'catalog'] as const) : (['schema', 'shapes'] as const)
@@ -274,7 +317,7 @@
 			</button>
 		{/each}
 		<div class="spacer"></div>
-		{#if namespaces.length > 0}
+		{#if namespaces.length > 0 && scope.kind !== 'workspace'}
 			<select
 				class="namespace-select"
 				aria-label="Namespace"
@@ -292,7 +335,7 @@
 			<p class="status">Loading…</p>
 		{:else if loadError}
 			<p class="status error">{loadError}</p>
-		{:else if activeTab === 'catalog' && selectedIri === null}
+		{:else if activeTab === 'catalog' && nodeIri() === null}
 			<p class="status">Select an entity to view or generate its catalog entry.</p>
 		{:else if activeTab === 'catalog' && catalogTab.savedText === '' && !currentTab.editing}
 			{#if currentTab.issues.length > 0}
@@ -315,8 +358,8 @@
 				</ul>
 			{/if}
 
-			{#if activeTab === 'catalog' && selectedIri !== null}
-				<CatalogMetadataForm classIri={selectedIri} namespaceBaseIri={selectedNamespace} onSaved={reloadCatalogTab} />
+			{#if activeTab === 'catalog' && nodeIri() !== null}
+				<CatalogMetadataForm classIri={nodeIri() ?? ''} namespaceBaseIri={selectedNamespace} onSaved={reloadCatalogTab} />
 			{/if}
 
 			<div class="editor-wrap">
@@ -345,19 +388,21 @@
 				>
 					{exportingLinkML ? 'Exporting…' : 'Download LinkML'}
 				</button>
-				{#if activeTab === 'catalog' && selectedIri !== null}
+				{#if activeTab === 'catalog' && nodeIri() !== null}
 					<button class="secondary" onclick={generateCatalog} disabled={generatingCatalog}>
 						{generatingCatalog ? 'Regenerating…' : 'Regenerate'}
 					</button>
 				{/if}
 				<div class="spacer"></div>
-				{#if currentTab.editing}
-					<button class="secondary" onclick={cancelEdit} disabled={currentTab.saving}>Cancel</button>
-					<button class="primary" onclick={save} disabled={currentTab.saving}>
-						{currentTab.saving ? 'Saving…' : 'Save'}
-					</button>
-				{:else}
-					<button class="primary" onclick={startEdit}>Edit</button>
+				{#if editingAllowed}
+					{#if currentTab.editing}
+						<button class="secondary" onclick={cancelEdit} disabled={currentTab.saving}>Cancel</button>
+						<button class="primary" onclick={save} disabled={currentTab.saving}>
+							{currentTab.saving ? 'Saving…' : 'Save'}
+						</button>
+					{:else}
+						<button class="primary" onclick={startEdit}>Edit</button>
+					{/if}
 				{/if}
 			</div>
 		{/if}

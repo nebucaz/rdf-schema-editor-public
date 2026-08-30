@@ -10,6 +10,27 @@ import {
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
+	WORKSPACE_CLASS_IRI,
+	WORKSPACE_MEMBERSHIP_CLASS_IRI,
+	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI,
+	WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI,
+	WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI,
+	workspaceIri,
+	workspaceMembershipIri,
+	SAVED_QUERY_CLASS_IRI,
+	SAVED_QUERY_TEXT_PREDICATE_IRI,
+	savedQueryIri,
+	NOTE_CLASS_IRI,
+	NOTE_WORKSPACE_PREDICATE_IRI,
+	NOTE_TEXT_PREDICATE_IRI,
+	NOTE_COLOR_PREDICATE_IRI,
+	NOTE_X_PREDICATE_IRI,
+	NOTE_Y_PREDICATE_IRI,
+	NOTE_LINKED_ELEMENT_PREDICATE_IRI,
+	noteIri,
 	EXTERNAL_VOCABULARY_CLASS_IRI,
 	catalogIri,
 	datasetIri,
@@ -1165,6 +1186,72 @@ describe('SparqlConnector — generalized individual→class relations (data-cat
 		]);
 	});
 
+	it('updateIndividualRelation renames the predicate and retargets the ground triple in one WITH-scoped update, with no reification to preserve', async () => {
+		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const newTargetIri = classIri('Deployment', NS_CORE);
+		const oldPredicateIri = genericPropertyIri('isAuthorityFor', NS_ADOIT);
+		const { fn, updates } = mockIndividualNamespaceFetch({ [architectureIri]: NS_ADOIT });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { predicateIri } = await connector.updateIndividualRelation(
+			architectureIri,
+			oldPredicateIri,
+			applicationIri,
+			'isCoOwnerOf',
+			newTargetIri
+		);
+
+		expect(predicateIri).toBe(genericPropertyIri('isCoOwnerOf', NS_ADOIT));
+		// One update mints+declares the new predicate, the second is the WITH-scoped rename/retarget.
+		expect(updates).toHaveLength(2);
+		const renameUpdate = updates[1];
+		expect(renameUpdate).toContain(`WITH <${namespaceGraphs(NS_ADOIT).instances}>`);
+		expect(renameUpdate).toContain(`<${architectureIri}> <${oldPredicateIri}> <${applicationIri}> .`);
+		expect(renameUpdate).toContain(`<${architectureIri}> <${predicateIri}> <${newTargetIri}> .`);
+	});
+
+	it('updateIndividualRelation is a no-op (no query issued beyond predicate resolution) when neither the name nor the target actually changed', async () => {
+		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
+		const applicationIri = classIri('Application', NS_CORE);
+		const predicateIri = genericPropertyIri('isAuthorityFor', NS_ADOIT);
+		const { fn, updates } = mockIndividualNamespaceFetch(
+			{ [architectureIri]: NS_ADOIT },
+			{ isAuthorityFor: predicateIri }
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.updateIndividualRelation(
+			architectureIri,
+			predicateIri,
+			applicationIri,
+			'isAuthorityFor',
+			applicationIri
+		);
+
+		expect(result).toEqual({ predicateIri });
+		expect(updates).toHaveLength(0);
+	});
+
+	it('updateIndividualRelation rejects an empty relation name without issuing a query', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.updateIndividualRelation(
+				`${NS_ADOIT}#Arch`,
+				genericPropertyIri('isAuthorityFor', NS_ADOIT),
+				classIri('Application'),
+				'   ',
+				classIri('Application')
+			)
+		).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
 	it('fetchAllIndividualClassRelations returns every predicate except rdf:type/rdfs:label, resolving cross-namespace class targets and preferring a real rdfs:label', async () => {
 		const architectureIri = `${NS_ADOIT}#ApplicationArchitecture`;
 		const applicationIri = classIri('Application', NS_CORE);
@@ -1203,6 +1290,49 @@ describe('SparqlConnector — generalized individual→class relations (data-cat
 				predicateIri,
 				name: 'isAuthorityFor',
 				classIri: applicationIri,
+				namespaceBaseIri: NS_ADOIT
+			}
+		]);
+	});
+
+	it('fetchAllIndividualIndividualRelations returns every predicate except rdf:type/rdfs:label, resolving cross-namespace individual targets and preferring a real rdfs:label (relation-assertions Sprint 3 Story 007)', async () => {
+		const aliceIri = `${NS_ADOIT}#alice`;
+		const bobIri = `${NS_CORE}#bob`;
+		const predicateIri = genericPropertyIri('isOperatedBy', NS_ADOIT);
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('?s ?p ?plabel ?o') && q.includes('GRAPH ?og')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['s', 'p', 'plabel', 'o'] },
+						results: {
+							bindings: [
+								{
+									s: { type: 'uri', value: aliceIri },
+									p: { type: 'uri', value: predicateIri },
+									plabel: { type: 'literal', value: 'isOperatedBy' },
+									o: { type: 'uri', value: bobIri }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAllIndividualIndividualRelations(NS_ADOIT);
+
+		expect(result).toEqual([
+			{
+				individualIri: aliceIri,
+				predicateIri,
+				name: 'isOperatedBy',
+				targetIndividualIri: bobIri,
 				namespaceBaseIri: NS_ADOIT
 			}
 		]);
@@ -1338,7 +1468,9 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 				);
 			}
 			if (q.includes('?p ?plabel ?o ?olabel')) {
-				expect(q).toContain('?p != rdf:type && ?p != rdfs:label');
+				expect(q).toContain(
+					'?p != rdf:type && ?p != rdfs:label && ?p != rdf:subject && ?p != rdf:predicate && ?p != rdf:object'
+				);
 				return new Response(
 					JSON.stringify({
 						head: { vars: ['p', 'plabel', 'o', 'olabel'] },
@@ -1376,6 +1508,7 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 
 	it('fetchNameableEntities tags every schema entity with its kind, composing fetchFullSchemaForAllNamespaces', async () => {
 		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchAllReifiedStatements').mockResolvedValue([]);
 		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
 			classes: [{ iri: 'urn:C', label: 'C', comment: null, namespaceBaseIri: NS_CORE }],
 			datatypeProperties: [
@@ -1403,7 +1536,8 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 			],
 			subClassOf: [],
 			individuals: [{ iri: 'urn:I', label: 'I', classIri: 'urn:C', namespaceBaseIri: NS_CORE }],
-			individualClassRelations: []
+			individualClassRelations: [],
+			individualIndividualRelations: []
 		});
 
 		const result = await connector.fetchNameableEntities();
@@ -1414,6 +1548,26 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 			{ iri: 'urn:R', label: 'R', kind: 'relation' },
 			{ iri: 'urn:I', label: 'I', kind: 'individual' }
 		]);
+	});
+
+	it('fetchNameableEntities appends reified statements as the "relationInstance" kind', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		});
+		vi.spyOn(connector, 'fetchAllReifiedStatements').mockResolvedValue([
+			{ iri: 'urn:Stmt1', label: 'Application supports Bal', kind: 'relationInstance' }
+		]);
+
+		const result = await connector.fetchNameableEntities();
+
+		expect(result).toEqual([{ iri: 'urn:Stmt1', label: 'Application supports Bal', kind: 'relationInstance' }]);
 	});
 
 	it('fetchRelationPredicateOptions lists every declared relation (generic and specific) plus every named individual→class relation, deduplicated', async () => {
@@ -1456,7 +1610,8 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 					classIri: 'urn:C',
 					namespaceBaseIri: NS_ADOIT
 				}
-			]
+			],
+			individualIndividualRelations: []
 		});
 
 		const result = await connector.fetchRelationPredicateOptions();
@@ -1469,6 +1624,134 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 			])
 		);
 		expect(result).toHaveLength(3);
+	});
+});
+
+describe('SparqlConnector — relation-level assertions / reification (relation-assertions Sprint 4 Story 008/009)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS_ADOIT = 'https://example.com/adoit';
+
+	/** Mocks `findNamespaceOfIndividual`'s `GRAPH ?g { <iri> a ?type }` lookup (the reified triple's
+	 *  subject always resolves to `subjectGraph`) plus `fetchStatementIriForTriple`'s own
+	 *  `?stmt rdf:subject ...` lookup, returning `existingStmt` (or no bindings if omitted). */
+	function mockReificationFetch(subjectGraph: string, existingStmt?: string) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return new Response(
+					JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: subjectGraph } }] } }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('?stmt rdf:subject')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['stmt'] },
+						results: { bindings: existingStmt ? [{ stmt: { type: 'uri', value: existingStmt } }] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('fetchStatementIriForTriple returns the existing statement IRI when the triple is already reified', async () => {
+		const stmtIri = `${NS_ADOIT}#Statement123`;
+		const { fn } = mockReificationFetch(NS_ADOIT, stmtIri);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchStatementIriForTriple(
+			`${NS_ADOIT}#Application`,
+			`${NS_ADOIT}#supports`,
+			`${NS_ADOIT}#Bal`,
+			NS_ADOIT
+		);
+
+		expect(result).toBe(stmtIri);
+	});
+
+	it('fetchStatementIriForTriple returns undefined when the triple is not reified, scoping the query to graphs.instances', async () => {
+		const { fn } = mockReificationFetch(NS_ADOIT);
+		vi.stubGlobal('fetch', fn);
+		const subjectIri = `${NS_ADOIT}#Application`;
+		const predicateIri = `${NS_ADOIT}#supports`;
+		const objectIri = `${NS_ADOIT}#Bal`;
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchStatementIriForTriple(subjectIri, predicateIri, objectIri, NS_ADOIT);
+
+		expect(result).toBeUndefined();
+		const queryCall = fn.mock.calls.find(([, opts]: [string, { body: string }]) =>
+			JSON.parse(opts.body).query?.includes('?stmt rdf:subject')
+		);
+		const query: string = JSON.parse(queryCall![1].body).query;
+		expect(query).toContain(namespaceGraphs(NS_ADOIT).instances);
+		expect(query).toContain(`rdf:subject <${subjectIri}>`);
+		expect(query).toContain(`rdf:predicate <${predicateIri}>`);
+		expect(query).toContain(`rdf:object <${objectIri}>`);
+	});
+
+	it('ensureReifiedStatement mints and inserts the four reification quads on first call', async () => {
+		const subjectIri = `${NS_ADOIT}#Application`;
+		const predicateIri = `${NS_ADOIT}#supports`;
+		const objectIri = `${NS_ADOIT}#Bal`;
+		const { fn, updates } = mockReificationFetch(NS_ADOIT);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const stmt = await connector.ensureReifiedStatement(subjectIri, predicateIri, objectIri);
+
+		expect(stmt).toContain(`${NS_ADOIT}#Statement`);
+		expect(updates).toEqual([
+			expect.stringContaining(
+				inGraph(
+					`<${stmt}> a rdf:Statement ; rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${objectIri}> .`,
+					namespaceGraphs(NS_ADOIT).instances
+				)
+			)
+		]);
+	});
+
+	it('ensureReifiedStatement reuses the existing statement IRI on a second call, without re-inserting', async () => {
+		const subjectIri = `${NS_ADOIT}#Application`;
+		const predicateIri = `${NS_ADOIT}#supports`;
+		const objectIri = `${NS_ADOIT}#Bal`;
+		const existingStmt = `${NS_ADOIT}#Statement999`;
+		const { fn, updates } = mockReificationFetch(NS_ADOIT, existingStmt);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const stmt = await connector.ensureReifiedStatement(subjectIri, predicateIri, objectIri);
+
+		expect(stmt).toBe(existingStmt);
+		expect(updates).toEqual([]);
+	});
+
+	it('fetchAssertionsForIndividual excludes rdf:subject/rdf:predicate/rdf:object when scoped to a reified statement (Story 010)', async () => {
+		const stmtIri = `${NS_ADOIT}#Statement123`;
+		const { fn } = mockReificationFetch(NS_ADOIT);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchAssertionsForIndividual(stmtIri);
+
+		const queryCall = fn.mock.calls.find(([, opts]: [string, { body: string }]) =>
+			JSON.parse(opts.body).query?.includes('?p ?plabel ?o ?olabel')
+		);
+		const query: string = JSON.parse(queryCall![1].body).query;
+		expect(query).toContain(
+			'?p != rdf:type && ?p != rdfs:label && ?p != rdf:subject && ?p != rdf:predicate && ?p != rdf:object'
+		);
 	});
 });
 
@@ -2236,6 +2519,84 @@ describe('SparqlConnector — raw triples view + edit + validation (STORY-011/01
 
 		expect(turtle).toContain('owl:Class');
 		expect(turtle).not.toContain(carIri);
+	});
+
+	it("fetchScopedTurtlePair merges a cross-namespace incoming individual relation into a class's own scope (relation-assertions Story 001)", async () => {
+		const coreBase = DEFAULT_NAMESPACE_BASE_IRI;
+		const coreGraphs = namespaceGraphs(coreBase);
+		const applicationIri = classIri('Application', coreGraphs.schema);
+
+		const govBase = 'http://ld.pageagent.com/rdf-schema-editor/gov';
+		const govGraphs = namespaceGraphs(govBase);
+		const systemOfWorkIri = `${govGraphs.schema}#SystemOfWork`;
+		const isMasterForIri = `${govGraphs.schema}#isMasterFor`;
+		const itamIri = `${govGraphs.instances}#systemOfWorkItam`;
+
+		const coreBindings: SparqlBinding[] = [
+			{
+				s: { type: 'uri', value: applicationIri },
+				p: { type: 'uri', value: RDF.type },
+				o: { type: 'uri', value: OWL.Class }
+			}
+		];
+		const govBindings: SparqlBinding[] = [
+			{
+				s: { type: 'uri', value: isMasterForIri },
+				p: { type: 'uri', value: RDF.type },
+				o: { type: 'uri', value: OWL.ObjectProperty }
+			},
+			{
+				s: { type: 'uri', value: isMasterForIri },
+				p: { type: 'uri', value: RDFS.domain },
+				o: { type: 'uri', value: systemOfWorkIri }
+			},
+			{
+				s: { type: 'uri', value: itamIri },
+				p: { type: 'uri', value: RDF.type },
+				o: { type: 'uri', value: systemOfWorkIri }
+			},
+			{
+				s: { type: 'uri', value: itamIri },
+				p: { type: 'uri', value: isMasterForIri },
+				o: { type: 'uri', value: applicationIri }
+			}
+		];
+
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query ?? '';
+			if (q.includes('?ns ?prefix ?desc')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns', 'prefix', 'desc', 'color'] },
+						results: {
+							bindings: [
+								{ ns: { type: 'uri', value: coreBase }, prefix: { type: 'literal', value: 'rse' } },
+								{ ns: { type: 'uri', value: govBase }, prefix: { type: 'literal', value: 'gov' } }
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('?v ?prefix')) {
+				return new Response(
+					JSON.stringify({ head: { vars: ['v', 'prefix'] }, results: { bindings: [] } }),
+					{ status: 200 }
+				);
+			}
+			const bindings = q.includes(govGraphs.schema) ? govBindings : coreBindings;
+			return new Response(JSON.stringify({ head: { vars: ['s', 'p', 'o'] }, results: { bindings } }), {
+				status: 200
+			});
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { schema } = await connector.fetchScopedTurtlePair(applicationIri, coreBase);
+
+		expect(schema).toContain('isMasterFor');
+		expect(schema).toContain('systemOfWorkItam');
 	});
 
 	it('saveScopedTurtle sends one atomic DELETE/INSERT update on a valid edit', async () => {
@@ -3042,6 +3403,1089 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 
 		expect(result).toEqual({ deleted: true, entryCount: 0 });
 		expect(updates).toHaveLength(1); // just the declaration-triple delete, no DROP GRAPH needed
+	});
+});
+
+/** Stateful fetch mock for STORY-072/073's Workspace/WorkspaceMembership CRUD methods:
+ *  distinguishes the four ASK shapes (`ensureWorkspaceClass`'s and
+ *  `ensureWorkspaceMembershipClass`'s `<X> a owl:Class` marker checks vs. `insertWorkspace`'s and
+ *  `addWorkspaceMember`'s `<iri> a <X_CLASS_IRI>` existence checks) the same way `mockNamespaceFetch`
+ *  distinguishes its two ASK shapes. */
+function mockWorkspaceFetch(
+	fixture: {
+		workspaceClassExists?: boolean;
+		membershipClassExists?: boolean;
+		workspaceExists?: boolean;
+		membershipExists?: boolean;
+	} = {}
+) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (q.includes('ASK')) {
+			if (q.includes(`<${WORKSPACE_CLASS_IRI}> a owl:Class`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.workspaceClassExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes(`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class`)) {
+				return new Response(
+					JSON.stringify({ head: {}, boolean: fixture.membershipClassExists ?? false }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes(`a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.membershipExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes(`a <${WORKSPACE_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.workspaceExists ?? false }), {
+					status: 200
+				});
+			}
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn, updates };
+}
+
+describe('SparqlConnector — Workspace CRUD (STORY-072)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('ensureWorkspaceClass creates the marker class only if missing', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureWorkspaceClass();
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${WORKSPACE_CLASS_IRI}> a owl:Class`);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('ensureWorkspaceClass is a no-op when the marker class already exists', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureWorkspaceClass();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('insertWorkspace mints via workspaceIri(name) and creates the declaration triple', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: true, workspaceExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const iri = await connector.insertWorkspace('Project Overview');
+
+		expect(iri).toBe(workspaceIri('Project Overview'));
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${iri}> a <${WORKSPACE_CLASS_IRI}>`);
+		expect(updates[0]).toContain('rdfs:label "Project Overview"');
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('insertWorkspace stores the optional default-namespace triple', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: true, workspaceExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertWorkspace('Project Overview', govBase);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${govBase}>`);
+	});
+
+	it('insertWorkspace rejects an empty name without making any request', async () => {
+		const { fn } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertWorkspace('   ')).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('insertWorkspace rejects a duplicate name', async () => {
+		const { fn } = mockWorkspaceFetch({ workspaceClassExists: true, workspaceExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertWorkspace('Project Overview')).rejects.toThrow(/already exists/);
+	});
+
+	it('fetchWorkspaces returns every registered workspace with its label and default namespace', async () => {
+		const ws = workspaceIri('Project Overview');
+		const govBase = 'http://example.org/gov';
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['ws', 'label', 'defaultNs'] },
+					results: {
+						bindings: [
+							{
+								ws: { type: 'uri', value: ws },
+								label: { type: 'literal', value: 'Project Overview' },
+								defaultNs: { type: 'uri', value: govBase }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const workspaces = await connector.fetchWorkspaces();
+
+		expect(workspaces).toEqual([{ iri: ws, label: 'Project Overview', defaultNamespaceBaseIri: govBase }]);
+	});
+
+	it('fetchWorkspaces defaults an unset default namespace to null', async () => {
+		const ws = workspaceIri('Default');
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['ws', 'label'] },
+					results: {
+						bindings: [{ ws: { type: 'uri', value: ws }, label: { type: 'literal', value: 'Default' } }]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const workspaces = await connector.fetchWorkspaces();
+
+		expect(workspaces).toEqual([{ iri: ws, label: 'Default', defaultNamespaceBaseIri: null }]);
+	});
+
+	it('renameWorkspace updates only rdfs:label — the workspace IRI is unchanged', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.renameWorkspace(ws, 'Project Roadmap');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${ws}> rdfs:label "Project Roadmap"`);
+		expect(updates[0]).not.toContain(workspaceIri('Project Roadmap'));
+	});
+
+	it('updateWorkspaceDefaultNamespace sets the default-namespace predicate', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateWorkspaceDefaultNamespace(ws, govBase);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${ws}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${govBase}>`);
+	});
+
+	it('updateWorkspaceDefaultNamespace with null removes the default-namespace predicate', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateWorkspaceDefaultNamespace(ws, null);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${ws}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> ?old`);
+	});
+
+	it('deleteWorkspace removes the workspace\'s own triples and every membership row referencing it', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteWorkspace(ws);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`?m <${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
+		expect(updates[0]).toContain(`<${ws}> ?p ?o`);
+	});
+
+	it('deleteWorkspace also deletes every Note belonging to it (STORY-083) — outright, not just unlinked', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteWorkspace(ws);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`?n <${NOTE_WORKSPACE_PREDICATE_IRI}> <${ws}> . ?n ?p ?o`);
+	});
+});
+
+/** Stateful fetch mock for STORY-087's SavedQuery CRUD methods: distinguishes
+ *  `ensureSavedQueryClass`'s `<X> a owl:Class` marker check from `insertSavedQuery`'s
+ *  `<iri> a <SAVED_QUERY_CLASS_IRI>` existence check, mirroring `mockWorkspaceFetch`. */
+function mockSavedQueryFetch(
+	fixture: {
+		savedQueryClassExists?: boolean;
+		savedQueryExists?: boolean;
+	} = {}
+) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (q.includes('ASK')) {
+			if (q.includes(`<${SAVED_QUERY_CLASS_IRI}> a owl:Class`)) {
+				return new Response(
+					JSON.stringify({ head: {}, boolean: fixture.savedQueryClassExists ?? false }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes(`a <${SAVED_QUERY_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.savedQueryExists ?? false }), {
+					status: 200
+				});
+			}
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn, updates };
+}
+
+describe('SparqlConnector — SavedQuery CRUD (STORY-087)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('ensureSavedQueryClass creates the marker class only if missing', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureSavedQueryClass();
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${SAVED_QUERY_CLASS_IRI}> a owl:Class`);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('ensureSavedQueryClass is a no-op when the marker class already exists', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureSavedQueryClass();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('insertSavedQuery mints via savedQueryIri(name) and creates the declaration triple', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const iri = await connector.insertSavedQuery(
+			'Undocumented Classes',
+			'SELECT ?class WHERE { ?class a owl:Class }',
+			'finds gaps'
+		);
+
+		expect(iri).toBe(savedQueryIri('Undocumented Classes'));
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${iri}> a <${SAVED_QUERY_CLASS_IRI}>`);
+		expect(updates[0]).toContain('rdfs:label "Undocumented Classes"');
+		expect(updates[0]).toContain(
+			`<${SAVED_QUERY_TEXT_PREDICATE_IRI}> "SELECT ?class WHERE { ?class a owl:Class }"`
+		);
+		expect(updates[0]).toContain('rdfs:comment "finds gaps"');
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('insertSavedQuery omits rdfs:comment when no description is given', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertSavedQuery('Undocumented Classes', 'SELECT ?class WHERE { ?class a owl:Class }');
+
+		expect(updates[0]).not.toContain('rdfs:comment');
+	});
+
+	it('insertSavedQuery rejects an empty name without making any request', async () => {
+		const { fn } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertSavedQuery('   ', 'SELECT * WHERE { ?s ?p ?o }')).rejects.toThrow(
+			/must not be empty/
+		);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('insertSavedQuery rejects empty sparqlText without making any request', async () => {
+		const { fn } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertSavedQuery('Undocumented Classes', '   ')).rejects.toThrow(
+			/must not be empty/
+		);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('insertSavedQuery rejects a duplicate name', async () => {
+		const { fn } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.insertSavedQuery('Undocumented Classes', 'SELECT * WHERE { ?s ?p ?o }')
+		).rejects.toThrow(/already exists/);
+	});
+
+	it('fetchSavedQueries returns every registered saved query with label, text, and description', async () => {
+		const sq = savedQueryIri('Undocumented Classes');
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['sq', 'label', 'text', 'description'] },
+					results: {
+						bindings: [
+							{
+								sq: { type: 'uri', value: sq },
+								label: { type: 'literal', value: 'Undocumented Classes' },
+								text: { type: 'literal', value: 'SELECT ?class WHERE { ?class a owl:Class }' },
+								description: { type: 'literal', value: 'finds gaps' }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const savedQueries = await connector.fetchSavedQueries();
+
+		expect(savedQueries).toEqual([
+			{
+				iri: sq,
+				label: 'Undocumented Classes',
+				sparqlText: 'SELECT ?class WHERE { ?class a owl:Class }',
+				description: 'finds gaps'
+			}
+		]);
+	});
+
+	it('fetchSavedQueries defaults missing optional fields to empty strings', async () => {
+		const sq = savedQueryIri('Undocumented Classes');
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['sq'] },
+					results: { bindings: [{ sq: { type: 'uri', value: sq } }] }
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const savedQueries = await connector.fetchSavedQueries();
+
+		expect(savedQueries).toEqual([{ iri: sq, label: '', sparqlText: '', description: '' }]);
+	});
+
+	it('renameSavedQuery updates only rdfs:label — the saved query IRI is unchanged', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.renameSavedQuery(sq, 'Classes Missing Comments');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${sq}> rdfs:label "Classes Missing Comments"`);
+		expect(updates[0]).not.toContain(savedQueryIri('Classes Missing Comments'));
+	});
+
+	it('updateSavedQueryText replaces the sparqlText triple', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateSavedQueryText(sq, 'SELECT ?x WHERE { ?x a owl:Class }');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`<${sq}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "SELECT ?x WHERE { ?x a owl:Class }"`
+		);
+	});
+
+	it('updateSavedQueryText rejects an empty string rather than clearing the query to blank', async () => {
+		const { fn } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateSavedQueryText(sq, '   ')).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('updateSavedQueryDescription sets the rdfs:comment triple', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateSavedQueryDescription(sq, 'finds gaps');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${sq}> rdfs:comment "finds gaps"`);
+	});
+
+	it('updateSavedQueryDescription with null removes the rdfs:comment triple', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateSavedQueryDescription(sq, null);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${sq}> rdfs:comment ?old`);
+	});
+
+	it('deleteSavedQuery removes every triple with that subject', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const sq = savedQueryIri('Undocumented Classes');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteSavedQuery(sq);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${sq}> ?p ?o`);
+		expect(updates[0]).toContain('DELETE WHERE');
+	});
+});
+
+describe('SparqlConnector — WorkspaceMembership CRUD and position storage (STORY-073)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('ensureWorkspaceMembershipClass creates the marker class only if missing', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ membershipClassExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureWorkspaceMembershipClass();
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class`);
+	});
+
+	it('ensureWorkspaceMembershipClass is a no-op when the marker class already exists', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ membershipClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureWorkspaceMembershipClass();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('fetchWorkspaceMembers returns only the rows for the given workspace, with numeric x/y', async () => {
+		const ws = workspaceIri('Project Overview');
+		const elementIri = `${SCHEMA_NAMESPACE}Application`;
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['element', 'x', 'y'] },
+					results: {
+						bindings: [
+							{
+								element: { type: 'uri', value: elementIri },
+								x: { type: 'literal', value: '120.5', datatype: 'http://www.w3.org/2001/XMLSchema#decimal' },
+								y: { type: 'literal', value: '40', datatype: 'http://www.w3.org/2001/XMLSchema#decimal' }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const members = await connector.fetchWorkspaceMembers(ws);
+
+		expect(members).toEqual([{ elementIri, x: 120.5, y: 40 }]);
+	});
+
+	it('addWorkspaceMember mints via workspaceMembershipIri and links the element at (x, y)', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ membershipClassExists: true, membershipExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const elementIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.addWorkspaceMember(ws, elementIri, 120.5, 40);
+
+		const membershipIri = workspaceMembershipIri(ws, elementIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "120.5"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "40"^^xsd:decimal`);
+	});
+
+	it('addWorkspaceMember is idempotent — a no-op when the membership already exists', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ membershipClassExists: true, membershipExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const elementIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.addWorkspaceMember(ws, elementIri, 0, 0)).resolves.toBeUndefined();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('removeWorkspaceMember deletes exactly the one membership subject\'s triples', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const elementIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.removeWorkspaceMember(ws, elementIri);
+
+		const membershipIri = workspaceMembershipIri(ws, elementIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${membershipIri}> ?p ?o`);
+	});
+
+	it('updateWorkspaceMemberPosition round-trips a non-integer position as xsd:decimal', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const elementIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateWorkspaceMemberPosition(ws, elementIri, 88.25, 12.75);
+
+		const membershipIri = workspaceMembershipIri(ws, elementIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "88.25"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "12.75"^^xsd:decimal`);
+		// Only x/y are targeted — the workspace/element link triples aren't touched by this update.
+		expect(updates[0]).not.toContain(WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI);
+		expect(updates[0]).not.toContain(WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI);
+	});
+});
+
+describe('SparqlConnector — Add Element typeahead (STORY-080)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('fetchAddableWorkspaceElements narrows fetchNameableEntities to classes and individuals only', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchNameableEntities').mockResolvedValue([
+			{ iri: 'urn:C', label: 'C', kind: 'class' },
+			{ iri: 'urn:A', label: 'C.A', kind: 'attribute' },
+			{ iri: 'urn:R', label: 'R', kind: 'relation' },
+			{ iri: 'urn:I', label: 'I', kind: 'individual' },
+			{ iri: 'urn:S', label: 'S', kind: 'relationInstance' }
+		]);
+
+		const result = await connector.fetchAddableWorkspaceElements();
+
+		expect(result).toEqual([
+			{ iri: 'urn:C', label: 'C', kind: 'class' },
+			{ iri: 'urn:I', label: 'I', kind: 'individual' }
+		]);
+	});
+});
+
+describe('SparqlConnector — WorkspaceMembership cascade cleanup on delete (STORY-081)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('deleteClass also cleans up WorkspaceMembership rows for the class and its individuals, before deleting the class itself', async () => {
+		const iri = classIri('Person');
+		const { fn, updates } = mockGraphFetch({ externalReferences: [] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteClass(iri);
+
+		expect(result.deleted).toBe(true);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`BIND(<${iri}> AS ?el)`);
+		expect(updates[0]).toContain(`?el a <${iri}>`);
+		expect(updates[0]).toContain(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?el`);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+
+		// The cascade cleanup must precede the class's own triple delete (it depends on `<iri> a
+		// owl:Class`/`?el a <iri>` still being present at that point in the update).
+		const cleanupIndex = updates[0].indexOf('BIND(');
+		const classDeleteIndex = updates[0].indexOf(`<${iri}> ?p ?o`);
+		expect(cleanupIndex).toBeGreaterThanOrEqual(0);
+		expect(cleanupIndex).toBeLessThan(classDeleteIndex);
+	});
+
+	it('deleteIndividual also cleans up every WorkspaceMembership row referencing it', async () => {
+		const relationType = classIri('RelationType');
+		const iri = individualIri(relationType, 'nutzt');
+		const { fn, updates } = mockIndividualFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIndividual(iri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${iri}> ; ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it('deleteNamespace with force:true also cleans up WorkspaceMembership rows for every class/individual it removes', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 5 });
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const graphs = namespaceGraphs(govBase);
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteNamespace(govBase, { force: true });
+
+		expect(result).toEqual({ deleted: true, entryCount: 0 });
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?el`);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+		expect(updates[0]).toContain(`DROP GRAPH <${graphs.instances}>`);
+		expect(updates[0]).toContain(`DROP GRAPH <${graphs.schema}>`);
+		expect(updates[0]).toContain(`DROP GRAPH <${graphs.shapes}>`);
+		expect(updates[1]).toContain(`<${govBase}> ?p ?o`);
+	});
+
+	it('deleteNamespace when already empty attempts no WorkspaceMembership cleanup (nothing could reference it)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 0 });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteNamespace('http://example.org/gov');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain(WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI);
+	});
+
+	// STORY-083: a parallel cascade, but an *unlink* (not a delete) — every Note's `noteLinkedElement`
+	// pointing at the removed class/individual is cleared, leaving the Note itself untouched.
+
+	it('deleteClass also unlinks (not deletes) every Note pointing at the class or its individuals', async () => {
+		const iri = classIri('Person');
+		const { fn, updates } = mockGraphFetch({ externalReferences: [] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteClass(iri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el`);
+
+		// Must precede the class's own triple delete, same reasoning as the WorkspaceMembership cascade.
+		const cleanupIndex = updates[0].indexOf(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el`);
+		const classDeleteIndex = updates[0].indexOf(`<${iri}> ?p ?o`);
+		expect(cleanupIndex).toBeGreaterThanOrEqual(0);
+		expect(cleanupIndex).toBeLessThan(classDeleteIndex);
+	});
+
+	it('deleteIndividual also unlinks (not deletes) every Note pointing at it', async () => {
+		const relationType = classIri('RelationType');
+		const iri = individualIri(relationType, 'nutzt');
+		const { fn, updates } = mockIndividualFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIndividual(iri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${iri}> .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it('deleteNamespace with force:true also unlinks (not deletes) every Note pointing at a removed class/individual', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 5 });
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteNamespace(govBase, { force: true });
+
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el`);
+	});
+});
+
+/** Stateful fetch mock for STORY-083's Note CRUD methods: distinguishes `ensureNoteClass`'s
+ *  `<NOTE_CLASS_IRI> a owl:Class` marker check the same way `mockWorkspaceFetch` distinguishes its
+ *  own ASK shapes. Note methods issue no other `ASK` (unlike `insertWorkspace`/`addWorkspaceMember`
+ *  — a Note's IRI is timestamp-unique by construction, no "already exists" guard needed). */
+function mockNoteFetch(fixture: { noteClassExists?: boolean } = {}) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (q.includes('ASK')) {
+			return new Response(JSON.stringify({ head: {}, boolean: fixture.noteClassExists ?? false }), {
+				status: 200
+			});
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn, updates };
+}
+
+describe('SparqlConnector — Note (sticky note) CRUD (STORY-083)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const ws = workspaceIri('Project Overview');
+
+	it('ensureNoteClass creates the marker class only if missing', async () => {
+		const { fn, updates } = mockNoteFetch({ noteClassExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureNoteClass();
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${NOTE_CLASS_IRI}> a owl:Class`);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('ensureNoteClass is a no-op when the marker class already exists', async () => {
+		const { fn, updates } = mockNoteFetch({ noteClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureNoteClass();
+
+		expect(updates).toHaveLength(0);
+	});
+
+	it('fetchNotesForWorkspace returns every Note row for the given workspace, with numeric x/y', async () => {
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const linkedIri = `${SCHEMA_NAMESPACE}Application`;
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['n', 'text', 'color', 'x', 'y', 'linked'] },
+					results: {
+						bindings: [
+							{
+								n: { type: 'uri', value: noteIriValue },
+								text: { type: 'literal', value: 'Reminder' },
+								color: { type: 'literal', value: '#fff9b1' },
+								x: { type: 'literal', value: '120.5', datatype: 'http://www.w3.org/2001/XMLSchema#decimal' },
+								y: { type: 'literal', value: '40', datatype: 'http://www.w3.org/2001/XMLSchema#decimal' },
+								linked: { type: 'uri', value: linkedIri }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const notes = await connector.fetchNotesForWorkspace(ws);
+
+		expect(notes).toEqual([
+			{ iri: noteIriValue, text: 'Reminder', color: '#fff9b1', x: 120.5, y: 40, linkedElementIri: linkedIri }
+		]);
+	});
+
+	it('fetchNotesForWorkspace defaults an unset text/linked element to "" / null', async () => {
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['n', 'color', 'x', 'y'] },
+					results: {
+						bindings: [
+							{
+								n: { type: 'uri', value: noteIriValue },
+								color: { type: 'literal', value: '#fff9b1' },
+								x: { type: 'literal', value: '0' },
+								y: { type: 'literal', value: '0' }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const notes = await connector.fetchNotesForWorkspace(ws);
+
+		expect(notes).toEqual([{ iri: noteIriValue, text: '', color: '#fff9b1', x: 0, y: 0, linkedElementIri: null }]);
+	});
+
+	it('insertNote mints via noteIri(workspaceIri, timestamp) and writes the required triples', async () => {
+		vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+		const { fn, updates } = mockNoteFetch({ noteClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const { iri } = await connector.insertNote(ws, 10, 20, '#fff9b1');
+
+		expect(iri).toBe(noteIri(ws, '1700000000000'));
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${iri}> a <${NOTE_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${NOTE_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
+		expect(updates[0]).toContain(`<${NOTE_COLOR_PREDICATE_IRI}> "#fff9b1"`);
+		expect(updates[0]).toContain(`<${NOTE_X_PREDICATE_IRI}> "10"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${NOTE_Y_PREDICATE_IRI}> "20"^^xsd:decimal`);
+		// No text/link passed — those two optional triples are omitted entirely, not stored empty.
+		expect(updates[0]).not.toContain(NOTE_TEXT_PREDICATE_IRI);
+		expect(updates[0]).not.toContain(NOTE_LINKED_ELEMENT_PREDICATE_IRI);
+	});
+
+	it('insertNote writes the optional text/linked-element triples when provided', async () => {
+		vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+		const { fn, updates } = mockNoteFetch({ noteClassExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const linkedIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertNote(ws, 10, 20, '#fff9b1', 'Reminder', linkedIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${NOTE_TEXT_PREDICATE_IRI}> "Reminder"`);
+		expect(updates[0]).toContain(`<${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${linkedIri}>`);
+	});
+
+	it('updateNoteText sets the text triple', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNoteText(noteIriValue, 'Updated text');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> "Updated text"`);
+	});
+
+	it('updateNoteText with empty/blank text removes the triple rather than storing ""', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNoteText(noteIriValue, '   ');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> ?old`);
+	});
+
+	it('updateNoteColor replaces the color triple', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNoteColor(noteIriValue, '#d5f4e6');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_COLOR_PREDICATE_IRI}> "#d5f4e6"`);
+	});
+
+	it('updateNotePosition round-trips a non-integer position as xsd:decimal, without touching other triples', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNotePosition(noteIriValue, 88.25, 12.75);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_X_PREDICATE_IRI}> "88.25"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${NOTE_Y_PREDICATE_IRI}> "12.75"^^xsd:decimal`);
+		expect(updates[0]).not.toContain(NOTE_WORKSPACE_PREDICATE_IRI);
+		expect(updates[0]).not.toContain(NOTE_COLOR_PREDICATE_IRI);
+	});
+
+	it('updateNoteLinkedElement sets the link triple', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const linkedIri = `${SCHEMA_NAMESPACE}Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNoteLinkedElement(noteIriValue, linkedIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${linkedIri}>`);
+	});
+
+	it('updateNoteLinkedElement with null removes the link triple without deleting the note', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNoteLinkedElement(noteIriValue, null);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?old`);
+	});
+
+	it('deleteNote deletes exactly that Note subject\'s triples', async () => {
+		const { fn, updates } = mockNoteFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteNote(noteIriValue);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE WHERE');
+		expect(updates[0]).toContain(`<${noteIriValue}> ?p ?o`);
+	});
+});
+
+describe('SparqlConnector — Workspace-scoped Triples export (STORY-082)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it("fetchScopedTurtleForWorkspace unions every member's own scope, grouped by owning namespace, and skips a stale membership row", async () => {
+		const classIriValue = classIri('Person');
+		const otherNs = 'http://example.org/gov';
+		const otherGraphs = namespaceGraphs(otherNs);
+		const individualIriValue = `${otherGraphs.instances}#SomeIndividual`;
+		const someClassInOtherNs = `${otherGraphs.schema}#SomeClass`;
+
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchWorkspaceMembers').mockResolvedValue([
+			{ elementIri: classIriValue, x: 0, y: 0 },
+			{ elementIri: individualIriValue, x: 10, y: 10 },
+			{ elementIri: 'urn:stale-deleted-element', x: 0, y: 0 }
+		]);
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [{ iri: classIriValue, label: 'Person', comment: null, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [
+				{ iri: individualIriValue, label: 'SomeIndividual', classIri: someClassInOtherNs, namespaceBaseIri: otherNs }
+			],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		});
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		vi.spyOn(connector, 'fetchExternalVocabularies').mockResolvedValue([]);
+
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query ?? '';
+			if (q.includes(`FROM <${DEFAULT_GRAPHS.instances}>`)) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['s', 'p', 'o'] },
+						results: {
+							bindings: [
+								{
+									s: { type: 'uri', value: classIriValue },
+									p: { type: 'uri', value: RDF.type },
+									o: { type: 'uri', value: OWL.Class }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes(`FROM <${otherGraphs.instances}>`)) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['s', 'p', 'o'] },
+						results: {
+							bindings: [
+								{
+									s: { type: 'uri', value: individualIriValue },
+									p: { type: 'uri', value: RDF.type },
+									o: { type: 'uri', value: someClassInOtherNs }
+								}
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const result = await connector.fetchScopedTurtleForWorkspace(workspaceIri('Project Overview'));
+
+		expect(result.schema).toContain('Person');
+		expect(result.schema).toContain('SomeIndividual');
+	});
+
+	it('fetchScopedTurtleForWorkspace returns empty text for a Workspace with no members', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchWorkspaceMembers').mockResolvedValue([]);
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		});
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		vi.spyOn(connector, 'fetchExternalVocabularies').mockResolvedValue([]);
+		const fetchWholeGraphQuadsSpy = vi.spyOn(connector, 'fetchWholeGraphQuads');
+
+		const result = await connector.fetchScopedTurtleForWorkspace(workspaceIri('Empty Workspace'));
+
+		expect(result).toEqual({ schema: '', shapes: '' });
+		expect(fetchWholeGraphQuadsSpy).not.toHaveBeenCalled();
 	});
 });
 
@@ -4059,5 +5503,217 @@ describe('SparqlConnector — reference-counted deletion for generic relations (
 		expect(updates[0]).toContain(
 			`DELETE WHERE { ${inGraph(`<${usesIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
 		);
+	});
+});
+
+/**
+ * Mocks the fetch calls `ensureDefaultWorkspace`/its backfill (STORY-075) issue: the completion-
+ * marker `ASK`, `ensureWorkspaceClass`/`ensureWorkspaceMembershipClass`'s own-marker `ASK`s, the
+ * Default workspace's own existence `ASK`, `addWorkspaceMember`'s per-element existence `ASK` (always
+ * "new" here — every backfilled element is by definition not yet a member), and the "element already
+ * has a membership row anywhere" enumeration `SELECT`. `fetchFullSchemaForAllNamespaces` itself is
+ * stubbed per-test via `vi.spyOn` (mirroring the `fetchNameableEntities` tests above) rather than
+ * mocked at the fetch layer — reaching it through `fetchNamespaces`+`fetchFullSchema` would need many
+ * more query-shape branches for no extra coverage here.
+ */
+function mockDefaultWorkspaceFetch(
+	fixture: {
+		backfillComplete?: boolean;
+		workspaceClassExists?: boolean;
+		workspaceExists?: boolean;
+		membershipClassExists?: boolean;
+		alreadyMemberElementIris?: string[];
+		/** Throws instead of succeeding on the update whose body contains this substring — simulates a
+		 *  mid-backfill failure (STORY-075's failure-handling AC) at a specific, content-addressed step
+		 *  rather than a brittle call-count index. */
+		throwOnUpdateContaining?: string;
+	} = {}
+) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			if (fixture.throwOnUpdateContaining && (body.update as string).includes(fixture.throwOnUpdateContaining)) {
+				throw new Error('simulated GraphDB failure');
+			}
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (q.includes('ASK')) {
+			if (q.includes(WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.backfillComplete ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes(`<${WORKSPACE_CLASS_IRI}> a owl:Class`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.workspaceClassExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes(`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class`)) {
+				return new Response(
+					JSON.stringify({ head: {}, boolean: fixture.membershipClassExists ?? false }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes(`a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			if (q.includes(`a <${WORKSPACE_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.workspaceExists ?? false }), {
+					status: 200
+				});
+			}
+		}
+		if (
+			q.includes('SELECT ?element') &&
+			q.includes(WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI) &&
+			!q.includes(WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI)
+		) {
+			const iris = fixture.alreadyMemberElementIris ?? [];
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['element'] },
+					results: { bindings: iris.map((iri) => ({ element: { type: 'uri', value: iri } })) }
+				}),
+				{ status: 200 }
+			);
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn, updates };
+}
+
+function emptySchemaFixture() {
+	return {
+		classes: [],
+		datatypeProperties: [],
+		objectProperties: [],
+		subClassOf: [],
+		individuals: [],
+		individualClassRelations: [],
+		individualIndividualRelations: []
+	};
+}
+
+describe('SparqlConnector — default Workspace migration and backfill (STORY-075)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const defaultWsIri = workspaceIri('Default');
+	const classA = classIri('ClassA');
+	const classB = classIri('ClassB');
+	const individualI = individualIri(classA, 'InstanceI');
+
+	it('creates exactly one Default workspace the first time it runs against a repository with none', async () => {
+		const { fn, updates } = mockDefaultWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue(emptySchemaFixture());
+
+		const iri = await connector.ensureDefaultWorkspace();
+
+		expect(iri).toBe(defaultWsIri);
+		expect(updates.some((u) => u.includes(`<${defaultWsIri}> a <${WORKSPACE_CLASS_IRI}>`) && u.includes('rdfs:label "Default"'))).toBe(true);
+		expect(
+			updates.some((u) => u.includes(`<${defaultWsIri}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true`))
+		).toBe(true);
+	});
+
+	it('is idempotent: a second run against an already-migrated repository issues only the marker ASK', async () => {
+		const { fn, updates } = mockDefaultWorkspaceFetch({ backfillComplete: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schemaSpy = vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue(emptySchemaFixture());
+
+		const iri = await connector.ensureDefaultWorkspace();
+
+		expect(iri).toBe(defaultWsIri);
+		expect(fn).toHaveBeenCalledTimes(1); // only the completion-marker ASK
+		expect(updates).toHaveLength(0);
+		expect(schemaSpy).not.toHaveBeenCalled(); // the expensive enumeration is skipped entirely
+	});
+
+	it('concurrent calls converge on the same Default workspace IRI with identical declaration/marker triples', async () => {
+		const { fn, updates } = mockDefaultWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue(emptySchemaFixture());
+
+		const [iri1, iri2] = await Promise.all([connector.ensureDefaultWorkspace(), connector.ensureDefaultWorkspace()]);
+
+		expect(iri1).toBe(defaultWsIri);
+		expect(iri2).toBe(defaultWsIri);
+
+		const declarationInserts = updates.filter((u) => u.includes(`<${defaultWsIri}> a <${WORKSPACE_CLASS_IRI}>`));
+		expect(declarationInserts.length).toBeGreaterThan(0);
+		expect(new Set(declarationInserts).size).toBe(1); // every racing insert wrote the identical triple
+
+		const markerInserts = updates.filter((u) =>
+			u.includes(`<${defaultWsIri}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true`)
+		);
+		expect(new Set(markerInserts).size).toBe(1);
+	});
+
+	it('backfills only elements with no WorkspaceMembership row anywhere yet, at auto-grid positions', async () => {
+		const { fn, updates } = mockDefaultWorkspaceFetch({ alreadyMemberElementIris: [classA] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			...emptySchemaFixture(),
+			classes: [
+				{ iri: classA, label: 'ClassA', comment: null, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI },
+				{ iri: classB, label: 'ClassB', comment: null, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+			],
+			individuals: [
+				{ iri: individualI, label: 'InstanceI', classIri: classA, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+			]
+		});
+
+		await connector.ensureDefaultWorkspace();
+
+		// classA already had a membership row (in some Workspace) — not re-added.
+		expect(updates.some((u) => u.includes(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${classA}>`))).toBe(
+			false
+		);
+
+		const classBInsert = updates.find((u) => u.includes(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${classB}>`));
+		const individualIInsert = updates.find((u) =>
+			u.includes(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${individualI}>`)
+		);
+		expect(classBInsert).toBeDefined();
+		expect(individualIInsert).toBeDefined();
+
+		// gridPosition(0) = {x:0,y:0}, gridPosition(1) = {x:260,y:0} — classB backfilled before individualI.
+		expect(classBInsert).toContain(`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "0"^^xsd:decimal`);
+		expect(classBInsert).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "0"^^xsd:decimal`);
+		expect(individualIInsert).toContain(`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "260"^^xsd:decimal`);
+		expect(individualIInsert).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "0"^^xsd:decimal`);
+	});
+
+	it('leaves no completion marker behind if the backfill throws partway (e.g. mid-element-insert), so the next call retries from scratch', async () => {
+		// Throws specifically on the membership-triple insert for classA — a mid-backfill failure,
+		// not merely a failure during the earlier Workspace-declaration step.
+		const { fn, updates } = mockDefaultWorkspaceFetch({
+			throwOnUpdateContaining: `<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${classA}>`
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			...emptySchemaFixture(),
+			classes: [{ iri: classA, label: 'ClassA', comment: null, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }]
+		});
+
+		await expect(connector.ensureDefaultWorkspace()).rejects.toThrow('simulated GraphDB failure');
+
+		// The Workspace itself was created (visible on retry as an idempotent no-op), but backfill
+		// never reached the completion marker.
+		expect(updates.some((u) => u.includes(`<${defaultWsIri}> a <${WORKSPACE_CLASS_IRI}>`))).toBe(true);
+		expect(updates.some((u) => u.includes(WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI))).toBe(false);
 	});
 });

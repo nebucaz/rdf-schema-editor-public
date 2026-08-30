@@ -12,6 +12,27 @@ import {
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
+	WORKSPACE_CLASS_IRI,
+	WORKSPACE_MEMBERSHIP_CLASS_IRI,
+	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI,
+	WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI,
+	WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI,
+	WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI,
+	workspaceIri,
+	workspaceMembershipIri,
+	SAVED_QUERY_CLASS_IRI,
+	SAVED_QUERY_TEXT_PREDICATE_IRI,
+	savedQueryIri,
+	NOTE_CLASS_IRI,
+	NOTE_WORKSPACE_PREDICATE_IRI,
+	NOTE_TEXT_PREDICATE_IRI,
+	NOTE_COLOR_PREDICATE_IRI,
+	NOTE_X_PREDICATE_IRI,
+	NOTE_Y_PREDICATE_IRI,
+	NOTE_LINKED_ELEMENT_PREDICATE_IRI,
+	noteIri,
 	EXTERNAL_VOCABULARY_CLASS_IRI,
 	EXTERNAL_PREFIXES,
 	catalogIri,
@@ -20,6 +41,7 @@ import {
 	splitDatasetIri,
 	splitDistributionIri,
 	publicationActivityIri,
+	statementIri,
 	kebabCase,
 	type XsdDatatype
 } from '$lib/utils/iri';
@@ -42,6 +64,8 @@ import {
 	quadKey,
 	isRdfType,
 	selectCatalogScope,
+	classIncomingRelationTargets,
+	filterIncomingRelationQuads,
 	RDF,
 	OWL,
 	RDFS,
@@ -59,6 +83,7 @@ import {
 	checkCatalogStructural,
 	SchemaValidationError
 } from './validation';
+import { gridPosition } from '$lib/stores/layout-store';
 
 export interface SparqlBinding {
 	[key: string]: {
@@ -213,6 +238,25 @@ export interface FetchedIndividualClassRelation {
 	namespaceBaseIri: string;
 }
 
+/** A generalized individual→individual relation (data-catalog Story 019, canvas support added by
+ *  relation-assertions Sprint 3 Story 007) — any predicate connecting one individual to another,
+ *  written as a plain triple into the source individual's own `graphs.instances` (via
+ *  `insertAssertion` or `insertIndividualClassRelation`, both of which write an identical triple
+ *  shape regardless of the object's kind). Read-side counterpart of
+ *  `FetchedIndividualClassRelation`, narrowed to individual-typed objects instead of class-typed
+ *  ones — kept as its own fetch/type rather than widening that one, so `buildCanvasModel` can tell
+ *  the two apart without re-deriving object-kind from IRI shape. */
+export interface FetchedIndividualIndividualRelation {
+	individualIri: string;
+	predicateIri: string;
+	/** Display name — the predicate's real `rdfs:label`, falling back to its local name only if
+	 *  somehow undeclared. */
+	name: string;
+	targetIndividualIri: string;
+	/** See `FetchedClass.namespaceBaseIri` (STORY-033) — the source individual's own namespace. */
+	namespaceBaseIri: string;
+}
+
 /** A generic `<predicate, object>` assertion on an individual (data-catalog Story 019) — the
  *  editor's own CRUD read shape, unfiltered by target type (unlike `FetchedIndividualClassRelation`,
  *  which only keeps class-typed objects). */
@@ -225,8 +269,11 @@ export interface FetchedAssertion {
 }
 
 /** What kind of thing a `NameableEntity` resolves to — shown alongside its label in the Story 019
- *  object typeahead so same-named entities of different kinds stay distinguishable. */
-export type NameableEntityKind = 'class' | 'attribute' | 'relation' | 'individual';
+ *  object typeahead so same-named entities of different kinds stay distinguishable.
+ *  `'relationInstance'` (relation-assertions Story 011) is a reified `rdf:Statement` — a single
+ *  relation-edge instance someone has already annotated (Story 009/010), pickable as the object of
+ *  another assertion (e.g. `core:itam gov:isMasterFor core:linkabc124`). */
+export type NameableEntityKind = 'class' | 'attribute' | 'relation' | 'individual' | 'relationInstance';
 
 /** Anything nameable the Story 019 assertion editor's object typeahead can resolve by label — a
  *  class, an attribute, a relation, or an individual. */
@@ -243,6 +290,7 @@ export interface FetchedSchema {
 	subClassOf: FetchedSubClassOf[];
 	individuals: FetchedIndividual[];
 	individualClassRelations: FetchedIndividualClassRelation[];
+	individualIndividualRelations: FetchedIndividualIndividualRelation[];
 }
 
 // -- Namespace management (STORY-027) -----------------------------------------------------------
@@ -261,6 +309,41 @@ export interface FetchedNamespace {
 	/** Optional default `dct:license` (data-catalog Story 011) — a well-formed IRI, same pre-fill
 	 *  semantics as `publisher`. */
 	license: string | null;
+}
+
+// -- Workspace management (STORY-071/072/073) ----------------------------------------------------
+
+/** A registered Workspace (STORY-072): `{iri, label, defaultNamespaceBaseIri}`, read from the
+ *  default namespace's `/schema` graph regardless of its own `defaultNamespaceBaseIri` value
+ *  (research Decision 4 — that field is a UI pre-fill convenience, not a storage-location signal). */
+export interface FetchedWorkspace {
+	iri: string;
+	label: string;
+	/** Optional UI convenience: pre-fills the namespace for new items created while this Workspace
+	 *  is active. `null` when unset. */
+	defaultNamespaceBaseIri: string | null;
+}
+
+/** A registered SavedQuery (STORY-087): `{iri, label, sparqlText, description}`, read from the
+ *  default namespace's `/schema` graph regardless of which namespace is currently active
+ *  (research Decision 4). */
+export interface FetchedSavedQuery {
+	iri: string;
+	label: string;
+	sparqlText: string;
+	description: string;
+}
+
+/** A Workspace Note (STORY-083): `{iri, text, color, x, y, linkedElementIri}`, read from the
+ *  default namespace's `/schema` graph regardless of which namespace the linked element (if any)
+ *  belongs to (research Decision 4). */
+export interface FetchedNote {
+	iri: string;
+	text: string;
+	color: string;
+	x: number;
+	y: number;
+	linkedElementIri: string | null;
 }
 
 /** A registered external vocabulary (STORY-046): `{prefix, baseIri}`, merged by
@@ -308,6 +391,26 @@ function withGraph(graph: string): string {
  *  those update forms have no `WITH`/`USING` graph selection, so the graph must be named inline. */
 function inGraph(triples: string, graph: string): string {
 	return `GRAPH <${graph}> { ${triples} }`;
+}
+
+/**
+ * Drops exact-duplicate quads from a single round-trip's `selectScope` results (STORY-082) — e.g. a
+ * Workspace containing both a class and one of its own individuals as separate members would
+ * otherwise select that individual's triples twice (once directly, once via the class's own scope
+ * already including its individuals, `turtle.ts`'s `selectScope` doc comment). Object literals are
+ * compared by termType/value, plus datatype+language for literals — safe only within one round-trip's
+ * quads, where blank node value strings are guaranteed stable.
+ */
+function dedupeQuads(quads: Quad[]): Quad[] {
+	const seen = new Set<string>();
+	return quads.filter((q) => {
+		const objectKey =
+			q.object.termType === 'Literal' ? `${q.object.value}|${q.object.datatype.value}|${q.object.language}` : q.object.value;
+		const key = `${q.subject.termType}:${q.subject.value}|${q.predicate.value}|${q.object.termType}:${objectKey}`;
+		if (seen.has(key)) return false;
+		seen.add(key);
+		return true;
+	});
 }
 
 /** Standard vocabulary namespaces (RDF/RDFS/OWL/XSD/SHACL) whose terms are axioms of the
@@ -577,6 +680,71 @@ export class SparqlConnector {
 	}
 
 	/**
+	 * Referential-cleanup clause (STORY-081) for a deleted class: matches every `WorkspaceMembership`
+	 * row referencing either the class itself or any of its own individuals (which `deleteClass`'s
+	 * own `?individual a <iri>` cascade is about to remove too), across every Workspace, and deletes
+	 * it — otherwise a deleted class silently leaves orphaned membership rows (and stray positions)
+	 * behind (research §8, the plan's risk assessment). `?el` is bound via a `BIND`/`UNION` (the class
+	 * itself, or one of its individuals found in `instancesGraph`) so this stays one `DELETE {} WHERE
+	 * {}` operation rather than N per-individual round-trips. Always targets the *default* namespace's
+	 * `/schema` graph (Decision 4), regardless of `iri`'s own namespace — `WorkspaceMembership` rows
+	 * never live anywhere else. Must run *before* the class/individual triples themselves are deleted
+	 * in the same `;`-joined update, since its `WHERE` depends on `<iri> a owl:Class`/`?el a <iri>`
+	 * still being present.
+	 */
+	private cascadeDeleteWorkspaceMembershipsForClassClause(classIri: string, instancesGraph: string): string {
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		return `
+			DELETE { ${inGraph('?m ?p ?o .', defaultGraphs.schema)} }
+			WHERE {
+				{ BIND(<${classIri}> AS ?el) }
+				UNION
+				{ ${inGraph(`?el a <${classIri}> .`, instancesGraph)} }
+				${inGraph(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?el ; ?p ?o .`, defaultGraphs.schema)}
+			}
+		`;
+	}
+
+	/** Referential-cleanup clause (STORY-081) for a single deleted element (an individual, or any
+	 *  other one-IRI deletion) — every `WorkspaceMembership` row referencing `elementIri`, across
+	 *  every Workspace. Mirrors `deleteWorkspace`'s own membership-cleanup `DELETE WHERE` shape. */
+	private cascadeDeleteWorkspaceMembershipsClause(elementIri: string): string {
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		return `DELETE WHERE { ${inGraph(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> ; ?p ?o .`, defaultGraphs.schema)} }`;
+	}
+
+	/**
+	 * Referential-cleanup clause (STORY-083) for a deleted class: **unlinks, not deletes** — every
+	 * Note's `noteLinkedElement` pointing at the class itself or any of its own individuals is
+	 * removed, but the Note's text/color/position (and the Note itself) survive, becoming an
+	 * unlinked sticky note rather than silently vanishing along with the element it was annotating.
+	 * Mirrors `cascadeDeleteWorkspaceMembershipsForClassClause`'s `BIND`/`UNION`-bound `?el` shape
+	 * exactly. Always targets the default namespace's `/schema` graph (Decision 4). Must run before
+	 * the class/individual triples themselves are deleted, since its `WHERE` depends on
+	 * `<iri> a owl:Class`/`?el a <iri>` still being present.
+	 */
+	private cascadeUnlinkNotesForClassClause(classIri: string, instancesGraph: string): string {
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		return `
+			DELETE { ${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el .`, defaultGraphs.schema)} }
+			WHERE {
+				{ BIND(<${classIri}> AS ?el) }
+				UNION
+				{ ${inGraph(`?el a <${classIri}> .`, instancesGraph)} }
+				${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el .`, defaultGraphs.schema)}
+			}
+		`;
+	}
+
+	/** Referential-cleanup clause (STORY-083) for a single deleted element (an individual, or any
+	 *  other one-IRI deletion) — **unlinks, not deletes** — every Note's `noteLinkedElement` pointing
+	 *  at `elementIri`. Mirrors `cascadeDeleteWorkspaceMembershipsClause`'s shape. */
+	private cascadeUnlinkNotesClause(elementIri: string): string {
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		return `DELETE WHERE { ${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${elementIri}> .`, defaultGraphs.schema)} }`;
+	}
+
+	/**
 	 * Deletes a class: its own `owl:Class`/`rdfs:label`/`rdfs:comment` triples, its own attributes
 	 * (cascade, via `deleteDatatypeProperty`), and its `sh:NodeShape`. Deletion is refused (without
 	 * writing anything) when another class's property has `rdfs:range` pointing at this class, or
@@ -610,6 +778,8 @@ export class SparqlConnector {
 		const shapeIri = nodeShapeIri(iri, graphs.shapes);
 		await this.executeUpdate(`
 			${PREFIXES}
+			${this.cascadeDeleteWorkspaceMembershipsForClassClause(iri, graphs.instances)} ;
+			${this.cascadeUnlinkNotesForClassClause(iri, graphs.instances)} ;
 			DELETE WHERE { ${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape ?p ?o .`, graphs.shapes)} } ;
 			DELETE WHERE { ${inGraph(`<${shapeIri}> ?p ?o .`, graphs.shapes)} } ;
 			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.schema)} } ;
@@ -672,11 +842,18 @@ export class SparqlConnector {
 		`);
 	}
 
-	/** Removes the member entirely: its `rdf:type` and `rdfs:label` triples. */
+	/** Removes the member entirely: its `rdf:type` and `rdfs:label` triples, plus (STORY-081) every
+	 *  `WorkspaceMembership` row referencing it, across every Workspace, plus (STORY-083) unlinking
+	 *  (not deleting) any Note whose `noteLinkedElement` pointed at it. */
 	async deleteIndividual(iri: string, namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<void> {
 		this.assertSafeSparqlIri(iri, 'individual IRI');
 		const graphs = namespaceGraphs(namespaceBaseIri);
-		await this.executeUpdate(`${PREFIXES} DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.instances)} }`);
+		await this.executeUpdate(`
+			${PREFIXES}
+			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.instances)} } ;
+			${this.cascadeDeleteWorkspaceMembershipsClause(iri)} ;
+			${this.cascadeUnlinkNotesClause(iri)}
+		`);
 	}
 
 	/** Every member of `classIriValue` — structurally a smaller sibling of `fetchAllClasses`. */
@@ -1720,6 +1897,144 @@ export class SparqlConnector {
 		);
 	}
 
+	/**
+	 * Renames and/or retargets an existing individual→class or individual→individual relation in
+	 * place (the unified relation-edit modal's "change the relation" fields, mirroring
+	 * `updateObjectProperty`'s same-source-different-name/target shape for schema relations).
+	 * Resolves `newRelationName` to a predicate IRI exactly like `insertIndividualClassRelation`,
+	 * then swaps the ground triple from `<subjectIri> <oldPredicateIri> <oldObjectIri>` to
+	 * `<subjectIri> <newPredicateIri> <newObjectIri>` in one update. If that triple was already
+	 * reified (`ensureReifiedStatement`), the same update rewrites the existing `rdf:Statement`'s own
+	 * `rdf:predicate`/`rdf:object` in place instead of leaving it dangling — this is what lets
+	 * assertions already authored against the relation survive a rename/retarget. The `OPTIONAL`
+	 * around the statement pattern means the rewrite is a no-op when nothing reifies the old triple
+	 * yet (unbound `?stmt` triples are simply omitted from the DELETE/INSERT templates, standard
+	 * SPARQL Update behavior).
+	 */
+	async updateIndividualRelation(
+		subjectIri: string,
+		oldPredicateIri: string,
+		oldObjectIri: string,
+		newRelationName: string,
+		newObjectIri: string
+	): Promise<{ predicateIri: string }> {
+		if (!newRelationName.trim()) throw new Error('Relation name must not be empty');
+		this.assertSafeSparqlIri(subjectIri, 'subject IRI');
+		this.assertSafeSparqlIri(oldPredicateIri, 'old predicate IRI');
+		this.assertSafeSparqlIri(oldObjectIri, 'old object IRI');
+		this.assertSafeSparqlIri(newObjectIri, 'new object IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(subjectIri);
+		const newPredicateIri = await this.resolveOrMintPredicate(newRelationName, namespaceBaseIri);
+		this.assertSafeSparqlIri(newPredicateIri, 'relation predicate IRI');
+		if (newPredicateIri === oldPredicateIri && newObjectIri === oldObjectIri) {
+			return { predicateIri: newPredicateIri };
+		}
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.instances)}
+			DELETE {
+				<${subjectIri}> <${oldPredicateIri}> <${oldObjectIri}> .
+				?stmt rdf:predicate <${oldPredicateIri}> ; rdf:object <${oldObjectIri}> .
+			}
+			INSERT {
+				<${subjectIri}> <${newPredicateIri}> <${newObjectIri}> .
+				?stmt rdf:predicate <${newPredicateIri}> ; rdf:object <${newObjectIri}> .
+			}
+			WHERE {
+				<${subjectIri}> <${oldPredicateIri}> <${oldObjectIri}> .
+				OPTIONAL {
+					?stmt rdf:subject <${subjectIri}> ; rdf:predicate <${oldPredicateIri}> ; rdf:object <${oldObjectIri}> .
+				}
+			}
+		`);
+		return { predicateIri: newPredicateIri };
+	}
+
+	// -- Relation-level assertions / reification (relation-assertions Sprint 4) -----------------
+	// Attaching a fact to one *specific* relation-edge instance, per the seed doc's own proposed
+	// shape: `<stmt> a rdf:Statement ; rdf:subject <s> ; rdf:predicate <p> ; rdf:object <o>`.
+	// Reification is lazy — minted on first assertion against an edge (`ensureReifiedStatement`),
+	// never up front for every relation — and lives in the same `graphs.instances` the base ground
+	// triple already occupies, found via `findNamespaceOfIndividual` like every other assertion
+	// method above.
+
+	/** Looks up the existing `rdf:Statement` reifying `<subjectIri> <predicateIri> <objectIri>`, if
+	 *  any (Story 008) — scoped to `namespaceBaseIri`'s own `graphs.instances`, matching where
+	 *  `ensureReifiedStatement` writes it. Returns `undefined` when the triple isn't reified yet. */
+	async fetchStatementIriForTriple(
+		subjectIri: string,
+		predicateIri: string,
+		objectIri: string,
+		namespaceBaseIri: string
+	): Promise<string | undefined> {
+		this.assertSafeSparqlIri(subjectIri, 'subject IRI');
+		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
+		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?stmt WHERE {
+				GRAPH <${graphs.instances}> {
+					?stmt rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${objectIri}> .
+				}
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.stmt?.value;
+	}
+
+	/**
+	 * Ensures `<subjectIri> <predicateIri> <objectIri>` (a relation edge's own ground triple, already
+	 * written by `insertIndividualClassRelation`/`insertAssertion`) is reified, and returns its
+	 * statement IRI (Story 009) — reuses an existing reification (Story 008's
+	 * `fetchStatementIriForTriple`) if one already exists, otherwise mints one (`statementIri`) and
+	 * writes the four reification quads into the subject's own namespace's `graphs.instances`. Purely
+	 * additive metadata: never invents the ground triple itself, which the caller must already have
+	 * asserted.
+	 */
+	async ensureReifiedStatement(subjectIri: string, predicateIri: string, objectIri: string): Promise<string> {
+		this.assertSafeSparqlIri(subjectIri, 'subject IRI');
+		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
+		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(subjectIri);
+		const existing = await this.fetchStatementIriForTriple(subjectIri, predicateIri, objectIri, namespaceBaseIri);
+		if (existing) return existing;
+		const timestamp = new Date().toISOString().replace(/[^0-9]/g, '');
+		const stmt = statementIri(namespaceBaseIri, timestamp);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${stmt}> a rdf:Statement ; rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${objectIri}> .`,
+				graphs.instances
+			)} }`
+		);
+		return stmt;
+	}
+
+	/**
+	 * Every reified `rdf:Statement` across every namespace, labeled from its own subject/predicate/
+	 * object (relation-assertions Story 011) — the object typeahead's "Relation instance" kind
+	 * (`fetchNameableEntities` below). An unrestricted cross-graph `GRAPH ?g {...}` lookup, mirroring
+	 * `fetchMasterSystemsOfClass`'s own pattern, since a reified statement can live in any namespace's
+	 * `graphs.instances`. Per the lazy-reification design, this only ever lists relations someone has
+	 * already annotated via `ensureReifiedStatement` — a relation with no assertions yet has no
+	 * statement IRI to list, which is the accepted tradeoff of minting lazily.
+	 */
+	async fetchAllReifiedStatements(): Promise<NameableEntity[]> {
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?stmt ?s ?slabel ?p ?plabel ?o ?olabel WHERE {
+				GRAPH ?g { ?stmt a rdf:Statement ; rdf:subject ?s ; rdf:predicate ?p ; rdf:object ?o }
+				OPTIONAL { GRAPH ?sg { ?s rdfs:label ?slabel } }
+				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+				OPTIONAL { GRAPH ?og { ?o rdfs:label ?olabel } }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.stmt.value,
+			label: `${b.slabel?.value ?? extractLocalName(b.s.value)} ${b.plabel?.value ?? extractLocalName(b.p.value)} ${b.olabel?.value ?? extractLocalName(b.o.value)}`,
+			kind: 'relationInstance' as const
+		}));
+	}
+
 	/** Every generalized individual→class relation whose source individual lives in
 	 *  `namespaceBaseIri`, across any predicate except `rdf:type`/`rdfs:label`. An object is only
 	 *  kept when it's itself declared `a owl:Class` somewhere in the repo — an unrestricted
@@ -1746,6 +2061,38 @@ export class SparqlConnector {
 			predicateIri: b.p.value,
 			name: b.plabel?.value ?? extractLocalName(b.p.value),
 			classIri: b.class.value,
+			namespaceBaseIri
+		}));
+	}
+
+	/** Every generalized individual→individual relation whose source individual lives in
+	 *  `namespaceBaseIri` (relation-assertions Sprint 3 Story 007) — the individual-typed-object
+	 *  counterpart of `fetchAllIndividualClassRelations`. An object is only kept when it "looks like
+	 *  an individual" (mirrors `looksLikeIndividual`/`META_TYPES`: it carries an `rdf:type` triple
+	 *  whose object isn't `owl:Class`/`owl:DatatypeProperty`/`owl:ObjectProperty`/`sh:NodeShape`),
+	 *  found via the same unrestricted cross-graph `GRAPH ?og {...}` lookup
+	 *  `fetchAllIndividualClassRelations` uses for its class check, so a cross-namespace individual
+	 *  target is found regardless of which namespace declares it. `SELECT DISTINCT` guards against
+	 *  row duplication when the object carries more than one non-meta `rdf:type` (e.g. an inferred
+	 *  ancestor class), since `?otype` itself isn't projected. */
+	async fetchAllIndividualIndividualRelations(
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<FetchedIndividualIndividualRelation[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT DISTINCT ?s ?p ?plabel ?o WHERE {
+				GRAPH <${graphs.instances}> { ?s ?p ?o }
+				GRAPH ?og { ?o a ?otype }
+				FILTER(?p != rdf:type && ?p != rdfs:label)
+				FILTER(?otype NOT IN (owl:Class, owl:DatatypeProperty, owl:ObjectProperty, sh:NodeShape))
+				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			individualIri: b.s.value,
+			predicateIri: b.p.value,
+			name: b.plabel?.value ?? extractLocalName(b.p.value),
+			targetIndividualIri: b.o.value,
 			namespaceBaseIri
 		}));
 	}
@@ -1799,6 +2146,14 @@ export class SparqlConnector {
 	 * existing call site). Predicate/object labels are resolved via an unrestricted cross-graph
 	 * `GRAPH ?g` lookup, mirroring `fetchAllIndividualClassRelations`'s own pattern, falling back to
 	 * the IRI's local name only when nothing declares an `rdfs:label`.
+	 *
+	 * Also excludes `rdf:subject`/`rdf:predicate`/`rdf:object` (relation-assertions Story 010) — this
+	 * method is reused unchanged as the pencil-on-edge relation-assertion form's own CRUD list, scoped
+	 * to a reified statement IRI instead of a plain individual IRI. Without this exclusion, a reified
+	 * statement's own `rdf:subject`/`rdf:predicate`/`rdf:object` triples would show up as if they were
+	 * user-added assertions — deletable through the same "×" button as a real fact, which would corrupt
+	 * the reification itself. Harmless no-op for a plain individual, which never carries these
+	 * predicates.
 	 */
 	async fetchAssertionsForIndividual(individualIri: string): Promise<FetchedAssertion[]> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
@@ -1807,7 +2162,7 @@ export class SparqlConnector {
 		const results = await this.selectQuery(`
 			${PREFIXES} SELECT ?p ?plabel ?o ?olabel WHERE {
 				GRAPH <${graphs.instances}> { <${individualIri}> ?p ?o }
-				FILTER(?p != rdf:type && ?p != rdfs:label)
+				FILTER(?p != rdf:type && ?p != rdfs:label && ?p != rdf:subject && ?p != rdf:predicate && ?p != rdf:object)
 				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
 				OPTIONAL { GRAPH ?og { ?o rdfs:label ?olabel } }
 			}
@@ -1835,7 +2190,10 @@ export class SparqlConnector {
 	 * bare label alone can't disambiguate them in this flattened, cross-class typeahead list.
 	 */
 	async fetchNameableEntities(): Promise<NameableEntity[]> {
-		const schema = await this.fetchFullSchemaForAllNamespaces();
+		const [schema, relationInstances] = await Promise.all([
+			this.fetchFullSchemaForAllNamespaces(),
+			this.fetchAllReifiedStatements()
+		]);
 		const classLabelByIri = new Map(schema.classes.map((c) => [c.iri, c.label]));
 		const all = [
 			...schema.classes.map((c) => ({ iri: c.iri, label: c.label, kind: 'class' as const })),
@@ -1845,10 +2203,23 @@ export class SparqlConnector {
 				kind: 'attribute' as const
 			})),
 			...schema.objectProperties.map((p) => ({ iri: p.iri, label: p.label, kind: 'relation' as const })),
-			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const }))
+			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const })),
+			...relationInstances
 		];
 		const byIri = new Map(all.map((e) => [e.iri, e]));
 		return [...byIri.values()];
+	}
+
+	/**
+	 * STORY-080's "Add Element" typeahead data source: `fetchNameableEntities()` narrowed to
+	 * `kind ∈ {'class', 'individual'}` — only these are independently addable Workspace members
+	 * (research §8). Attributes/relations/relation-instances aren't standalone canvas nodes; external
+	 * vocabulary stubs have no `WorkspaceMembership` of their own (`visibility.ts`'s
+	 * `isExternalNodeHidden` doc comment).
+	 */
+	async fetchAddableWorkspaceElements(): Promise<NameableEntity[]> {
+		const entities = await this.fetchNameableEntities();
+		return entities.filter((e) => e.kind === 'class' || e.kind === 'individual');
 	}
 
 	/**
@@ -2577,8 +2948,33 @@ export class SparqlConnector {
 		}
 
 		if (entryCount > 0) {
+			// STORY-081: cleans up every WorkspaceMembership row referencing a class or individual the
+			// DROP GRAPHs below are about to remove — joined into the same update, ahead of them, since
+			// it depends on the classes/individuals still existing to match against.
+			const workspaceCleanup = `
+				DELETE { ${inGraph('?m ?p ?o .', defaultGraphs.schema)} }
+				WHERE {
+					{ ${inGraph('?el a owl:Class .', graphs.schema)} }
+					UNION
+					{ ${inGraph('?el ?p2 ?o2 .', graphs.instances)} }
+					${inGraph(`?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?el ; ?p ?o .`, defaultGraphs.schema)}
+				}
+			`;
+			// STORY-083: parallel cleanup, but an *unlink* (not a delete) — every Note's
+			// `noteLinkedElement` pointing at a class/individual this namespace's DROP GRAPHs are about
+			// to remove is cleared, leaving the Note itself (and its text/color/position) untouched.
+			const noteUnlinkCleanup = `
+					DELETE { ${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el .`, defaultGraphs.schema)} }
+					WHERE {
+						{ ${inGraph('?el a owl:Class .', graphs.schema)} }
+						UNION
+						{ ${inGraph('?el ?p2 ?o2 .', graphs.instances)} }
+						${inGraph(`?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?el .`, defaultGraphs.schema)}
+					}
+				`;
 			await this.executeUpdate(
-				[graphs.instances, graphs.schema, graphs.shapes].map((g) => `DROP GRAPH <${g}>`).join(' ; ')
+				`${PREFIXES} ${workspaceCleanup} ; ${noteUnlinkCleanup} ; ` +
+					[graphs.instances, graphs.schema, graphs.shapes].map((g) => `DROP GRAPH <${g}>`).join(' ; ')
 			);
 		}
 
@@ -2586,6 +2982,559 @@ export class SparqlConnector {
 			`${PREFIXES} DELETE WHERE { ${inGraph(`<${baseIri}> ?p ?o .`, defaultGraphs.schema)} }`
 		);
 		return { deleted: true, entryCount: 0 };
+	}
+
+	// -- Workspace management (STORY-072) -------------------------------------------------------
+
+	/** Idempotently ensures `<WORKSPACE_CLASS_IRI> a owl:Class` exists — mirrors
+	 *  `ensureNamespaceClass()`'s `ASK`-then-`INSERT DATA` shape. Always lives in the default
+	 *  namespace's `/schema` graph, alongside `Namespace`/`AttributedRelationship`. */
+	async ensureWorkspaceClass(): Promise<void> {
+		const exists = await this.classExists(WORKSPACE_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI);
+		if (exists) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${WORKSPACE_CLASS_IRI}> a owl:Class ; rdfs:label "Workspace" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Every registered Workspace, read from the default namespace's `/schema` graph regardless of
+	 *  any other namespace's graphs or a Workspace's own `defaultNamespace` value. */
+	async fetchWorkspaces(): Promise<FetchedWorkspace[]> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?ws ?label ?defaultNs ${fromClause(graphs.schema)} WHERE {
+				?ws a <${WORKSPACE_CLASS_IRI}> .
+				OPTIONAL { ?ws rdfs:label ?label }
+				OPTIONAL { ?ws <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> ?defaultNs }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.ws.value,
+			label: b.label?.value ?? '',
+			defaultNamespaceBaseIri: b.defaultNs?.value ?? null
+		}));
+	}
+
+	/**
+	 * Registers a Workspace: `<workspaceIri(name)> a <WORKSPACE_CLASS_IRI> ; rdfs:label "<name>"
+	 * [; <WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI> <defaultNamespaceBaseIri>]`, always in the
+	 * default namespace's `/schema` graph (Decision 4) regardless of `defaultNamespaceBaseIri`.
+	 * Returns the minted IRI.
+	 */
+	async insertWorkspace(name: string, defaultNamespaceBaseIri?: string): Promise<string> {
+		if (!name.trim()) throw new Error('Workspace name must not be empty');
+		await this.ensureWorkspaceClass();
+
+		const iri = workspaceIri(name);
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${WORKSPACE_CLASS_IRI}> }`
+		);
+		if (exists) {
+			throw new Error(`A workspace named "${name}" already exists (${iri})`);
+		}
+
+		const escapedLabel = this.escapeString(name.trim());
+		const trimmedDefaultNs = defaultNamespaceBaseIri?.trim();
+		if (trimmedDefaultNs) this.assertSafeSparqlIri(trimmedDefaultNs, 'default namespace base IRI');
+		const defaultNsTriple = trimmedDefaultNs
+			? ` ; <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${trimmedDefaultNs}>`
+			: '';
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${WORKSPACE_CLASS_IRI}> ; rdfs:label "${escapedLabel}"${defaultNsTriple} .`,
+				graphs.schema
+			)} }`
+		);
+		return iri;
+	}
+
+	/** Updates only `rdfs:label` — the workspace's own IRI never changes, mirroring `renameClass`/
+	 *  `renameNamespace`-shaped methods (CLAUDE.md's IRI convention). */
+	async renameWorkspace(workspaceIriValue: string, newName: string): Promise<void> {
+		if (!newName.trim()) throw new Error('Workspace name must not be empty');
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const escaped = this.escapeString(newName);
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${workspaceIriValue}> rdfs:label ?old }
+			INSERT { <${workspaceIriValue}> rdfs:label "${escaped}" }
+			WHERE { OPTIONAL { <${workspaceIriValue}> rdfs:label ?old } }
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a Workspace's optional default namespace —
+	 *  a UI pre-fill convenience only (Decision 4), mirrors `updateNamespaceColor`. */
+	async updateWorkspaceDefaultNamespace(
+		workspaceIriValue: string,
+		namespaceBaseIri: string | null
+	): Promise<void> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const trimmed = namespaceBaseIri?.trim();
+
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${workspaceIriValue}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		this.assertSafeSparqlIri(trimmed, 'default namespace base IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${workspaceIriValue}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> ?old }
+			INSERT { <${workspaceIriValue}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${trimmed}> }
+			WHERE { OPTIONAL { <${workspaceIriValue}> <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/**
+	 * Deletes a Workspace: its own triples, every `WorkspaceMembership` row referencing it
+	 * (`?m <WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI> <workspaceIri>`), and (STORY-083) every
+	 * Note belonging to it (`?n <NOTE_WORKSPACE_PREDICATE_IRI> <workspaceIri>`) — unlike an element
+	 * (which merely loses one membership row and lives on elsewhere), a Note has nowhere else to
+	 * exist once its owning Workspace is gone, so it's deleted outright, not just unlinked. No
+	 * `{force?}` flag needed, unlike `deleteNamespace`/`deleteClass`, since nothing else references a
+	 * Workspace transitively; deleting it only ever orphans its own membership rows and Notes,
+	 * cleaned up here. The "block deleting the last remaining Workspace" rule is a caller-side check
+	 * (STORY-079's management UI), not enforced by this method.
+	 */
+	async deleteWorkspace(workspaceIriValue: string): Promise<void> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			DELETE WHERE { ${inGraph(`?m <${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> . ?m ?p ?o .`, graphs.schema)} } ;
+			DELETE WHERE { ${inGraph(`?n <${NOTE_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> . ?n ?p ?o .`, graphs.schema)} } ;
+			DELETE WHERE { ${inGraph(`<${workspaceIriValue}> ?p ?o .`, graphs.schema)} }
+		`);
+	}
+
+	// -- SavedQuery management (STORY-087) -------------------------------------------------------
+
+	/** Idempotently ensures `<SAVED_QUERY_CLASS_IRI> a owl:Class` exists — mirrors
+	 *  `ensureWorkspaceClass()`'s `ASK`-then-`INSERT DATA` shape. Always lives in the default
+	 *  namespace's `/schema` graph, alongside `Namespace`/`Workspace`. */
+	async ensureSavedQueryClass(): Promise<void> {
+		const exists = await this.classExists(SAVED_QUERY_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI);
+		if (exists) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${SAVED_QUERY_CLASS_IRI}> a owl:Class ; rdfs:label "SavedQuery" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Every registered SavedQuery, read from the default namespace's `/schema` graph regardless of
+	 *  which namespace is currently active in the UI. */
+	async fetchSavedQueries(): Promise<FetchedSavedQuery[]> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?sq ?label ?text ?description ${fromClause(graphs.schema)} WHERE {
+				?sq a <${SAVED_QUERY_CLASS_IRI}> .
+				OPTIONAL { ?sq rdfs:label ?label }
+				OPTIONAL { ?sq <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?text }
+				OPTIONAL { ?sq rdfs:comment ?description }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.sq.value,
+			label: b.label?.value ?? '',
+			sparqlText: b.text?.value ?? '',
+			description: b.description?.value ?? ''
+		}));
+	}
+
+	/**
+	 * Registers a SavedQuery: `<savedQueryIri(name)> a <SAVED_QUERY_CLASS_IRI> ; rdfs:label "<name>"
+	 * ; <SAVED_QUERY_TEXT_PREDICATE_IRI> "<sparqlText>" [; rdfs:comment "<description>"]`, always in
+	 * the default namespace's `/schema` graph (Decision 4). Returns the minted IRI.
+	 */
+	async insertSavedQuery(name: string, sparqlText: string, description?: string): Promise<string> {
+		if (!name.trim()) throw new Error('Saved query name must not be empty');
+		if (!sparqlText.trim()) throw new Error('Saved query text must not be empty');
+		await this.ensureSavedQueryClass();
+
+		const iri = savedQueryIri(name);
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${SAVED_QUERY_CLASS_IRI}> }`
+		);
+		if (exists) {
+			throw new Error(`A saved query named "${name}" already exists (${iri})`);
+		}
+
+		const escapedLabel = this.escapeString(name.trim());
+		const escapedText = this.escapeString(sparqlText);
+		const trimmedDescription = description?.trim();
+		const descriptionTriple = trimmedDescription
+			? ` ; rdfs:comment "${this.escapeString(trimmedDescription)}"`
+			: '';
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${SAVED_QUERY_CLASS_IRI}> ; rdfs:label "${escapedLabel}" ; <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${escapedText}"${descriptionTriple} .`,
+				graphs.schema
+			)} }`
+		);
+		return iri;
+	}
+
+	/** Updates only `rdfs:label` — the saved query's own IRI never changes, mirroring
+	 *  `renameWorkspace` (CLAUDE.md's IRI convention). */
+	async renameSavedQuery(savedQueryIriValue: string, newName: string): Promise<void> {
+		if (!newName.trim()) throw new Error('Saved query name must not be empty');
+		this.assertSafeSparqlIri(savedQueryIriValue, 'saved query IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const escaped = this.escapeString(newName);
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${savedQueryIriValue}> rdfs:label ?old }
+			INSERT { <${savedQueryIriValue}> rdfs:label "${escaped}" }
+			WHERE { OPTIONAL { <${savedQueryIriValue}> rdfs:label ?old } }
+		`);
+	}
+
+	/** Replaces a SavedQuery's `sparqlText` — an empty string is rejected, mirroring `insertSavedQuery`'s
+	 *  validation (a saved query's text is never optional once it exists). */
+	async updateSavedQueryText(savedQueryIriValue: string, sparqlText: string): Promise<void> {
+		if (!sparqlText.trim()) throw new Error('Saved query text must not be empty');
+		this.assertSafeSparqlIri(savedQueryIriValue, 'saved query IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const escaped = this.escapeString(sparqlText);
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?old }
+			INSERT { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${escaped}" }
+			WHERE { OPTIONAL { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`/empty) removes a SavedQuery's optional `rdfs:comment`
+	 *  description, mirroring `updateWorkspaceDefaultNamespace`'s set/replace/clear shape. */
+	async updateSavedQueryDescription(
+		savedQueryIriValue: string,
+		description: string | null
+	): Promise<void> {
+		this.assertSafeSparqlIri(savedQueryIriValue, 'saved query IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const trimmed = description?.trim();
+
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${savedQueryIriValue}> rdfs:comment ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		const escaped = this.escapeString(trimmed);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${savedQueryIriValue}> rdfs:comment ?old }
+			INSERT { <${savedQueryIriValue}> rdfs:comment "${escaped}" }
+			WHERE { OPTIONAL { <${savedQueryIriValue}> rdfs:comment ?old } }
+		`);
+	}
+
+	/**
+	 * Deletes a SavedQuery's own triples. No `{force?}` flag and no cascading cleanup elsewhere:
+	 * unlike `deleteWorkspace`/`deleteClass`/`deleteNamespace`, nothing else in the graph ever
+	 * references a SavedQuery by IRI — deleting one is always unconditionally safe (research §8).
+	 */
+	async deleteSavedQuery(savedQueryIriValue: string): Promise<void> {
+		this.assertSafeSparqlIri(savedQueryIriValue, 'saved query IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${savedQueryIriValue}> ?p ?o .`, graphs.schema)} }`
+		);
+	}
+
+	// -- WorkspaceMembership CRUD & position storage (STORY-073) --------------------------------
+
+	/** Idempotently ensures `<WORKSPACE_MEMBERSHIP_CLASS_IRI> a owl:Class` exists — same
+	 *  self-registration shape as `ensureWorkspaceClass`/`ensureNamespaceClass`. */
+	async ensureWorkspaceMembershipClass(): Promise<void> {
+		const exists = await this.classExists(WORKSPACE_MEMBERSHIP_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI);
+		if (exists) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class ; rdfs:label "WorkspaceMembership" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Every `{elementIri, x, y}` membership row for `workspaceIriValue`, none from any other
+	 *  Workspace. Feeds both `GraphDbLayoutStore` (STORY-074) and the canvas visibility filter
+	 *  (STORY-076). */
+	async fetchWorkspaceMembers(
+		workspaceIriValue: string
+	): Promise<{ elementIri: string; x: number; y: number }[]> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?element ?x ?y ${fromClause(graphs.schema)} WHERE {
+				?m a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+					<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ;
+					<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?element ;
+					<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?x ;
+					<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?y .
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			elementIri: b.element.value,
+			x: parseFloat(b.x.value),
+			y: parseFloat(b.y.value)
+		}));
+	}
+
+	/**
+	 * Links an existing element to a Workspace at `(x, y)` — mints via
+	 * `workspaceMembershipIri(workspaceIriValue, elementIri)`, `ASK`-exists-guard (idempotent
+	 * no-op if the membership already exists, so "Add Element" selecting an already-present node
+	 * never errors). Never mints a new `owl:Class`/`owl:NamedIndividual` resource itself — the
+	 * caller (STORY-080) is responsible for only ever passing an IRI that already exists.
+	 */
+	async addWorkspaceMember(workspaceIriValue: string, elementIri: string, x: number, y: number): Promise<void> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		this.assertSafeSparqlIri(elementIri, 'element IRI');
+		await this.ensureWorkspaceMembershipClass();
+
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> }`
+		);
+		if (exists) return;
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ; ` +
+					`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+					`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> ; ` +
+					`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; ` +
+					`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal .`,
+				graphs.schema
+			)} }`
+		);
+	}
+
+	/** Removes exactly one `(workspace, element)` membership subject's triples — leaves the element
+	 *  itself and its membership in every other Workspace untouched. */
+	async removeWorkspaceMember(workspaceIriValue: string, elementIri: string): Promise<void> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		this.assertSafeSparqlIri(elementIri, 'element IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${membershipIri}> ?p ?o .`, graphs.schema)} }`
+		);
+	}
+
+	/** Updates `x`/`y` on an existing membership subject without duplicating or losing its
+	 *  `workspace`/`element` link triples — the connector method itself is a plain async call;
+	 *  `GraphDbLayoutStore` (STORY-074) is responsible for debouncing calls into it. */
+	async updateWorkspaceMemberPosition(
+		workspaceIriValue: string,
+		elementIri: string,
+		x: number,
+		y: number
+	): Promise<void> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		this.assertSafeSparqlIri(elementIri, 'element IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX ; <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY }
+			INSERT { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal }
+			WHERE {
+				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX }
+				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY }
+			}
+		`);
+	}
+
+	// -- Note (sticky note) CRUD (STORY-083) -----------------------------------------------------
+
+	/** Idempotently ensures `<NOTE_CLASS_IRI> a owl:Class` exists — same self-registration shape as
+	 *  `ensureWorkspaceClass`/`ensureWorkspaceMembershipClass`. */
+	async ensureNoteClass(): Promise<void> {
+		const exists = await this.classExists(NOTE_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI);
+		if (exists) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${NOTE_CLASS_IRI}> a owl:Class ; rdfs:label "Note" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Every Note belonging to `workspaceIriValue`, none from any other Workspace — read from the
+	 *  default namespace's `/schema` graph (Decision 4). */
+	async fetchNotesForWorkspace(workspaceIriValue: string): Promise<FetchedNote[]> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?n ?text ?color ?x ?y ?linked ${fromClause(graphs.schema)} WHERE {
+				?n a <${NOTE_CLASS_IRI}> ;
+					<${NOTE_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ;
+					<${NOTE_COLOR_PREDICATE_IRI}> ?color ;
+					<${NOTE_X_PREDICATE_IRI}> ?x ;
+					<${NOTE_Y_PREDICATE_IRI}> ?y .
+				OPTIONAL { ?n <${NOTE_TEXT_PREDICATE_IRI}> ?text }
+				OPTIONAL { ?n <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?linked }
+			}
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.n.value,
+			text: b.text?.value ?? '',
+			color: b.color.value,
+			x: parseFloat(b.x.value),
+			y: parseFloat(b.y.value),
+			linkedElementIri: b.linked?.value ?? null
+		}));
+	}
+
+	/**
+	 * Creates a blank (or pre-filled) Note in `workspaceIriValue` at `(x, y)` — mints via
+	 * `noteIri(workspaceIriValue, Date.now().toString())`. No `ASK`-exists guard needed (unlike
+	 * `insertWorkspace`/`addWorkspaceMember`) — the IRI is timestamp-unique by construction, there's
+	 * no "already exists" case to be idempotent against.
+	 */
+	async insertNote(
+		workspaceIriValue: string,
+		x: number,
+		y: number,
+		color: string,
+		text?: string,
+		linkedElementIri?: string
+	): Promise<{ iri: string }> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		if (linkedElementIri) this.assertSafeSparqlIri(linkedElementIri, 'linked element IRI');
+		await this.ensureNoteClass();
+
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const iri = noteIri(workspaceIriValue, Date.now().toString());
+		const trimmedText = text?.trim();
+		const textTriple = trimmedText ? ` ; <${NOTE_TEXT_PREDICATE_IRI}> "${this.escapeString(trimmedText)}"` : '';
+		const linkedTriple = linkedElementIri ? ` ; <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${linkedElementIri}>` : '';
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${NOTE_CLASS_IRI}> ; ` +
+					`<${NOTE_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+					`<${NOTE_COLOR_PREDICATE_IRI}> "${this.escapeString(color)}" ; ` +
+					`<${NOTE_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; ` +
+					`<${NOTE_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal${textTriple}${linkedTriple} .`,
+				graphs.schema
+			)} }`
+		);
+		return { iri };
+	}
+
+	/** Sets, replaces, or (passing empty/blank) removes a Note's `noteText` — a blank sticky note is
+	 *  still a note, so empty text is valid and simply omits the triple rather than storing `""`. */
+	async updateNoteText(noteIriValue: string, text: string): Promise<void> {
+		this.assertSafeSparqlIri(noteIriValue, 'note IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const trimmed = text.trim();
+
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		const escaped = this.escapeString(trimmed);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> ?old }
+			INSERT { <${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> "${escaped}" }
+			WHERE { OPTIONAL { <${noteIriValue}> <${NOTE_TEXT_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Replaces a Note's `noteColor` — mirrors `updateNamespaceColor`'s DELETE/INSERT shape (a Note
+	 *  always has *some* color, so unlike the namespace case there's no "clear to unset" path here). */
+	async updateNoteColor(noteIriValue: string, color: string): Promise<void> {
+		this.assertSafeSparqlIri(noteIriValue, 'note IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const escaped = this.escapeString(color);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${noteIriValue}> <${NOTE_COLOR_PREDICATE_IRI}> ?old }
+			INSERT { <${noteIriValue}> <${NOTE_COLOR_PREDICATE_IRI}> "${escaped}" }
+			WHERE { OPTIONAL { <${noteIriValue}> <${NOTE_COLOR_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Updates `x`/`y` on a Note without touching its other triples — mirrors
+	 *  `updateWorkspaceMemberPosition` exactly (including: this method itself is a plain async call,
+	 *  debouncing is the caller's/store's job, not this method's). */
+	async updateNotePosition(noteIriValue: string, x: number, y: number): Promise<void> {
+		this.assertSafeSparqlIri(noteIriValue, 'note IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${noteIriValue}> <${NOTE_X_PREDICATE_IRI}> ?oldX ; <${NOTE_Y_PREDICATE_IRI}> ?oldY }
+			INSERT { <${noteIriValue}> <${NOTE_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; <${NOTE_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal }
+			WHERE {
+				OPTIONAL { <${noteIriValue}> <${NOTE_X_PREDICATE_IRI}> ?oldX }
+				OPTIONAL { <${noteIriValue}> <${NOTE_Y_PREDICATE_IRI}> ?oldY }
+			}
+		`);
+	}
+
+	/** Sets, replaces, or (passing `null`) removes a Note's optional `noteLinkedElement` — mirrors
+	 *  `updateWorkspaceDefaultNamespace`'s set/replace/clear shape. */
+	async updateNoteLinkedElement(noteIriValue: string, elementIri: string | null): Promise<void> {
+		this.assertSafeSparqlIri(noteIriValue, 'note IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		if (!elementIri) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+
+		this.assertSafeSparqlIri(elementIri, 'linked element IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?old }
+			INSERT { <${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${elementIri}> }
+			WHERE { OPTIONAL { <${noteIriValue}> <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Deletes exactly this Note subject's triples. No refuse-then-force guard needed (CLAUDE.md's
+	 *  convention only applies where deletion could orphan *another* resource's reference) — nothing
+	 *  ever references a Note by IRI except the Note's own triples, so deleting one is always safe
+	 *  and unconditional. */
+	async deleteNote(noteIriValue: string): Promise<void> {
+		this.assertSafeSparqlIri(noteIriValue, 'note IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${noteIriValue}> ?p ?o .`, graphs.schema)} }`
+		);
 	}
 
 	// -- External vocabulary management (STORY-046) ---------------------------------------------
@@ -2713,6 +3662,98 @@ export class SparqlConnector {
 		await this.insertNamespace('rse', DEFAULT_NAMESPACE_BASE_IRI);
 	}
 
+	// -- Default Workspace migration and backfill (STORY-075) --------------------------------------
+
+	/** Every element IRI that already has a `WorkspaceMembership` row in **any** Workspace — not
+	 *  scoped to the Default workspace, since a partially-migrated repository (e.g. an element
+	 *  someone already placed in a non-Default Workspace by hand) must not be double-membered by the
+	 *  backfill. */
+	private async fetchWorkspaceMembershipElementIris(): Promise<Set<string>> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?element ${fromClause(graphs.schema)} WHERE {
+				?m a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+					<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?element .
+			}
+		`);
+		return new Set(results.results.bindings.map((b) => b.element.value));
+	}
+
+	/**
+	 * Backfills a `WorkspaceMembership` row (auto-grid position, `gridPosition` per the plan's ADR —
+	 * not a read of each browser's `localStorage` layout) for every pre-existing
+	 * `owl:Class`/`owl:NamedIndividual` element, across every namespace, that has no
+	 * `WorkspaceMembership` row anywhere yet. Each `addWorkspaceMember` call is independently safe
+	 * under concurrent backfill passes (deterministic `workspaceMembershipIri`), so this never needs
+	 * its own lock — only the completion-marker triple written at the end, which lets every later
+	 * `ensureDefaultWorkspace()` call skip straight to a single `ASK`.
+	 */
+	private async backfillDefaultWorkspaceMembership(defaultWorkspaceIri: string): Promise<void> {
+		await this.ensureWorkspaceMembershipClass();
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		const [schema, alreadyMember] = await Promise.all([
+			this.fetchFullSchemaForAllNamespaces(),
+			this.fetchWorkspaceMembershipElementIris()
+		]);
+		const elementsToBackfill = [
+			...schema.classes.map((c) => c.iri),
+			...schema.individuals.map((i) => i.iri)
+		].filter((iri) => !alreadyMember.has(iri));
+
+		for (const [index, elementIri] of elementsToBackfill.entries()) {
+			const pos = gridPosition(index);
+			await this.addWorkspaceMember(defaultWorkspaceIri, elementIri, pos.x, pos.y);
+		}
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${defaultWorkspaceIri}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true .`,
+				graphs.schema
+			)} }`
+		);
+	}
+
+	/**
+	 * Idempotently ensures a "Default" Workspace exists and every pre-existing element (from before
+	 * Workspaces existed) is a member of it, then returns its IRI. Wired into the same client-side
+	 * `loadSchemaFromGraphDB`/`onMount` trigger as `ensureDefaultNamespaceMigrated()` — fires on
+	 * every page load by every tab/user, not once per deploy (this app has no server-side startup
+	 * hook), so correctness rests on `workspaceIri('Default')`'s determinism and the backfill's
+	 * per-element idempotency, not on a lock (`spec/views/plan.md`'s risk assessment).
+	 *
+	 * The overwhelmingly common case — every load after the first successful migration — is a single
+	 * `ASK` against the completion marker, mirroring `ensureDefaultNamespaceMigrated()`'s own
+	 * "safe to retry" contract: a call that throws partway leaves no marker behind, so the next load
+	 * retries from scratch.
+	 */
+	async ensureDefaultWorkspace(): Promise<string> {
+		const iri = workspaceIri('Default');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		const backfillComplete = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true }`
+		);
+		if (backfillComplete) return iri;
+
+		await this.ensureWorkspaceClass();
+		const workspaceExists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${WORKSPACE_CLASS_IRI}> }`
+		);
+		if (!workspaceExists) {
+			await this.executeUpdate(
+				`${PREFIXES} INSERT DATA { ${inGraph(
+					`<${iri}> a <${WORKSPACE_CLASS_IRI}> ; rdfs:label "Default" .`,
+					graphs.schema
+				)} }`
+			);
+		}
+
+		await this.backfillDefaultWorkspaceMembership(iri);
+		return iri;
+	}
+
 	// -- Full-schema fetch (STORY-009) -----------------------------------------------------------
 
 	async fetchAllClasses(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<FetchedClass[]> {
@@ -2832,7 +3873,8 @@ export class SparqlConnector {
 			subClassOf,
 			individuals,
 			genericObjectProperties,
-			individualClassRelations
+			individualClassRelations,
+			individualIndividualRelations
 		] = await Promise.all([
 			this.fetchAllClasses(namespaceBaseIri),
 			this.fetchAllDatatypeProperties(namespaceBaseIri),
@@ -2841,7 +3883,8 @@ export class SparqlConnector {
 			this.fetchAllSubClassOf(namespaceBaseIri),
 			this.fetchAllIndividuals(namespaceBaseIri),
 			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
-			this.fetchAllIndividualClassRelations(namespaceBaseIri)
+			this.fetchAllIndividualClassRelations(namespaceBaseIri),
+			this.fetchAllIndividualIndividualRelations(namespaceBaseIri)
 		]);
 
 		const constraintByPath = new Map(constraints.map((c) => [c.path, c]));
@@ -2864,7 +3907,8 @@ export class SparqlConnector {
 			],
 			subClassOf,
 			individuals,
-			individualClassRelations
+			individualClassRelations,
+			individualIndividualRelations
 		};
 	}
 
@@ -2883,7 +3927,8 @@ export class SparqlConnector {
 			objectProperties: schemas.flatMap((s) => s.objectProperties),
 			subClassOf: schemas.flatMap((s) => s.subClassOf),
 			individuals: schemas.flatMap((s) => s.individuals),
-			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations)
+			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
+			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations)
 		};
 	}
 
@@ -2967,11 +4012,52 @@ export class SparqlConnector {
 	}
 
 	/**
+	 * Story 001: a class's own scope only ever sees *incoming* individual relations asserted within
+	 * its own namespace's graphs (`selectScopeUnfiltered`'s `isClass` branch) — an individual's
+	 * assertion lives in *its own* namespace's instances graph (`insertAssertion`'s
+	 * `findNamespaceOfIndividual`), not the target class's, so a cross-namespace relation like
+	 * `gov:itam gov:isMasterFor core:Application` would never even reach `selectScope` when viewing
+	 * `core:Application` (whose own scope only fetches `core`'s three graphs). This fetches every
+	 * *other* registered namespace's whole graph and reuses `filterIncomingRelationQuads` against
+	 * each one independently (each namespace's own quads are self-sufficient to validate its own
+	 * predicates as declared `owl:ObjectProperty`/`owl:DatatypeProperty` triples, so no merging is
+	 * needed before filtering) — returning only the matched ground triples, ready to append directly
+	 * to an already-computed same-namespace scope. Returns `[]` when `classIri` isn't actually a
+	 * class in `ownAllQuads` (the common case — most `selectScope` calls target an individual,
+	 * property, or the whole graph) or there are no other registered namespaces to check.
+	 */
+	private async fetchCrossNamespaceIncomingRelationQuads(
+		classIri: string,
+		ownAllQuads: Quad[],
+		ownNamespaceBaseIri: string,
+		namespaces: FetchedNamespace[]
+	): Promise<Quad[]> {
+		const isClass = ownAllQuads.some((q) => q.subject.value === classIri && isRdfType(q, OWL.Class));
+		if (!isClass) return [];
+		const otherNamespaces = namespaces.filter((ns) => ns.baseIri !== ownNamespaceBaseIri);
+		if (otherNamespaces.length === 0) return [];
+
+		const targets = classIncomingRelationTargets(ownAllQuads, classIri);
+		const quadLists = await Promise.all(
+			otherNamespaces.map(async (ns) => {
+				const nsQuads = await this.fetchWholeGraphQuads(ns.baseIri);
+				return filterIncomingRelationQuads(nsQuads, targets);
+			})
+		);
+		return quadLists.flat();
+	}
+
+	/**
 	 * STORY-018: both tabs' Turtle for the current scope (whole graph or one selected
 	 * entity/relation), computed from a single whole-graph fetch — Schema tab via
 	 * STORY-014/015's `partitionQuads` + `groupSchemaQuads`, Shapes tab via STORY-014/016's
 	 * `partitionQuads` + `nestBlankNodes` (never a bare top-level `_:b0` statement). Prefixes cover
-	 * every registered namespace and external vocabulary (see `fetchAllTriplesAsTurtle`).
+	 * every registered namespace and external vocabulary (see `fetchAllTriplesAsTurtle`). When `iri`
+	 * is a class, also merges in cross-namespace incoming relations (Story 001,
+	 * `fetchCrossNamespaceIncomingRelationQuads`) — appended after same-namespace scoping rather than
+	 * fed back into `selectScope`, since re-validating them against the combined pool would drop them
+	 * again (their predicate's own `owl:ObjectProperty`/`owl:DatatypeProperty` declaration lives only
+	 * in their own namespace, not `iri`'s).
 	 */
 	async fetchScopedTurtlePair(
 		iri: string | null,
@@ -2983,10 +4069,68 @@ export class SparqlConnector {
 			this.fetchNamespaces(),
 			this.fetchExternalVocabularies()
 		]);
+		const crossNamespaceQuads =
+			iri !== null
+				? await this.fetchCrossNamespaceIncomingRelationQuads(iri, allQuads, namespaceBaseIri, namespaces)
+				: [];
 		const prefixes = buildDisplayPrefixes(namespaces, externalVocabularies);
-		const schema = await quadsToTurtle(groupSchemaQuads(selectScope(allQuads, iri, 'schema')), prefixes);
-		const shapes = nestBlankNodes(selectScope(allQuads, iri, 'shapes'), prefixes);
+		const { schema: crossSchema, shapes: crossShapes } = partitionQuads(crossNamespaceQuads);
+		const schema = await quadsToTurtle(
+			groupSchemaQuads([...selectScope(allQuads, iri, 'schema'), ...crossSchema]),
+			prefixes
+		);
+		const shapes = nestBlankNodes([...selectScope(allQuads, iri, 'shapes'), ...crossShapes], prefixes);
 		return { schema, shapes };
+	}
+
+	/**
+	 * STORY-082: the read-only Workspace-scoped Triples view's Turtle — the union of every
+	 * `WorkspaceMembership.element`'s own `selectScope`, across whichever namespaces those members
+	 * happen to live in. Grouped by owning namespace (via `fetchFullSchemaForAllNamespaces`'s own
+	 * `namespaceBaseIri` field on each class/individual, avoiding a per-member lookup round-trip) so
+	 * each namespace's whole graph is fetched exactly once and every member within it is scoped
+	 * against that *same* round-trip's quads — `selectScope`'s own contract requires this, since blank
+	 * node labels (`sh:property` shapes) are only guaranteed consistent within one query's result set.
+	 * Each namespace group is serialized independently via the same `groupSchemaQuads`/`nestBlankNodes`/
+	 * `buildDisplayPrefixes` pipeline `fetchScopedTurtlePair` uses, then the resulting Turtle *text*
+	 * blocks are concatenated — never merging raw quads across namespace groups, which would risk two
+	 * different namespaces' independently-minted blank nodes colliding under the same label. A stale
+	 * membership row (its element deleted without STORY-081's cascade cleanup somehow running) is
+	 * silently skipped rather than erroring, since it names no known class/individual to look up.
+	 */
+	async fetchScopedTurtleForWorkspace(workspaceIriValue: string): Promise<{ schema: string; shapes: string }> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const [members, schema, namespaces, externalVocabularies] = await Promise.all([
+			this.fetchWorkspaceMembers(workspaceIriValue),
+			this.fetchFullSchemaForAllNamespaces(),
+			this.fetchNamespaces(),
+			this.fetchExternalVocabularies()
+		]);
+
+		const namespaceByIri = new Map<string, string>();
+		for (const c of schema.classes) namespaceByIri.set(c.iri, c.namespaceBaseIri);
+		for (const i of schema.individuals) namespaceByIri.set(i.iri, i.namespaceBaseIri);
+
+		const memberIrisByNamespace = new Map<string, string[]>();
+		for (const { elementIri } of members) {
+			const namespaceBaseIri = namespaceByIri.get(elementIri);
+			if (!namespaceBaseIri) continue;
+			const list = memberIrisByNamespace.get(namespaceBaseIri) ?? [];
+			list.push(elementIri);
+			memberIrisByNamespace.set(namespaceBaseIri, list);
+		}
+
+		const prefixes = buildDisplayPrefixes(namespaces, externalVocabularies);
+		const schemaParts: string[] = [];
+		const shapesParts: string[] = [];
+		for (const [namespaceBaseIri, memberIris] of memberIrisByNamespace) {
+			const allQuads = await this.fetchWholeGraphQuads(namespaceBaseIri);
+			const schemaQuads = dedupeQuads(memberIris.flatMap((iri) => selectScope(allQuads, iri, 'schema')));
+			const shapesQuads = dedupeQuads(memberIris.flatMap((iri) => selectScope(allQuads, iri, 'shapes')));
+			schemaParts.push(await quadsToTurtle(groupSchemaQuads(schemaQuads), prefixes));
+			shapesParts.push(nestBlankNodes(shapesQuads, prefixes));
+		}
+		return { schema: schemaParts.join('\n'), shapes: shapesParts.join('\n') };
 	}
 
 	/**
@@ -3204,14 +4348,23 @@ export class SparqlConnector {
 	}
 
 	/** Classifies `newQuads` into the namespace's three graphs (`partitionQuads` for
-	 *  schema-vs-shapes, then `splitInstancesFromSchema` to pull individuals out of the schema
-	 *  bucket) and builds one `INSERT DATA` with one `GRAPH` block per non-empty bucket. */
+	 *  schema-vs-shapes-vs-reified-instances, then `splitInstancesFromSchema` to additionally pull
+	 *  plain individuals out of the schema bucket) and builds one `INSERT DATA` with one `GRAPH`
+	 *  block per non-empty bucket. `partitionQuads`'s own `instances` bucket (relation-assertions
+	 *  Story 004) covers reified-statement quads typed/predicated with `rdf:Statement`/
+	 *  `rdf:subject`/`rdf:predicate`/`rdf:object`; merged with `splitInstancesFromSchema`'s
+	 *  individual-detection so a manual Turtle edit that includes both lands each in
+	 *  `graphs.instances`, not silently dropped. */
 	private async buildScopeInsertOp(newQuads: Quad[], graphs: NamespaceGraphs): Promise<string> {
-		const { schema: schemaAndInstances, shapes: shapeQuads } = partitionQuads(newQuads);
+		const {
+			schema: schemaAndInstances,
+			shapes: shapeQuads,
+			instances: reifiedInstanceQuads
+		} = partitionQuads(newQuads);
 		const { instances: instanceQuads, schema: schemaQuads } = splitInstancesFromSchema(schemaAndInstances);
 
 		const [instancesBody, schemaBody, shapesBody] = await Promise.all([
-			quadsToGroundTriples(instanceQuads),
+			quadsToGroundTriples([...instanceQuads, ...reifiedInstanceQuads]),
 			quadsToGroundTriples(schemaQuads),
 			quadsToGroundTriples(shapeQuads)
 		]);

@@ -19,7 +19,13 @@ const RDFS_NS = 'http://www.w3.org/2000/01/rdf-schema#';
 const OWL_NS = 'http://www.w3.org/2002/07/owl#';
 export const SH_NS = 'http://www.w3.org/ns/shacl#';
 
-export const RDF = { type: `${RDF_NS}type` };
+export const RDF = {
+	type: `${RDF_NS}type`,
+	subject: `${RDF_NS}subject`,
+	predicate: `${RDF_NS}predicate`,
+	object: `${RDF_NS}object`,
+	Statement: `${RDF_NS}Statement`
+};
 export const RDFS = {
 	subClassOf: `${RDFS_NS}subClassOf`,
 	domain: `${RDFS_NS}domain`,
@@ -201,28 +207,42 @@ export function quadsToNQuads(quads: Quad[]): Promise<string> {
 // -- Schema/shapes partitioning (STORY-014) -----------------------------------------------------
 
 /**
- * Splits a mixed `Quad[]` into the schema (`owl:Class`/`owl:*Property`/individuals) and shapes
- * (`sh:NodeShape`/`sh:property`) buckets, per `research.md` §4.1: predicate-based (any `sh:*`
- * predicate), blank-node-based (every `sh:property` shape is a blank node), or an explicit `a
- * sh:NodeShape` type declaration — the last of these catches a `NodeShape` subject's own `rdf:type`
- * triple regardless of which namespace it was minted under (STORY-048 fix: the old
- * `SHAPES_NAMESPACE`-prefix check only matched the *default* namespace's shapes IRIs, so a
- * non-default namespace's `<...core/shapes#FooShape> a sh:NodeShape` triple fell through to the
- * schema bucket — and, once round-tripped through a scoped save, got written into that namespace's
- * *schema* graph instead of its shapes graph). Every input quad appears in exactly one output
- * bucket.
+ * Splits a mixed `Quad[]` into the schema (`owl:Class`/`owl:*Property`/individuals), shapes
+ * (`sh:NodeShape`/`sh:property`), and instances (reified-statement, relation-assertions Sprint 2)
+ * buckets, per `research.md` §4.1: predicate-based (any `sh:*` predicate), blank-node-based (every
+ * `sh:property` shape is a blank node), or an explicit `a sh:NodeShape` type declaration — the last
+ * of these catches a `NodeShape` subject's own `rdf:type` triple regardless of which namespace it
+ * was minted under (STORY-048 fix: the old `SHAPES_NAMESPACE`-prefix check only matched the
+ * *default* namespace's shapes IRIs, so a non-default namespace's `<...core/shapes#FooShape> a
+ * sh:NodeShape` triple fell through to the schema bucket — and, once round-tripped through a scoped
+ * save, got written into that namespace's *schema* graph instead of its shapes graph). A reified
+ * statement's subject is named, not blank (relation-assertions plan.md, "Reification pattern"),
+ * so without a dedicated rule it would fall through to the schema bucket and clutter the Schema
+ * tab of `TriplesPanel` alongside real TBox content (relation-assertions Story 004) — routed by
+ * `rdf:subject`/`rdf:predicate`/`rdf:object` predicates or an `a rdf:Statement` type declaration.
+ * Every input quad appears in exactly one output bucket.
  */
-export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[] } {
+export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[]; instances: Quad[] } {
 	const schema: Quad[] = [];
 	const shapes: Quad[] = [];
+	const instances: Quad[] = [];
 	for (const q of quads) {
+		const isReifiedStatement =
+			q.predicate.value === RDF.subject ||
+			q.predicate.value === RDF.predicate ||
+			q.predicate.value === RDF.object ||
+			isRdfType(q, RDF.Statement);
+		if (isReifiedStatement) {
+			instances.push(q);
+			continue;
+		}
 		const isShapesBucket =
 			q.predicate.value.startsWith(SH_NS) ||
 			q.subject.termType === 'BlankNode' ||
 			isRdfType(q, SH.NodeShape);
 		(isShapesBucket ? shapes : schema).push(q);
 	}
-	return { schema, shapes };
+	return { schema, shapes, instances };
 }
 
 // -- Deterministic schema ordering (STORY-015) ---------------------------------------------------
@@ -477,6 +497,66 @@ export function selectScope(allQuads: Quad[], iri: string | null, partition: Par
 	return partition === 'schema' ? schema : shapes;
 }
 
+/**
+ * The set of IRIs whose *incoming* relations belong to `classIri`'s own scope (Story 001):
+ * `classIri` itself, plus every one of its own attributes (`owl:DatatypeProperty`/
+ * `owl:ObjectProperty` with `rdfs:domain` = `classIri`) — e.g. `gov:itam gov:isMasterFor
+ * core:applicationName` is surfaced directly from `core:Application`'s own scope rather than
+ * requiring a user to check `core:applicationName`'s own scope, per this story's ADR. `quads` only
+ * needs to contain `classIri`'s own namespace's triples (its attributes' `rdfs:domain` triples
+ * live there) — computing this is independent of which namespace(s) the *incoming* relations
+ * themselves live in, which is what makes it reusable for both the same-namespace case (inline
+ * below) and the cross-namespace case (`SparqlConnector.fetchCrossNamespaceIncomingRelationQuads`).
+ */
+export function classIncomingRelationTargets(quads: Quad[], classIri: string): Set<string> {
+	const ownAttributeIds = quads
+		.filter(
+			(q) =>
+				q.predicate.value === RDFS.domain &&
+				q.object.value === classIri &&
+				quads.some(
+					(t) =>
+						t.subject.value === q.subject.value &&
+						(isRdfType(t, OWL.DatatypeProperty) || isRdfType(t, OWL.ObjectProperty))
+				)
+		)
+		.map((q) => q.subject.value);
+	return new Set([classIri, ...ownAttributeIds]);
+}
+
+/**
+ * Picks out ground triples in `quads` that assert one of `targets` as their object via a declared
+ * `owl:ObjectProperty`/`owl:DatatypeProperty` predicate (Story 001) — an individual-sourced, ABox
+ * assertion, e.g. `gov:itam gov:isMasterFor core:Application`. Restricting to predicates declared
+ * *within this same `quads` set* naturally excludes RDFS/OWL/SH structural predicates
+ * (`rdfs:subClassOf`, `rdfs:domain`, `rdfs:range`, `sh:*`, ...) — those are never declared with `a
+ * owl:ObjectProperty`/`owl:DatatypeProperty` — so schema-level class-to-class relations (out of
+ * scope for this story) never leak in even when the target resource's own `rdf:type` triple isn't
+ * present in `quads`. `excludeSubjectIds` skips subjects already covered elsewhere (e.g. the
+ * class-scope branch's own `individualIds`, to avoid duplicating triples `individualQuads` already
+ * includes in full).
+ */
+export function filterIncomingRelationQuads(
+	quads: Quad[],
+	targets: Set<string>,
+	excludeSubjectIds: Iterable<string> = []
+): Quad[] {
+	const excluded = new Set(excludeSubjectIds);
+	const isUserDefinedProperty = (predicateValue: string) =>
+		quads.some(
+			(q) =>
+				q.subject.value === predicateValue &&
+				(isRdfType(q, OWL.ObjectProperty) || isRdfType(q, OWL.DatatypeProperty))
+		);
+	return quads.filter(
+		(q) =>
+			q.object.termType === 'NamedNode' &&
+			targets.has(q.object.value) &&
+			!excluded.has(q.subject.value) &&
+			isUserDefinedProperty(q.predicate.value)
+	);
+}
+
 function selectScopeUnfiltered(allQuads: Quad[], iri: string | null): Quad[] {
 	if (iri === null) return allQuads;
 
@@ -494,7 +574,15 @@ function selectScopeUnfiltered(allQuads: Quad[], iri: string | null): Quad[] {
 			.filter((q) => isRdfType(q, iri))
 			.map((q) => q.subject.value);
 		const individualQuads = allQuads.filter((q) => individualIds.includes(q.subject.value));
-		return [...own, ...shapeOwn, ...propertyShapeQuads, ...individualQuads];
+
+		// Story 001: widen this class's scope to *incoming* relations too, within this same quad
+		// set (typically one namespace's own triples) — cross-namespace incoming relations are
+		// merged in separately by the connector (`fetchCrossNamespaceIncomingRelationQuads`), since
+		// they live in triples this function is never given in the first place.
+		const incomingTargets = classIncomingRelationTargets(allQuads, iri);
+		const incomingRelationQuads = filterIncomingRelationQuads(allQuads, incomingTargets, individualIds);
+
+		return [...own, ...shapeOwn, ...propertyShapeQuads, ...individualQuads, ...incomingRelationQuads];
 	}
 
 	const isProperty = own.some(

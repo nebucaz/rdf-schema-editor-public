@@ -4,13 +4,21 @@
 	interface Props {
 		color: string | undefined;
 		onChange: (color: string | undefined) => void;
+		disabled?: boolean;
+		/** Swatch set to render — defaults to `PRESET_COLORS` (DB32); a Note (STORY-083) passes
+		 *  `NOTE_PASTEL_COLORS` instead so it reads as a post-it, not a coincidentally-light entity. */
+		colors?: string[];
+		/** Whether to show the "Reset to default" link — meaningful for an entity (falls back to the
+		 *  namespace/theme default) but not for a Note (STORY-083): a post-it always has *some*
+		 *  color, there's no "default" to reset to. */
+		allowReset?: boolean;
 	}
 
-	let { color, onChange }: Props = $props();
+	let { color, onChange, disabled = false, colors = PRESET_COLORS, allowReset = true }: Props = $props();
 </script>
 
-<div class="color-swatches" role="group" aria-label="Node color">
-	{#each PRESET_COLORS as swatch (swatch)}
+<div class="color-swatches" role="group" aria-label="Node color" aria-disabled={disabled}>
+	{#each colors as swatch (swatch)}
 		<button
 			type="button"
 			class="swatch"
@@ -19,12 +27,15 @@
 			aria-pressed={color === swatch}
 			aria-label={swatch}
 			title={swatch}
+			{disabled}
 			onclick={() => onChange(swatch)}
 		></button>
 	{/each}
 </div>
-{#if color}
-	<button type="button" class="link-button" onclick={() => onChange(undefined)}>Reset to default</button>
+{#if color && allowReset}
+	<button type="button" class="link-button" {disabled} onclick={() => onChange(undefined)}>
+		Reset to default
+	</button>
 {/if}
 
 <style>
@@ -50,6 +61,17 @@
 	.swatch.selected {
 		border-color: var(--color-accent);
 		box-shadow: 0 0 0 1px var(--color-accent-hover);
+	}
+
+	.swatch:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.link-button:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
+		text-decoration: none;
 	}
 
 	.link-button {

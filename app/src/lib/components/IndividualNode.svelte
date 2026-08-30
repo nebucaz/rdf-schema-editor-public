@@ -24,12 +24,19 @@
 </script>
 
 <div class="individual-node" class:selected>
-	<!-- Source-only handles: an individual only ever *initiates* a connection (e.g. isMasterFor,
-		Story 006) — it never receives one, so there's no target handle here (unlike EntityNode's
-		source+target pair per side). -->
+	<!-- Source+target pair per side, mirroring EntityNode: an individual can both *initiate* a
+		relation (e.g. isMasterFor, Story 006) and *receive* one — the target handle lets another
+		individual's connection land here for individual→individual relations (relation-assertions
+		Sprint 3 Story 005). Self-connection (an individual dragged onto itself) is rejected in
+		`+page.svelte`'s `handleConnect`, not at the handle level, since Svelte Flow's `Handle` has no
+		per-node "reject same id" primitive. -->
+	<Handle type="target" position={Position.Top} id="top-target" />
 	<Handle type="source" position={Position.Top} id="top-source" />
+	<Handle type="target" position={Position.Right} id="right-target" />
 	<Handle type="source" position={Position.Right} id="right-source" />
+	<Handle type="target" position={Position.Bottom} id="bottom-target" />
 	<Handle type="source" position={Position.Bottom} id="bottom-source" />
+	<Handle type="target" position={Position.Left} id="left-target" />
 	<Handle type="source" position={Position.Left} id="left-source" />
 	<button
 		type="button"
@@ -77,8 +84,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 18px;
-		height: 18px;
+		min-width: 18px;
+		min-height: 18px;
 		border-radius: 50%;
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
