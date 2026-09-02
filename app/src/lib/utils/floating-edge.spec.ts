@@ -4,7 +4,9 @@ import {
 	computeParallelOffset,
 	computeSelfLoopIndex,
 	getFloatingEdgeParams,
-	getSelfLoopPath
+	getSelfLoopPath,
+	pointAlongPath,
+	percentAtPoint
 } from './floating-edge';
 
 function makeNode(id: string, centerX: number, centerY: number, width = 100, height = 50): InternalNode {
@@ -122,5 +124,20 @@ describe('getSelfLoopPath (STORY-060)', () => {
 		const edges = [makeEdge('e2', 'A', 'A'), makeEdge('e1', 'A', 'A')];
 		expect(computeSelfLoopIndex(edges, 'e1', 'A')).toBe(0);
 		expect(computeSelfLoopIndex(edges, 'e2', 'A')).toBe(1);
+	});
+});
+
+describe('pointAlongPath / percentAtPoint (Sprint 6 Story 021)', () => {
+	// This repo's Vitest project runs under `environment: 'node'` (no DOM/`document` global, per
+	// `CLAUDE.md`'s documented component-testing gap), so the real `SVGPathElement.getTotalLength`/
+	// `getPointAtLength` measurement path these functions use in the browser can't be exercised here.
+	// What's covered instead is the SSR-defensive fallback both functions fall back to outside a
+	// browser — genuinely meaningful in *this* environment, since `document` really is undefined here.
+	it('pointAlongPath falls back to the given point outside a browser (no document)', () => {
+		expect(pointAlongPath('M0,0 L100,0', 0.5, { x: 42, y: 7 })).toEqual({ x: 42, y: 7 });
+	});
+
+	it('percentAtPoint returns undefined outside a browser (no document)', () => {
+		expect(percentAtPoint('M0,0 L100,0', { x: 50, y: 0 })).toBeUndefined();
 	});
 });

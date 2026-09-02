@@ -15,7 +15,6 @@ import {
 	propertyIri,
 	xsdIri,
 	ATTRIBUTED_RELATIONSHIP_IRI,
-	AUTHORITATIVE_ENTITY_IRI,
 	type XsdDatatype
 } from '$lib/utils/iri';
 
@@ -380,33 +379,50 @@ describe('buildCanvasModel', () => {
 		expect(inheritanceEdge?.namespace).toBe(NS_B);
 	});
 
-	it('produces authoritativeEntityIris: true for a class subclassed under AuthoritativeEntity (data-catalog Story 003)', () => {
+	it('produces authoritativeEntityIris: true for a class subclassed under the configured marker class (Sprint 5 Story 014)', () => {
 		const person = classIri('Person');
+		const marker = classIri('GovCatalogMarker');
 		const schema = emptySchema({
 			classes: [fetchedClass(person, 'Person')],
-			subClassOf: [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)]
+			subClassOf: [subClassOf(person, marker)]
 		});
-		const model = buildCanvasModel(schema);
+		const model = buildCanvasModel(schema, undefined, { authoritativeEntityClassIri: marker });
 		expect(model.authoritativeEntityIris.has(person)).toBe(true);
 	});
 
-	it('produces authoritativeEntityIris: false for a class not subclassed under AuthoritativeEntity', () => {
+	it('produces authoritativeEntityIris: false for a class not subclassed under the configured marker class', () => {
 		const person = classIri('Person');
+		const marker = classIri('GovCatalogMarker');
 		const schema = emptySchema({ classes: [fetchedClass(person, 'Person')] });
-		const model = buildCanvasModel(schema);
+		const model = buildCanvasModel(schema, undefined, { authoritativeEntityClassIri: marker });
 		expect(model.authoritativeEntityIris.has(person)).toBe(false);
 	});
 
-	it('excludes the AuthoritativeEntity marker class itself from the rendered nodes/edges', () => {
+	it('produces an empty authoritativeEntityIris when no marker class is configured (null, no fallback)', () => {
 		const person = classIri('Person');
+		const marker = classIri('GovCatalogMarker');
 		const schema = emptySchema({
-			classes: [fetchedClass(AUTHORITATIVE_ENTITY_IRI, 'AuthoritativeEntity'), fetchedClass(person, 'Person')],
-			subClassOf: [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)]
+			classes: [fetchedClass(person, 'Person')],
+			subClassOf: [subClassOf(person, marker)]
 		});
-		const model = buildCanvasModel(schema);
-		expect(model.nodes.some((n) => n.iri === AUTHORITATIVE_ENTITY_IRI)).toBe(false);
-		expect(model.edges.some((e) => e.kind === 'inheritance')).toBe(false);
-		expect(model.nodes.some((n) => n.kind === 'entity' && n.iri === person)).toBe(true);
+		const model = buildCanvasModel(schema, undefined, { authoritativeEntityClassIri: null });
+		expect(model.authoritativeEntityIris.size).toBe(0);
+		const modelWithNoOption = buildCanvasModel(schema);
+		expect(modelWithNoOption.authoritativeEntityIris.size).toBe(0);
+	});
+
+	it('renders the configured marker class itself as a normal, visible node (Sprint 5 Story 014 — no longer hidden)', () => {
+		const person = classIri('Person');
+		const marker = classIri('GovCatalogMarker');
+		const schema = emptySchema({
+			classes: [fetchedClass(marker, 'GovCatalogMarker'), fetchedClass(person, 'Person')],
+			subClassOf: [subClassOf(person, marker)]
+		});
+		const model = buildCanvasModel(schema, undefined, { authoritativeEntityClassIri: marker });
+		expect(model.nodes.some((n) => n.kind === 'entity' && n.iri === marker)).toBe(true);
+		expect(model.edges.some((e) => e.kind === 'inheritance' && e.source === person && e.target === marker)).toBe(
+			true
+		);
 	});
 
 	it('is idempotent: building twice from the same schema produces an identical model', () => {
@@ -423,17 +439,25 @@ describe('buildCanvasModel', () => {
 	});
 });
 
-describe('isAuthoritativeEntity (data-catalog Story 003)', () => {
-	it('returns true when classIri is directly subClassOf AuthoritativeEntity', () => {
+describe('isAuthoritativeEntity (data-catalog Story 003, Sprint 5 Story 014)', () => {
+	it('returns true when classIri is directly subClassOf the configured marker class', () => {
 		const person = classIri('Person');
-		expect(isAuthoritativeEntity(person, [subClassOf(person, AUTHORITATIVE_ENTITY_IRI)])).toBe(true);
+		const marker = classIri('GovCatalogMarker');
+		expect(isAuthoritativeEntity(person, [subClassOf(person, marker)], marker)).toBe(true);
 	});
 
-	it('returns false when classIri has no subClassOf triple to AuthoritativeEntity', () => {
+	it('returns false when classIri has no subClassOf triple to the configured marker class', () => {
 		const person = classIri('Person');
 		const car = classIri('Car');
-		expect(isAuthoritativeEntity(person, [subClassOf(car, AUTHORITATIVE_ENTITY_IRI)])).toBe(false);
-		expect(isAuthoritativeEntity(person, [])).toBe(false);
+		const marker = classIri('GovCatalogMarker');
+		expect(isAuthoritativeEntity(person, [subClassOf(car, marker)], marker)).toBe(false);
+		expect(isAuthoritativeEntity(person, [], marker)).toBe(false);
+	});
+
+	it('returns false unconditionally when no marker class is configured (null, no fallback)', () => {
+		const person = classIri('Person');
+		const marker = classIri('GovCatalogMarker');
+		expect(isAuthoritativeEntity(person, [subClassOf(person, marker)], null)).toBe(false);
 	});
 });
 

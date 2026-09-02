@@ -10,7 +10,7 @@
  * either library for what would only ever be a thin, hand-rolled wrapper around it anyway.
  */
 import { isRdfType, DCAT, DCT, OWL, RDF, RDFS, SH, type Quad } from './turtle';
-import { XSD_NAMESPACE, AUTHORITATIVE_ENTITY_IRI, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
+import { XSD_NAMESPACE, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
 
 export interface ValidationIssue {
 	layer: 'syntax' | 'shacl' | 'structural';
@@ -130,8 +130,16 @@ function findSubClassOfCycle(quads: Quad[]): string[] | null {
  * graph (stronger than STORY-008's local-only guard), dangling `rdfs:domain`/`rdfs:range`
  * (must reference a declared `owl:Class`, or — for range — a built-in XSD datatype), and
  * conflicting `rdfs:range` declarations for the same property IRI.
+ *
+ * `authoritativeEntityClassIri` (Sprint 5 Story 014, `null` by default) is the user-configured
+ * catalog marker class, replacing the old hardcoded `AUTHORITATIVE_ENTITY_IRI` constant — the
+ * backstageKind/ancestry warning below is skipped entirely when `null` (nothing configured to
+ * check against yet) rather than firing against a nonexistent marker.
  */
-export function checkStructural(quads: Quad[]): ValidationIssue[] {
+export function checkStructural(
+	quads: Quad[],
+	authoritativeEntityClassIri: string | null = null
+): ValidationIssue[] {
 	const issues: ValidationIssue[] = [];
 
 	const declaredClasses = new Set(
@@ -206,33 +214,36 @@ export function checkStructural(quads: Quad[]): ValidationIssue[] {
 		}
 	}
 
-	// Backstage-mapping Story 005: a `backstageKind`'d class should also be `rdfs:subClassOf
-	// AuthoritativeEntity` for the provenance report/catalog generation to have anything to say
-	// about it — per `research.md`, not enforced by the model, so this is a non-blocking warning
-	// rather than joining the hard-block checks above.
-	const subClassOfEdges = new Map<string, string[]>();
-	for (const q of quads) {
-		if (q.predicate.value !== RDFS.subClassOf) continue;
-		const list = subClassOfEdges.get(q.subject.value) ?? [];
-		list.push(q.object.value);
-		subClassOfEdges.set(q.subject.value, list);
-	}
-	function hasAuthoritativeAncestry(classIriValue: string, seen: Set<string>): boolean {
-		if (seen.has(classIriValue)) return false;
-		seen.add(classIriValue);
-		for (const parent of subClassOfEdges.get(classIriValue) ?? []) {
-			if (parent === AUTHORITATIVE_ENTITY_IRI || hasAuthoritativeAncestry(parent, seen)) return true;
+	// Backstage-mapping Story 005: a `backstageKind`'d class should also be `rdfs:subClassOf` the
+	// configured catalog marker class for the provenance report/catalog generation to have anything
+	// to say about it — per `research.md`, not enforced by the model, so this is a non-blocking
+	// warning rather than joining the hard-block checks above. Skipped entirely when no marker class
+	// is configured (Sprint 5 Story 014) — nothing to check against yet.
+	if (authoritativeEntityClassIri !== null) {
+		const subClassOfEdges = new Map<string, string[]>();
+		for (const q of quads) {
+			if (q.predicate.value !== RDFS.subClassOf) continue;
+			const list = subClassOfEdges.get(q.subject.value) ?? [];
+			list.push(q.object.value);
+			subClassOfEdges.set(q.subject.value, list);
 		}
-		return false;
-	}
-	for (const q of quads) {
-		if (q.predicate.value !== BACKSTAGE_KIND_PREDICATE_IRI) continue;
-		if (!hasAuthoritativeAncestry(q.subject.value, new Set())) {
-			issues.push({
-				layer: 'structural',
-				severity: 'warning',
-				message: `<${q.subject.value}> has a backstageKind annotation but is not rdfs:subClassOf AuthoritativeEntity`
-			});
+		function hasAuthoritativeAncestry(classIriValue: string, seen: Set<string>): boolean {
+			if (seen.has(classIriValue)) return false;
+			seen.add(classIriValue);
+			for (const parent of subClassOfEdges.get(classIriValue) ?? []) {
+				if (parent === authoritativeEntityClassIri || hasAuthoritativeAncestry(parent, seen)) return true;
+			}
+			return false;
+		}
+		for (const q of quads) {
+			if (q.predicate.value !== BACKSTAGE_KIND_PREDICATE_IRI) continue;
+			if (!hasAuthoritativeAncestry(q.subject.value, new Set())) {
+				issues.push({
+					layer: 'structural',
+					severity: 'warning',
+					message: `<${q.subject.value}> has a backstageKind annotation but is not rdfs:subClassOf the configured catalog marker class`
+				});
+			}
 		}
 	}
 

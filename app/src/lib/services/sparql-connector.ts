@@ -8,7 +8,8 @@ import {
 	extractLocalName,
 	SHAPES_NAMESPACE,
 	ATTRIBUTED_RELATIONSHIP_IRI,
-	AUTHORITATIVE_ENTITY_IRI,
+	APP_SETTINGS_IRI,
+	AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI,
 	BACKSTAGE_KIND_PREDICATE_IRI,
 	SYNC_SOURCE_PREDICATE_IRI,
 	SYNC_STATUS_PREDICATE_IRI,
@@ -275,6 +276,37 @@ export interface FetchedAssertion {
 	predicateLabel: string;
 	objectIri: string;
 	objectLabel: string;
+}
+
+/** One attribute's resolved provenance (Sprint 4 Story 012) — the `fetchProvenanceReport` row shape.
+ *  `masterIri`/`masterLabel` are `null` when neither the attribute nor its owning class has any
+ *  `isMasterFor` assertion anywhere in the chain (Story 013's "no known contributor" case);
+ *  `isAttributeOverride` distinguishes an attribute-specific override from the class-level default so
+ *  the report can show which one is actually in effect. */
+export interface ProvenanceAttributeEntry {
+	attributeIri: string;
+	attributeLabel: string;
+	masterIri: string | null;
+	masterLabel: string | null;
+	isAttributeOverride: boolean;
+	/** The master system's own operating authority, resolved via `fetchOperatingAuthority`
+	 *  (`isMasterFor` → `isOperatedBy` → authority) — `null` when there's no master, or the master has
+	 *  no `isOperatedBy` edge. */
+	authorityIri: string | null;
+	authorityLabel: string | null;
+	/** ISO timestamp from the last "Generate catalog" run's `prov:Activity` for this attribute's own
+	 *  dataset (its split dataset if `isAttributeOverride`, else the class's parent dataset) — `null`
+	 *  when that dataset has never been generated. */
+	generatedAt: string | null;
+}
+
+/** Per-class/per-attribute provenance report (Sprint 4 Story 012) — `fetchProvenanceReport`'s return
+ *  shape, driving Story 013's read-only "Provenance" view. A read path over data the data-catalog
+ *  feature already writes; never mutates anything. */
+export interface ProvenanceReport {
+	classIri: string;
+	className: string;
+	attributes: ProvenanceAttributeEntry[];
 }
 
 /** What kind of thing a `NameableEntity` resolves to — shown alongside its label in the Story 019
@@ -1008,7 +1040,7 @@ export class SparqlConnector {
 			${PREFIXES} SELECT ?p ?label ${fromClause(graphs.schema)} WHERE {
 				?p a owl:ObjectProperty ; rdfs:label ?label .
 				FILTER NOT EXISTS { ?p rdfs:domain ?d }
-			}
+			} ORDER BY LCASE(?label)
 		`);
 		return results.results.bindings.map((b) => ({ iri: b.p.value, label: b.label.value }));
 	}
@@ -1744,46 +1776,53 @@ export class SparqlConnector {
 		}
 	}
 
-	// -- AuthoritativeEntity marker (data-catalog Story 003) ------------------------------------
+	// -- Configurable catalog marker class setting (Sprint 5 Story 014) -------------------------
+	// Replaces the old hardcoded/auto-created `AuthoritativeEntity` marker class (removed: it
+	// collided with a user-created domain class of the same display name in a different namespace,
+	// see `plan.md`'s Sprint 5 context) with one explicit GraphDB-backed setting the user points at
+	// whichever class they choose — no label-matching, no auto-lookup, no fallback heuristic.
 
-	/** Idempotently ensures `<SCHEMA_NAMESPACE>AuthoritativeEntity a owl:Class` exists — the
-	 *  marker a class is declared `rdfs:subClassOf` to opt into DCAT catalog generation
-	 *  (`canvas-model.ts`'s `isAuthoritativeEntity`), mirroring
-	 *  `ensureAttributedRelationshipClass` exactly. Always lives in the *default* namespace's
-	 *  `/schema` graph, even when the class carrying the marker lives elsewhere. Safe to call on
-	 *  every load: a no-op once the triple exists. */
-	async ensureAuthoritativeEntityClass(): Promise<void> {
-		const exists = await this.classExists(AUTHORITATIVE_ENTITY_IRI, DEFAULT_NAMESPACE_BASE_IRI);
-		if (exists) return;
+	/** Returns the currently-configured catalog marker class's IRI, or `null` if unset — `SELECT`
+	 *  against the single well-known `<APP_SETTINGS_IRI> <AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI>
+	 *  ?classIri` triple, always in the default namespace's own `/schema` graph regardless of which
+	 *  namespace the configured class itself lives in. */
+	async fetchAuthoritativeEntityClassIri(): Promise<string | null> {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
-		await this.executeUpdate(
-			`${PREFIXES} INSERT DATA { ${inGraph(`<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class ; rdfs:label "AuthoritativeEntity" .`, graphs.schema)} }`
-		);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?classIri ${fromClause(graphs.schema)} WHERE {
+				<${APP_SETTINGS_IRI}> <${AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI}> ?classIri
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.classIri?.value ?? null;
 	}
 
-	/** Marks/unmarks `classIriValue` as an `AuthoritativeEntity` by inserting/deleting its
-	 *  `rdfs:subClassOf <SCHEMA_NAMESPACE>AuthoritativeEntity` triple — the sole signal
-	 *  `canvas-model.ts` uses to classify a class as catalog-eligible. Mirrors
-	 *  `setAssociationClass` exactly. Written into `classIriValue`'s own namespace (the subject of
-	 *  the triple), not necessarily the default namespace the marker class itself lives in. */
-	async setAuthoritativeEntity(
-		classIriValue: string,
-		isAuthoritative: boolean,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<void> {
-		this.assertSafeSparqlIri(classIriValue, 'class IRI');
-		if (isAuthoritative) {
-			await this.ensureAuthoritativeEntityClass();
-			await this.insertSubClassOf(classIriValue, AUTHORITATIVE_ENTITY_IRI, namespaceBaseIri);
-		} else {
-			await this.deleteSubClassOf(classIriValue, AUTHORITATIVE_ENTITY_IRI, namespaceBaseIri);
+	/** Sets, replaces, or (passing `null`) clears the configured catalog marker class — mirrors
+	 *  `setBackstageKind`'s DELETE/INSERT/WHERE-with-OPTIONAL shape, except the object is a class
+	 *  IRI, not a string literal. Does **not** validate that `classIriValue` refers to an existing
+	 *  class — a schema author may configure the setting before or after creating the class;
+	 *  existence is enforced by Story 015's class picker, not by this write path. */
+	async setAuthoritativeEntityClassIri(classIriValue: string | null): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		if (classIriValue === null) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${APP_SETTINGS_IRI}> <${AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
 		}
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${APP_SETTINGS_IRI}> <${AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI}> ?old }
+			INSERT { <${APP_SETTINGS_IRI}> <${AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI}> <${classIriValue}> }
+			WHERE { OPTIONAL { <${APP_SETTINGS_IRI}> <${AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI}> ?old } }
+		`);
 	}
 
 	// -- backstageKind annotation (Backstage-mapping Story 003/005) -----------------------------
 
 	/** Idempotently ensures `<BACKSTAGE_KIND_PREDICATE_IRI> a owl:AnnotationProperty` exists,
-	 *  mirroring `ensureAuthoritativeEntityClass`'s self-describing-vocabulary declaration. Always
+	 *  mirroring `ensureAttributedRelationshipClass`'s self-describing-vocabulary declaration. Always
 	 *  lives in the *default* namespace's `/schema` graph, even when the class carrying the
 	 *  annotation lives elsewhere. Safe to call on every write: a no-op once the triple exists. */
 	async ensureBackstageKindPredicateDeclared(): Promise<void> {
@@ -1801,7 +1840,7 @@ export class SparqlConnector {
 	 *  to at most one kind, so re-setting overwrites rather than accumulating, mirroring
 	 *  `renameClass`'s DELETE/INSERT/WHERE-with-OPTIONAL shape. Written into the class's own
 	 *  namespace's `/schema` graph (the caller-supplied `namespaceBaseIri`, matching
-	 *  `setAuthoritativeEntity`'s explicit-namespace convention). */
+	 *  `setAssociationClass`'s explicit-namespace convention). */
 	async setBackstageKind(
 		classIriValue: string,
 		kind: string,
@@ -2346,8 +2385,12 @@ export class SparqlConnector {
 	 * been authored) rather than a label search, since the predicate is namespace-scoped and
 	 * deterministic. Returns `null` — never throws — when the system individual can't be found or has
 	 * no such edge; this is an optional provenance enrichment, not a mandatory field.
+	 *
+	 * Public (Sprint 4 Story 012) so `fetchProvenanceReport` below can call it independent of catalog
+	 * generation — `generateCatalogForClass`/`buildSplitDatasetOps` remain its other, pre-existing
+	 * callers, unaffected by the visibility change.
 	 */
-	private async fetchOperatingAuthority(systemOfWorkIri: string): Promise<string | null> {
+	async fetchOperatingAuthority(systemOfWorkIri: string): Promise<string | null> {
 		let namespaceBaseIri: string;
 		try {
 			namespaceBaseIri = await this.findNamespaceOfIndividual(systemOfWorkIri);
@@ -2362,6 +2405,130 @@ export class SparqlConnector {
 			} LIMIT 1
 		`);
 		return results.results.bindings[0]?.authority?.value ?? null;
+	}
+
+	// -- Provenance/contributor report (Sprint 4 Story 012) --------------------------------------
+	// A pure read path over data the data-catalog feature already writes (`isMasterFor`/
+	// `isOperatedBy` assertions, PROV triples in `graphs.catalog`) — no new RDF vocabulary, no
+	// writes. Reuses `fetchMasterSystemsOfClass`/`fetchOperatingAuthority` (the same transitive walk
+	// `generateCatalogForClass`/`buildSplitDatasetOps` already use) so a `Backstage`-sourced
+	// `SystemOfWork` resolves through the exact same code path as any hand-modeled one — no
+	// Backstage-specific branch anywhere in this method.
+
+	/** Labels for a batch of IRIs in one query — `rdfs:label` if declared anywhere (unrestricted
+	 *  cross-graph `GRAPH ?g` lookup, mirroring `fetchAllReifiedStatements`' pattern), else the IRI's
+	 *  own local name. Empty input short-circuits before issuing a query with an empty `VALUES`
+	 *  clause (invalid SPARQL syntax). */
+	private async fetchLabelsForIris(iris: string[]): Promise<Map<string, string>> {
+		const unique = [...new Set(iris)];
+		const labels = new Map<string, string>();
+		if (unique.length === 0) return labels;
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?iri ?label WHERE {
+				VALUES ?iri { ${unique.map((iri) => `<${iri}>`).join(' ')} }
+				OPTIONAL { GRAPH ?g { ?iri rdfs:label ?label } }
+			}
+		`);
+		for (const b of results.results.bindings) {
+			labels.set(b.iri.value, b.label?.value ?? extractLocalName(b.iri.value));
+		}
+		return labels;
+	}
+
+	/** The `prov:wasGeneratedBy` → `prov:Activity` timestamp (`endedAtTime`, falling back to
+	 *  `startedAtTime`) for a batch of dataset IRIs in `namespaceBaseIri`'s own `graphs.catalog`, in
+	 *  one query — `null` (via absence from the returned map) for a dataset that's never been
+	 *  generated, which is expected and not an error (Story 012's "no `/catalog` graph data yet" AC). */
+	private async fetchDatasetGeneratedAt(
+		datasetIris: string[],
+		namespaceBaseIri: string
+	): Promise<Map<string, string>> {
+		const unique = [...new Set(datasetIris)];
+		const generatedAt = new Map<string, string>();
+		if (unique.length === 0) return generatedAt;
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?dataset ?started ?ended ${fromClause(graphs.catalog)} WHERE {
+				VALUES ?dataset { ${unique.map((iri) => `<${iri}>`).join(' ')} }
+				?dataset <${PROV.wasGeneratedBy}> ?activity .
+				OPTIONAL { ?activity <${PROV.startedAtTime}> ?started }
+				OPTIONAL { ?activity <${PROV.endedAtTime}> ?ended }
+			}
+		`);
+		for (const b of results.results.bindings) {
+			const value = b.ended?.value ?? b.started?.value;
+			if (value) generatedAt.set(b.dataset.value, value);
+		}
+		return generatedAt;
+	}
+
+	/**
+	 * Aggregates, per attribute of `classIri`, the resolved `isMasterFor` contributor (its own
+	 * attribute-level override if one exists, else the class-level default — Story 020's split-
+	 * dataset precedent), the resolved operating authority (`isMasterFor` → `isOperatedBy`), and the
+	 * PROV metadata from the last "Generate catalog" run of whichever dataset actually covers that
+	 * attribute (its split dataset if overridden, else the class's own parent dataset — mirroring
+	 * `buildSplitDatasetOps`' own grouping-by-override-system logic exactly, so this report can never
+	 * disagree with what "Generate catalog" itself produced). Story 013's read path — never writes
+	 * anything.
+	 *
+	 * Works correctly (returns partial data, not an error) for a class whose catalog has never been
+	 * generated: `fetchDatasetGeneratedAt` simply finds no `prov:wasGeneratedBy` triple for a dataset
+	 * IRI that was never minted, leaving `generatedAt: null` on every row.
+	 */
+	async fetchProvenanceReport(classIri: string): Promise<ProvenanceReport> {
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		const namespaceBaseIri = await this.findNamespaceOfClass(classIri);
+		const className = extractLocalName(classIri);
+
+		const [classInfo, classMasters, attributes] = await Promise.all([
+			this.fetchClassLabelAndComment(classIri, namespaceBaseIri),
+			this.fetchMasterSystemsOfClass(classIri),
+			this.fetchAllDatatypeProperties(namespaceBaseIri).then((props) =>
+				props.filter((p) => p.domain === classIri)
+			)
+		]);
+		const classDefaultMaster = classMasters[0] ?? null;
+
+		const attributeMasters = await Promise.all(
+			attributes.map((attr) => this.fetchMasterSystemsOfClass(attr.iri))
+		);
+
+		type Resolved = { master: { iri: string; label: string } | null; isAttributeOverride: boolean };
+		const resolved: Resolved[] = attributeMasters.map((masters) =>
+			masters[0]
+				? { master: masters[0], isAttributeOverride: true }
+				: { master: classDefaultMaster, isAttributeOverride: false }
+		);
+
+		const authorityIris = await Promise.all(
+			resolved.map((r) => (r.master ? this.fetchOperatingAuthority(r.master.iri) : Promise.resolve(null)))
+		);
+
+		const datasetForAttribute = resolved.map((r) =>
+			r.isAttributeOverride && r.master
+				? splitDatasetIri(namespaceBaseIri, className, extractLocalName(r.master.iri))
+				: datasetIri(namespaceBaseIri, className)
+		);
+		const [authorityLabels, generatedAtByDataset] = await Promise.all([
+			this.fetchLabelsForIris(authorityIris.filter((iri): iri is string => iri !== null)),
+			this.fetchDatasetGeneratedAt(datasetForAttribute, namespaceBaseIri)
+		]);
+
+		return {
+			classIri,
+			className: classInfo.label,
+			attributes: attributes.map((attr, i) => ({
+				attributeIri: attr.iri,
+				attributeLabel: attr.label,
+				masterIri: resolved[i].master?.iri ?? null,
+				masterLabel: resolved[i].master?.label ?? null,
+				isAttributeOverride: resolved[i].isAttributeOverride,
+				authorityIri: authorityIris[i],
+				authorityLabel: authorityIris[i] ? (authorityLabels.get(authorityIris[i]!) ?? null) : null,
+				generatedAt: generatedAtByDataset.get(datasetForAttribute[i]) ?? null
+			}))
+		};
 	}
 
 	// -- Catalog generation, edit & save (data-catalog Stories 008/009/010/011/012) -------------
@@ -2409,7 +2576,7 @@ export class SparqlConnector {
 
 	/** Idempotently ensures `<catalogIri> a dcat:Catalog` exists for a namespace — one container
 	 *  per namespace, reused across every class's generation run (mirrors
-	 *  `ensureAuthoritativeEntityClass`'s ASK-then-INSERT shape). */
+	 *  `ensureAttributedRelationshipClass`'s ASK-then-INSERT shape). */
 	async ensureCatalogContainer(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<void> {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const catalog = catalogIri(namespaceBaseIri);
@@ -4309,12 +4476,13 @@ export class SparqlConnector {
 			mergedGraph.filter((q) => isRdfType(q, OWL.Class)).map((q) => q.subject.value)
 		);
 
+		const authoritativeEntityClassIri = await this.fetchAuthoritativeEntityClassIri();
 		const issues = [
 			...checkShaclWellFormedness(newQuads, declaredClasses),
-			...checkStructural(mergedGraph)
+			...checkStructural(mergedGraph, authoritativeEntityClassIri)
 		];
 		// Backstage-mapping Story 005: `severity: 'warning'` issues (e.g. a `backstageKind`'d class
-		// missing `AuthoritativeEntity` ancestry) are surfaced but must not block the save.
+		// missing catalog-marker ancestry) are surfaced but must not block the save.
 		const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');
 		if (blockingIssues.length > 0) throw new SchemaValidationError(blockingIssues);
 
@@ -4445,9 +4613,10 @@ export class SparqlConnector {
 		const declaredClasses = new Set(
 			mergedGraph.filter((q) => isRdfType(q, OWL.Class)).map((q) => q.subject.value)
 		);
+		const authoritativeEntityClassIri = await this.fetchAuthoritativeEntityClassIri();
 		const issues = [
 			...checkShaclWellFormedness(inserted, declaredClasses),
-			...checkStructural(mergedGraph)
+			...checkStructural(mergedGraph, authoritativeEntityClassIri)
 		];
 		// Backstage-mapping Story 005: `severity: 'warning'` issues must not block the import.
 		const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');

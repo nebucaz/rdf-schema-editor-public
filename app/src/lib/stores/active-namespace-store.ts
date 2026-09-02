@@ -41,3 +41,19 @@ export class LocalStorageActiveNamespaceStore implements ActiveNamespaceStore {
 }
 
 export const activeNamespaceStore: ActiveNamespaceStore = new LocalStorageActiveNamespaceStore();
+
+/**
+ * Resolves the namespace that should become active as a side effect of switching to `workspace`
+ * (Sprint 6 Story 016). When the newly-active Workspace has a configured `defaultNamespaceBaseIri`,
+ * that becomes the new active namespace; otherwise the current active namespace is left exactly as
+ * it was — this field is documented as "a convenience, not authoritative", so unset means no
+ * fallback/guess. Extracted as a pure function (rather than inline in `+page.svelte`, which has no
+ * component-testing project yet) so `resolveActiveWorkspaceIri`'s namespace-switch side effect stays
+ * unit-testable.
+ */
+export function resolveWorkspaceDefaultNamespace(
+	workspace: { defaultNamespaceBaseIri: string | null } | undefined,
+	currentNamespaceBaseIri: string
+): string {
+	return workspace?.defaultNamespaceBaseIri ?? currentNamespaceBaseIri;
+}

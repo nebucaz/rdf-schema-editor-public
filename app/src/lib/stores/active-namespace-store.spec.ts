@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { LocalStorageActiveNamespaceStore } from './active-namespace-store';
+import { LocalStorageActiveNamespaceStore, resolveWorkspaceDefaultNamespace } from './active-namespace-store';
 import type { MinimalStorage } from './layout-store';
 
 function fakeStorage(): MinimalStorage & { data: Record<string, string> } {
@@ -45,5 +45,27 @@ describe('LocalStorageActiveNamespaceStore', () => {
 		const store = new LocalStorageActiveNamespaceStore(undefined);
 		expect(store.getActive()).toBeUndefined();
 		expect(() => store.setActive('http://example.org/ns')).not.toThrow();
+	});
+});
+
+describe('resolveWorkspaceDefaultNamespace (Sprint 6 Story 016)', () => {
+	it('switches to the Workspace’s configured default namespace when set', () => {
+		const workspace = { defaultNamespaceBaseIri: 'http://example.org/ns-b' };
+		expect(resolveWorkspaceDefaultNamespace(workspace, 'http://example.org/ns-a')).toBe(
+			'http://example.org/ns-b'
+		);
+	});
+
+	it('leaves the current namespace untouched when the Workspace has no default configured', () => {
+		const workspace = { defaultNamespaceBaseIri: null };
+		expect(resolveWorkspaceDefaultNamespace(workspace, 'http://example.org/ns-a')).toBe(
+			'http://example.org/ns-a'
+		);
+	});
+
+	it('leaves the current namespace untouched when the Workspace itself is unresolved', () => {
+		expect(resolveWorkspaceDefaultNamespace(undefined, 'http://example.org/ns-a')).toBe(
+			'http://example.org/ns-a'
+		);
 	});
 });

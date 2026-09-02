@@ -88,3 +88,25 @@ a {
 a:hover {
 	text-decoration: underline;
 }
+
+/* Sprint 6 Story 022: highlight an edge's path and its label together on hover/select. Targets
+   `@xyflow/svelte`'s library-owned `EdgeWrapper` `<g>` (which adds `.selected` on click-select and
+   supports native `:hover`) — centralized here rather than duplicated in every edge component's own
+   scoped `<style>` block. */
+.svelte-flow__edge:hover .svelte-flow__edge-path,
+.svelte-flow__edge.selected .svelte-flow__edge-path {
+	stroke: var(--color-accent);
+	stroke-width: 2.5px;
+}
+
+.svelte-flow__edge:hover .edge-label,
+.svelte-flow__edge.selected .edge-label {
+	border-color: var(--color-accent);
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 25%, transparent);
+}
+
+.svelte-flow__edge:hover .association-marker,
+.svelte-flow__edge.selected .association-marker {
+	stroke: var(--color-accent);
+	stroke-width: 2.5px;
+}

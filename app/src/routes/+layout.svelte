@@ -15,11 +15,10 @@
 	import ImportResultView from '$lib/components/ImportResultView.svelte';
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
+	import SettingsView from '$lib/components/SettingsView.svelte';
 	import { sparqlConnector, type ImportSummary } from '$lib/services/sparql-connector';
 	import { quadsToNQuads } from '$lib/services/turtle';
 	import { SchemaValidationError } from '$lib/services/validation';
-	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
-	import { activeNamespaceStore } from '$lib/stores/active-namespace-store';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
@@ -32,6 +31,7 @@
 	let showExternalVocabManagement = $state(false);
 	let showQueryConsole = $state(false);
 	let showMissingConcepts = $state(false);
+	let showSettings = $state(false);
 	let exportingQuads = $state(false);
 
 	let importFileInput = $state<HTMLInputElement | undefined>();
@@ -39,18 +39,11 @@
 	let importSummary = $state<ImportSummary | null>(null);
 	let importError = $state<string | null>(null);
 
-	let activeNamespace = $state(activeNamespaceStore.getActive() ?? DEFAULT_NAMESPACE_BASE_IRI);
-
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
 		void workspaceStore.ensureLoaded();
 		void externalVocabStore.ensureLoaded();
 	});
-
-	function handleActiveNamespaceChange(baseIri: string) {
-		activeNamespace = baseIri;
-		activeNamespaceStore.setActive(baseIri);
-	}
 
 	/** Browser-native download — no new dependency (matches `TriplesPanel.svelte`'s helper). */
 	function downloadFile(filename: string, text: string, mimeType: string) {
@@ -102,7 +95,7 @@
 		importError = null;
 		try {
 			const text = await readFileAsText(file);
-			const summary = await sparqlConnector.importTurtle(text, activeNamespace);
+			const summary = await sparqlConnector.importTurtle(text, workbenchActions.activeNamespace ?? undefined);
 			importSummary = summary;
 			workbenchActions.reload();
 			void namespaceStore.refresh();
@@ -135,8 +128,8 @@
 					class="namespace-select"
 					aria-label="Active namespace"
 					title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
-					value={activeNamespace}
-					onchange={(e) => handleActiveNamespaceChange(e.currentTarget.value)}
+					value={workbenchActions.activeNamespace}
+					onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
 				>
 					{#each namespaceStore.namespaces as ns (ns.baseIri)}
 						<option value={ns.baseIri}>{ns.prefix}</option>
@@ -183,6 +176,9 @@
 					</button>
 					<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
 						Missing Concepts
+					</button>
+					<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
+						Settings
 					</button>
 					<button
 						type="button"
@@ -245,6 +241,10 @@
 
 <Modal isOpen={showMissingConcepts} title="Missing Concepts" onClose={() => (showMissingConcepts = false)}>
 	<MissingConceptsPanel namespaces={namespaceStore.namespaces} onCreated={() => workbenchActions.reload()} />
+</Modal>
+
+<Modal isOpen={showSettings} title="Settings" onClose={() => (showSettings = false)}>
+	<SettingsView />
 </Modal>
 
 <Modal

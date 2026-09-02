@@ -16,6 +16,7 @@ function createWorkbenchActionsStore() {
 	let hiddenNamespaces = $state<Set<string>>(new Set());
 	let viewMode = $state<'schema' | 'instances'>('schema');
 	let activeWorkspace = $state<string | null>(null);
+	let activeNamespace = $state<string | null>(null);
 	let addElementOpen = $state(false);
 	/** STORY-082: a one-shot request to open the Triples panel scoped to one Workspace — set by
 	 *  `WorkspaceManagementView`'s "View triples" button (rendered inside `+layout.svelte`), read and
@@ -29,6 +30,7 @@ function createWorkbenchActionsStore() {
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
 	let onSetViewMode: (mode: 'schema' | 'instances') => void = () => {};
 	let onSetActiveWorkspace: (workspaceIri: string) => void = () => {};
+	let onSetActiveNamespace: (baseIri: string) => void = () => {};
 
 	return {
 		get loading() {
@@ -85,6 +87,16 @@ function createWorkbenchActionsStore() {
 		set activeWorkspace(value: string | null) {
 			activeWorkspace = value;
 		},
+		/** Active namespace (Sprint 6 Story 016): `+page.svelte` owns the canonical value (it drives
+		 *  new-entity/relation namespace defaulting via `activeNamespaceBaseIri()` and persists via
+		 *  `activeNamespaceStore`), the navbar's namespace `<select>` (`+layout.svelte`) only displays
+		 *  it and triggers changes — same bridge shape as `activeWorkspace`/`setActiveWorkspace`. */
+		get activeNamespace() {
+			return activeNamespace;
+		},
+		set activeNamespace(value: string | null) {
+			activeNamespace = value;
+		},
 		/** "Add Element" typeahead modal (STORY-080): `+layout.svelte`'s hamburger entry opens it,
 		 *  `+page.svelte` owns the rendered `Modal`/`AddElementForm` (it needs the canvas's
 		 *  `nextPosition()`/`addWorkspaceMember` wiring) — same bridge shape as
@@ -122,6 +134,9 @@ function createWorkbenchActionsStore() {
 		registerSetActiveWorkspace(fn: (workspaceIri: string) => void) {
 			onSetActiveWorkspace = fn;
 		},
+		registerSetActiveNamespace(fn: (baseIri: string) => void) {
+			onSetActiveNamespace = fn;
+		},
 		reload() {
 			onReload();
 		},
@@ -139,6 +154,9 @@ function createWorkbenchActionsStore() {
 		},
 		setActiveWorkspace(workspaceIri: string) {
 			onSetActiveWorkspace(workspaceIri);
+		},
+		setActiveNamespace(baseIri: string) {
+			onSetActiveNamespace(baseIri);
 		},
 		openExternalVocabManagement() {
 			externalVocabManagementOpen = true;

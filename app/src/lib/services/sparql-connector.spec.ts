@@ -152,6 +152,7 @@ function mockGraphFetch(
 		ancestors?: string[];
 		classGraph?: Record<string, string>;
 		backstageKind?: string;
+		authoritativeEntityClassIri?: string;
 	} = {}
 ) {
 	const updates: string[] = [];
@@ -200,6 +201,14 @@ function mockGraphFetch(
 		if (q.includes('backstageKind')) {
 			const bindings = fixture.backstageKind ? [{ kind: { type: 'literal', value: fixture.backstageKind } }] : [];
 			return new Response(JSON.stringify({ head: { vars: ['kind'] }, results: { bindings } }), {
+				status: 200
+			});
+		}
+		if (q.includes('authoritativeEntityClass')) {
+			const bindings = fixture.authoritativeEntityClassIri
+				? [{ classIri: { type: 'uri', value: fixture.authoritativeEntityClassIri } }]
+				: [];
+			return new Response(JSON.stringify({ head: { vars: ['classIri'] }, results: { bindings } }), {
 				status: 200
 			});
 		}
@@ -785,6 +794,21 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(result).toEqual([{ iri: usesIri, label: 'uses' }]);
 	});
 
+	it('listGenericObjectProperties queries with ORDER BY LCASE(?label) (Sprint 6 Story 018)', async () => {
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			expect(body.query).toContain('ORDER BY LCASE(?label)');
+			return new Response(JSON.stringify({ head: { vars: ['p', 'label'] }, results: { bindings: [] } }), {
+				status: 200
+			});
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.listGenericObjectProperties();
+		expect(fn).toHaveBeenCalled();
+	});
+
 	it('specific-relation insertObjectProperty is unchanged when no kind option is passed', async () => {
 		const person = classIri('Person');
 		const car = classIri('Car');
@@ -965,54 +989,59 @@ describe('SparqlConnector — attributed-relationship marker (STORY-020)', () =>
 	});
 });
 
-describe('SparqlConnector — AuthoritativeEntity marker (data-catalog Story 003)', () => {
+describe('SparqlConnector — configurable catalog marker class setting (Sprint 5 Story 014)', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
-	const markerIri = `${SCHEMA_NAMESPACE}AuthoritativeEntity`;
+	const settingsIri = `${SCHEMA_NAMESPACE}AppSettings`;
+	const settingPredicateIri = `${SCHEMA_NAMESPACE}authoritativeEntityClass`;
 
-	it('ensureAuthoritativeEntityClass creates the marker class only if missing', async () => {
-		const { fn, updates } = mockGraphFetch({ classExists: false });
+	it('fetchAuthoritativeEntityClassIri returns null when unset', async () => {
+		const { fn } = mockGraphFetch();
 		vi.stubGlobal('fetch', fn);
 
 		const connector = new SparqlConnector('/api/sparql');
-		await connector.ensureAuthoritativeEntityClass();
-
-		expect(updates).toHaveLength(1);
-		expect(updates[0]).toContain(`<${markerIri}> a owl:Class`);
+		expect(await connector.fetchAuthoritativeEntityClassIri()).toBeNull();
 	});
 
-	it('ensureAuthoritativeEntityClass is a no-op when the marker class already exists', async () => {
-		const { fn, updates } = mockGraphFetch({ classExists: true });
-		vi.stubGlobal('fetch', fn);
-
-		const connector = new SparqlConnector('/api/sparql');
-		await connector.ensureAuthoritativeEntityClass();
-
-		expect(updates).toHaveLength(0);
-	});
-
-	it('setAuthoritativeEntity(true) ensures the marker class and writes the subClassOf triple', async () => {
-		const { fn, updates } = mockGraphFetch({ classExists: true, ancestors: [] });
-		vi.stubGlobal('fetch', fn);
-
-		const entityIri = classIri('Person');
-		const connector = new SparqlConnector('/api/sparql');
-		await connector.setAuthoritativeEntity(entityIri, true);
-
-		expect(updates).toEqual([expect.stringContaining(`<${entityIri}> rdfs:subClassOf <${markerIri}>`)]);
-	});
-
-	it('setAuthoritativeEntity(false) deletes the subClassOf triple without touching the marker class', async () => {
+	it('setAuthoritativeEntityClassIri writes the setting triple, then fetchAuthoritativeEntityClassIri round-trips it', async () => {
+		const markerIri = classIri('GovCatalogMarker');
 		const { fn, updates } = mockGraphFetch();
 		vi.stubGlobal('fetch', fn);
 
-		const entityIri = classIri('Person');
 		const connector = new SparqlConnector('/api/sparql');
-		await connector.setAuthoritativeEntity(entityIri, false);
+		await connector.setAuthoritativeEntityClassIri(markerIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`DELETE { <${settingsIri}> <${settingPredicateIri}> ?old }`);
+		expect(updates[0]).toContain(`INSERT { <${settingsIri}> <${settingPredicateIri}> <${markerIri}> }`);
+
+		const { fn: fetchFn } = mockGraphFetch({ authoritativeEntityClassIri: markerIri });
+		vi.stubGlobal('fetch', fetchFn);
+		expect(await connector.fetchAuthoritativeEntityClassIri()).toBe(markerIri);
+	});
+
+	it('setAuthoritativeEntityClassIri overwrites a previously-configured marker class', async () => {
+		const newMarkerIri = classIri('OtherCatalogMarker');
+		const { fn, updates } = mockGraphFetch({ authoritativeEntityClassIri: classIri('GovCatalogMarker') });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setAuthoritativeEntityClassIri(newMarkerIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`INSERT { <${settingsIri}> <${settingPredicateIri}> <${newMarkerIri}> }`);
+	});
+
+	it('setAuthoritativeEntityClassIri(null) clears the setting', async () => {
+		const { fn, updates } = mockGraphFetch({ authoritativeEntityClassIri: classIri('GovCatalogMarker') });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setAuthoritativeEntityClassIri(null);
 
 		expect(updates).toEqual([
 			expect.stringContaining(
-				`DELETE DATA { ${inGraph(`<${entityIri}> rdfs:subClassOf <${markerIri}> .`, DEFAULT_GRAPHS.schema)} }`
+				`DELETE WHERE { ${inGraph(`<${settingsIri}> <${settingPredicateIri}> ?old`, DEFAULT_GRAPHS.schema)} }`
 			)
 		]);
 	});
@@ -2321,6 +2350,256 @@ describe('SparqlConnector — catalog generation & regeneration (data-catalog St
 		vi.stubGlobal('fetch', fn);
 		const connector = new SparqlConnector('/api/sparql');
 		await expect(connector.generateCatalogForClass('not-a-safe-iri<>')).rejects.toThrow(/Invalid/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — fetchProvenanceReport (Story 012)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const applicationIri = classIri('Application');
+	const attrAIri = propertyIri(applicationIri, 'attrA');
+	const attrBIri = propertyIri(applicationIri, 'attrB');
+	const dataset = datasetIri(DEFAULT_NAMESPACE_BASE_IRI, 'Application');
+
+	function mockProvenanceFetch(
+		fixture: {
+			classLabel?: string;
+			attributes?: Array<{ iri: string; label?: string }>;
+			classMaster?: { iri: string; label: string } | null;
+			attributeMasters?: Record<string, { iri: string; label: string }>;
+			operatingAuthority?: Record<string, string>;
+			labels?: Record<string, string>;
+			datasetGeneratedAt?: Record<string, { started?: string; ended?: string }>;
+		} = {}
+	) {
+		const attributes = fixture.attributes ?? [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+
+			if (q.includes('GRAPH ?g') && q.includes('a owl:Class')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: 'https://example.com/adoit' } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?label ?comment')) {
+				const binding: SparqlBinding = fixture.classLabel
+					? { label: { type: 'literal', value: fixture.classLabel } }
+					: {};
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['label', 'comment'] },
+						results: { bindings: fixture.classLabel ? [binding] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:label "isMasterFor"') && q.includes(`<${applicationIri}>`)) {
+				const bindings = fixture.classMaster
+					? [
+							{
+								s: { type: 'uri', value: fixture.classMaster.iri },
+								label: { type: 'literal', value: fixture.classMaster.label },
+								g: { type: 'uri', value: 'https://example.com/adoit' }
+							}
+						]
+					: [];
+				return new Response(JSON.stringify({ head: { vars: ['s', 'label', 'g'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			for (const attr of attributes) {
+				if (q.includes('rdfs:label "isMasterFor"') && q.includes(`<${attr.iri}>`)) {
+					const override = fixture.attributeMasters?.[attr.iri];
+					const bindings = override
+						? [
+								{
+									s: { type: 'uri', value: override.iri },
+									label: { type: 'literal', value: override.label },
+									g: { type: 'uri', value: 'https://example.com/adoit' }
+								}
+							]
+						: [];
+					return new Response(JSON.stringify({ head: { vars: ['s', 'label', 'g'] }, results: { bindings } }), {
+						status: 200
+					});
+				}
+			}
+			if (q.includes('owl:DatatypeProperty')) {
+				const bindings = attributes.map((attr) => ({
+					p: { type: 'uri', value: attr.iri },
+					...(attr.label ? { label: { type: 'literal', value: attr.label } } : {}),
+					domain: { type: 'uri', value: applicationIri },
+					range: { type: 'uri', value: 'http://www.w3.org/2001/XMLSchema#string' }
+				}));
+				return new Response(
+					JSON.stringify({ head: { vars: ['p', 'label', 'domain', 'range'] }, results: { bindings } }),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT ?authority WHERE')) {
+				const subject = q.match(/<([^>]+)> <[^>]+> \?authority/)?.[1];
+				const authority = subject ? fixture.operatingAuthority?.[subject] : undefined;
+				const bindings = authority ? [{ authority: { type: 'uri', value: authority } }] : [];
+				return new Response(JSON.stringify({ head: { vars: ['authority'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			if (q.includes('SELECT ?iri ?label')) {
+				const iris = [...q.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
+				const bindings = iris
+					.filter((iri) => fixture.labels?.[iri])
+					.map((iri) => ({ iri: { type: 'uri', value: iri }, label: { type: 'literal', value: fixture.labels![iri] } }));
+				return new Response(JSON.stringify({ head: { vars: ['iri', 'label'] }, results: { bindings } }), {
+					status: 200
+				});
+			}
+			if (q.includes('SELECT ?dataset ?started ?ended')) {
+				const bindings = Object.entries(fixture.datasetGeneratedAt ?? {}).map(([iri, times]) => ({
+					dataset: { type: 'uri', value: iri },
+					...(times.started ? { started: { type: 'literal', value: times.started } } : {}),
+					...(times.ended ? { ended: { type: 'literal', value: times.ended } } : {})
+				}));
+				return new Response(
+					JSON.stringify({ head: { vars: ['dataset', 'started', 'ended'] }, results: { bindings } }),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn };
+	}
+
+	it('resolves a class-level isMasterFor default onto every attribute with no override of its own', async () => {
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }],
+			classMaster: { iri: 'https://example.com/adoit#itam', label: 'ITAM' }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.className).toBe('Application');
+		expect(report.attributes).toHaveLength(1);
+		expect(report.attributes[0]).toMatchObject({
+			attributeIri: attrAIri,
+			masterIri: 'https://example.com/adoit#itam',
+			masterLabel: 'ITAM',
+			isAttributeOverride: false,
+			generatedAt: null
+		});
+	});
+
+	it("an attribute-level isMasterFor override wins over the class-level default (Story 019 shape)", async () => {
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }],
+			classMaster: { iri: 'https://example.com/adoit#itam', label: 'ITAM' },
+			attributeMasters: { [attrAIri]: { iri: 'https://example.com/adoit#System_B', label: 'System B' } }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.attributes[0]).toMatchObject({
+			masterIri: 'https://example.com/adoit#System_B',
+			masterLabel: 'System B',
+			isAttributeOverride: true
+		});
+	});
+
+	it('returns partial data — no error, generatedAt null — for a class whose catalog has never been generated', async () => {
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }],
+			classMaster: { iri: 'https://example.com/adoit#itam', label: 'ITAM' },
+			datasetGeneratedAt: {}
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.attributes[0].generatedAt).toBeNull();
+	});
+
+	it('picks up prov:wasGeneratedBy timing once the class-level dataset has actually been generated', async () => {
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }],
+			classMaster: { iri: 'https://example.com/adoit#itam', label: 'ITAM' },
+			datasetGeneratedAt: { [dataset]: { started: '2026-01-01T00:00:00Z', ended: '2026-01-02T00:00:00Z' } }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.attributes[0].generatedAt).toBe('2026-01-02T00:00:00Z');
+	});
+
+	it('resolves a Backstage-sourced SystemOfWork authority through the same code path as any hand-modeled one', async () => {
+		const backstageSystemOfWorkIri = 'https://ld.pageagent.com/backstage#Backstage';
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }],
+			classMaster: { iri: backstageSystemOfWorkIri, label: 'Backstage' },
+			operatingAuthority: { [backstageSystemOfWorkIri]: 'https://ld.pageagent.com/backstage#PlatformTeam' },
+			labels: { 'https://ld.pageagent.com/backstage#PlatformTeam': 'Platform Team' }
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.attributes[0]).toMatchObject({
+			masterIri: backstageSystemOfWorkIri,
+			authorityIri: 'https://ld.pageagent.com/backstage#PlatformTeam',
+			authorityLabel: 'Platform Team'
+		});
+	});
+
+	it('shows "no known contributor" data (null master/authority) for an attribute with no isMasterFor chain anywhere', async () => {
+		const { fn } = mockProvenanceFetch({
+			classLabel: 'Application',
+			attributes: [{ iri: attrAIri, label: 'attrA' }, { iri: attrBIri, label: 'attrB' }],
+			classMaster: null
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+
+		const report = await connector.fetchProvenanceReport(applicationIri);
+
+		expect(report.attributes).toHaveLength(2);
+		for (const attr of report.attributes) {
+			expect(attr.masterIri).toBeNull();
+			expect(attr.masterLabel).toBeNull();
+			expect(attr.authorityIri).toBeNull();
+		}
+	});
+
+	it('rejects a malicious/malformed IRI before any query is issued', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchProvenanceReport('not-a-safe-iri<>')).rejects.toThrow(/Invalid/);
 		expect(fn).not.toHaveBeenCalled();
 	});
 });

@@ -5,6 +5,7 @@ import {
 	GraphDbLayoutStore,
 	gridPosition,
 	resolvePositions,
+	viewportCenteredGridPosition,
 	type MinimalStorage,
 	type WorkspaceMemberPositionsSource
 } from './layout-store';
@@ -226,6 +227,54 @@ describe('gridPosition', () => {
 		const positions = Array.from({ length: 8 }, (_, i) => gridPosition(i));
 		const unique = new Set(positions.map((p) => `${p.x},${p.y}`));
 		expect(unique.size).toBe(8);
+	});
+});
+
+describe('viewportCenteredGridPosition (Sprint 6 Story 020)', () => {
+	const viewport = { x: 0, y: 0, zoom: 1 };
+	const width = 800;
+	const height = 600;
+
+	it('at zoom 1, reproduces the exact pre-fix placement (no regression)', () => {
+		const centerX = width / 2;
+		const centerY = height / 2;
+		for (let i = 0; i < 8; i++) {
+			const col = i % 4;
+			const row = Math.floor(i / 4) % 4;
+			const expected = { x: centerX - 390 + col * 260, y: centerY - 220 + row * 220 };
+			expect(viewportCenteredGridPosition(viewport, width, height, i)).toEqual(expected);
+		}
+	});
+
+	it('at a high zoom level, every node of a full 4x4 block keeps the same on-screen offset from center as at zoom 1 (no longer drifting off-screen as zoom increases)', () => {
+		const zoomedViewport = { x: 0, y: 0, zoom: 2.5 };
+		for (let i = 0; i < 16; i++) {
+			const posAtZoom1 = viewportCenteredGridPosition(viewport, width, height, i);
+			const posZoomed = viewportCenteredGridPosition(zoomedViewport, width, height, i);
+			// Screen-space position = flow position * zoom + pan offset (pan is 0 here).
+			const screenAtZoom1 = { x: posAtZoom1.x * viewport.zoom, y: posAtZoom1.y * viewport.zoom };
+			const screenZoomed = { x: posZoomed.x * zoomedViewport.zoom, y: posZoomed.y * zoomedViewport.zoom };
+			expect(screenZoomed.x).toBeCloseTo(screenAtZoom1.x, 6);
+			expect(screenZoomed.y).toBeCloseTo(screenAtZoom1.y, 6);
+		}
+	});
+
+	it('grows the spread at a low zoom level instead of clustering nodes tightly', () => {
+		const zoomedIn = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 1 }, width, height, 1);
+		const zoomedOut = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 0.4 }, width, height, 1);
+		const zoomedInCenter = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 1 }, width, height, 0);
+		const zoomedOutCenter = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 0.4 }, width, height, 0);
+		const distIn = Math.hypot(zoomedIn.x - zoomedInCenter.x, zoomedIn.y - zoomedInCenter.y);
+		const distOut = Math.hypot(zoomedOut.x - zoomedOutCenter.x, zoomedOut.y - zoomedOutCenter.y);
+		expect(distOut).toBeGreaterThan(distIn);
+	});
+
+	it('still centers on a panned viewport position (unaffected by the zoom fix)', () => {
+		const panned = { x: -200, y: 100, zoom: 1 };
+		const pos = viewportCenteredGridPosition(panned, width, height, 0);
+		const centerX = (width / 2 - panned.x) / panned.zoom;
+		const centerY = (height / 2 - panned.y) / panned.zoom;
+		expect(pos).toEqual({ x: centerX - 390, y: centerY - 220 });
 	});
 });
 

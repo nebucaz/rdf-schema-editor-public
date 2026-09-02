@@ -248,3 +248,78 @@ export function getSelfLoopPath(
 
 	return [path, labelX, labelY] as const;
 }
+
+// -- Draggable edge label position (Sprint 6 Story 021) ------------------------------------------
+// A label's position is stored as a `0..1` fraction of its edge's total path length
+// (`edge-label-position-store.ts`), so it stays meaningful across re-renders even as the path's
+// endpoints move (a node drag, a viewport change) — unlike a fixed x/y, which would drift out of
+// sync with the path the moment it changes shape.
+
+/** A single, module-level, reused offscreen `<path>` element — `getTotalLength()`/`getPointAtLength()`
+ *  need a real, attached (even if invisible) SVG element to compute against reliably across browsers.
+ *  Created lazily on first use, not at module load, so importing this file has no side effect for
+ *  code that never calls `pointAlongPath`/`percentAtPoint` (e.g. a `.spec.ts` run under `node`, with
+ *  no `document`). */
+let measurementPath: SVGPathElement | undefined;
+
+function getMeasurementPath(): SVGPathElement | undefined {
+	if (typeof document === 'undefined') return undefined;
+	if (!measurementPath) {
+		measurementPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+		measurementPath.style.visibility = 'hidden';
+		measurementPath.style.position = 'absolute';
+		document.body.appendChild(measurementPath);
+	}
+	return measurementPath;
+}
+
+/** The point at `percent` (`0..1`) of the way along `pathString`'s total length — used to render a
+ *  dragged label at its persisted position. Falls back to `fallback` (the path's natural
+ *  bend/center point, i.e. what every edge component already computes today) when run outside a
+ *  browser (SSR — this file/component tree only ever runs client-side today, but matches this
+ *  repo's existing SSR-defensiveness elsewhere). */
+export function pointAlongPath(
+	pathString: string,
+	percent: number,
+	fallback: { x: number; y: number }
+): { x: number; y: number } {
+	const path = getMeasurementPath();
+	if (!path) return fallback;
+	path.setAttribute('d', pathString);
+	const totalLength = path.getTotalLength();
+	if (totalLength === 0) return fallback;
+	const point = path.getPointAtLength(percent * totalLength);
+	return { x: point.x, y: point.y };
+}
+
+/** Number of samples `percentAtPoint` checks along the path — every ~2% of total length, precise
+ *  enough for a label drag (not a precision-drawing tool) and cheap enough to recompute on every
+ *  `pointermove` without debouncing. */
+const PERCENT_SAMPLE_COUNT = 51;
+
+/** Inverse of `pointAlongPath`: the `0..1` percent along `pathString` whose point is closest (by
+ *  squared distance, in flow-space) to `target` — SVG has no native point→length lookup, so this
+ *  samples the path at `PERCENT_SAMPLE_COUNT` fixed steps and takes the closest one. Used while
+ *  dragging a label to map the live pointer position back to a percent to render/eventually persist.
+ *  Returns `undefined` outside a browser (SSR) or for a degenerate (zero-length) path. */
+export function percentAtPoint(pathString: string, target: { x: number; y: number }): number | undefined {
+	const path = getMeasurementPath();
+	if (!path) return undefined;
+	path.setAttribute('d', pathString);
+	const totalLength = path.getTotalLength();
+	if (totalLength === 0) return undefined;
+	let bestPercent = 0;
+	let bestDistSq = Infinity;
+	for (let i = 0; i <= PERCENT_SAMPLE_COUNT - 1; i++) {
+		const percent = i / (PERCENT_SAMPLE_COUNT - 1);
+		const point = path.getPointAtLength(percent * totalLength);
+		const dx = point.x - target.x;
+		const dy = point.y - target.y;
+		const distSq = dx * dx + dy * dy;
+		if (distSq < bestDistSq) {
+			bestDistSq = distSq;
+			bestPercent = percent;
+		}
+	}
+	return bestPercent;
+}

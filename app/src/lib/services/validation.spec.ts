@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { checkShaclWellFormedness, checkStructural, checkCatalogStructural } from './validation';
 import { parseTurtle } from './turtle';
-import { AUTHORITATIVE_ENTITY_IRI, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
+import { BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
+
+/** A configured catalog marker class IRI (Sprint 5 Story 014) — an arbitrary user-owned class, no
+ *  longer the hardcoded `AUTHORITATIVE_ENTITY_IRI` constant, threaded into `checkStructural` as its
+ *  second parameter wherever these tests need marker-ancestry behavior. */
+const MARKER_IRI = 'urn:GovCatalogMarker';
 
 const PREFIXES = `
 	@prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -165,34 +170,43 @@ describe('checkStructural (STORY-013)', () => {
 		expect(issues.some((i) => /urn:stmt1/.test(i.message))).toBe(false);
 	});
 
-	it('warns (non-blocking) when a backstageKind-tagged class has no AuthoritativeEntity ancestry (Backstage-mapping Story 005)', () => {
+	it('warns (non-blocking) when a backstageKind-tagged class has no configured-marker ancestry (Backstage-mapping Story 005)', () => {
 		const quads = parseTurtle(`
 			${PREFIXES}
 			<urn:Application> a owl:Class ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
 		`);
-		const issues = checkStructural(quads);
+		const issues = checkStructural(quads, MARKER_IRI);
 		const warning = issues.find((i) => i.message.includes('backstageKind'));
 		expect(warning).toBeDefined();
 		expect(warning?.severity).toBe('warning');
 		expect(warning?.layer).toBe('structural');
 	});
 
-	it('does not warn when a backstageKind-tagged class is rdfs:subClassOf AuthoritativeEntity', () => {
+	it('does not warn when a backstageKind-tagged class is rdfs:subClassOf the configured marker class', () => {
 		const quads = parseTurtle(`
 			${PREFIXES}
-			<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class .
-			<urn:Application> a owl:Class ; rdfs:subClassOf <${AUTHORITATIVE_ENTITY_IRI}> ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
+			<${MARKER_IRI}> a owl:Class .
+			<urn:Application> a owl:Class ; rdfs:subClassOf <${MARKER_IRI}> ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
 		`);
-		const issues = checkStructural(quads);
+		const issues = checkStructural(quads, MARKER_IRI);
 		expect(issues.some((i) => i.message.includes('backstageKind'))).toBe(false);
 	});
 
-	it('does not warn when a backstageKind-tagged class inherits AuthoritativeEntity transitively', () => {
+	it('does not warn when a backstageKind-tagged class inherits the configured marker class transitively', () => {
 		const quads = parseTurtle(`
 			${PREFIXES}
-			<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class .
-			<urn:Base> a owl:Class ; rdfs:subClassOf <${AUTHORITATIVE_ENTITY_IRI}> .
+			<${MARKER_IRI}> a owl:Class .
+			<urn:Base> a owl:Class ; rdfs:subClassOf <${MARKER_IRI}> .
 			<urn:Application> a owl:Class ; rdfs:subClassOf <urn:Base> ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
+		`);
+		const issues = checkStructural(quads, MARKER_IRI);
+		expect(issues.some((i) => i.message.includes('backstageKind'))).toBe(false);
+	});
+
+	it('skips the backstageKind/ancestry warning entirely when no marker class is configured (Sprint 5 Story 014)', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			<urn:Application> a owl:Class ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
 		`);
 		const issues = checkStructural(quads);
 		expect(issues.some((i) => i.message.includes('backstageKind'))).toBe(false);

@@ -49,6 +49,10 @@
 		/** Data-catalog Story 014: opens the Triples panel with the Catalog tab active. Only ever
 		 *  invoked when `isAuthoritativeEntity` is true (the menu entry is hidden otherwise). */
 		onViewCatalog: () => void;
+		/** Sprint 4 Story 013: opens the read-only Provenance/contributor report. Gated on
+		 *  `isAuthoritativeEntity` exactly like `onViewCatalog` — provenance data only exists for
+		 *  catalog-eligible classes. */
+		onViewProvenance: () => void;
 		/** STORY-081: removes just this one Workspace-membership row — the class itself and its
 		 *  membership in every other Workspace are untouched, unlike `onDelete`. */
 		onRemoveFromWorkspace: () => void;
@@ -80,6 +84,12 @@
 			onClick: data.onViewCatalog,
 			hidden: !data.isAuthoritativeEntity
 		},
+		{
+			label: 'Provenance',
+			icon: provenanceIcon,
+			onClick: data.onViewProvenance,
+			hidden: !data.isAuthoritativeEntity
+		},
 		{ label: 'Edit', icon: editIcon, onClick: data.onEdit },
 		{ label: 'Remove from workspace', icon: removeFromWorkspaceIcon, onClick: data.onRemoveFromWorkspace },
 		{ label: 'Delete', icon: deleteIcon, onClick: data.onDelete }
@@ -96,6 +106,10 @@
 
 {#snippet viewCatalogIcon()}
 	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2Z"/></svg>
+{/snippet}
+
+{#snippet provenanceIcon()}
+	<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
 {/snippet}
 
 {#snippet editIcon()}

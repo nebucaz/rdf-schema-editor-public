@@ -27,11 +27,20 @@ const DEFAULT_SHAPES_NAMESPACE_BASE = DEFAULT_GRAPHS.shapes;
 export const ATTRIBUTED_RELATIONSHIP_IRI = `${SCHEMA_NAMESPACE}AttributedRelationship`;
 
 /**
- * The class marking a catalog-eligible entity (data-catalog Story 003): a class opts into DCAT
- * catalog generation by being declared `rdfs:subClassOf` this, exactly mirroring
- * `ATTRIBUTED_RELATIONSHIP_IRI`'s marker pattern — no link-count or naming heuristic.
+ * Settings vocabulary (Sprint 5 Story 014): a single, fixed, well-known subject holding this app's
+ * own configuration triples, mirroring `NAMESPACE_CLASS_IRI`'s self-describing-vocabulary pattern.
+ * Replaces the old hardcoded/auto-created `AUTHORITATIVE_ENTITY_IRI` marker class, which collided
+ * with a user-created domain class of the same display name in a different namespace (`plan.md`'s
+ * Sprint 5 context) — the catalog marker class is now a real, user-owned class the author points at
+ * explicitly via `AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI`, not app-reserved infrastructure.
  */
-export const AUTHORITATIVE_ENTITY_IRI = `${SCHEMA_NAMESPACE}AuthoritativeEntity`;
+export const APP_SETTINGS_IRI = `${SCHEMA_NAMESPACE}AppSettings`;
+
+/** Predicate on `APP_SETTINGS_IRI` holding the user-configured catalog marker class's IRI as its
+ *  object — a class opts into DCAT catalog generation by being declared `rdfs:subClassOf` whatever
+ *  class this points at. No auto-lookup/label-matching fallback: unset means nothing is
+ *  catalog-eligible (`isAuthoritativeEntity` in `canvas-model.ts`). */
+export const AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI = `${SCHEMA_NAMESPACE}authoritativeEntityClass`;
 
 /**
  * Annotation predicate declaring which Backstage `kind` a local class corresponds to (`spec/report/
@@ -48,7 +57,7 @@ export const BACKSTAGE_KIND_PREDICATE_IRI = `${SCHEMA_NAMESPACE}backstageKind`;
  * creates/updates — `<individual> rse:syncSource "backstage"` (Story 007/010). Part of that
  * worker's own generator-owned predicate set, so it's naturally maintained across re-syncs; read
  * here purely to compute `canvas-model.ts`'s `IndividualNodeSpec.syncSource` flag, the same way
- * `AUTHORITATIVE_ENTITY_IRI` feeds `isAuthoritativeEntity`. Must match the Go side's
+ * `AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI` feeds `isAuthoritativeEntity`. Must match the Go side's
  * `config.Config.SyncSourcePredicateIRI()` exactly — both derive from the same shared
  * `PUBLIC_SCHEMA_NAMESPACE` value.
  */

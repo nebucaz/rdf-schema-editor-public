@@ -187,6 +187,34 @@ export function gridPosition(index: number, columns = 4, cellWidth = 260, cellHe
 }
 
 /**
+ * Placement for the Nth interactively-created node (`+page.svelte`'s `nextPosition()`, Sprint 6
+ * Story 020), centered on the live viewport and laid out in a 4×4 grid that repeats every 16 nodes.
+ * The center point (`centerX`/`centerY`) already converts screen space to flow space via
+ * `viewport.zoom` — this function's own fix is scaling the column/row *spread* by the same
+ * `1 / viewport.zoom` factor, so the whole grid shrinks/grows to stay within the visible viewport at
+ * any zoom level instead of using fixed flow-space pixel offsets that only look right at `zoom === 1`.
+ */
+export function viewportCenteredGridPosition(
+	viewport: { x: number; y: number; zoom: number },
+	canvasWidth: number,
+	canvasHeight: number,
+	nodeCount: number
+): Position {
+	const width = canvasWidth || 800;
+	const height = canvasHeight || 600;
+	const centerX = (width / 2 - viewport.x) / viewport.zoom;
+	const centerY = (height / 2 - viewport.y) / viewport.zoom;
+	const col = nodeCount % 4;
+	const row = Math.floor(nodeCount / 4) % 4;
+	const colSpacing = 260 / viewport.zoom;
+	const rowSpacing = 220 / viewport.zoom;
+	return {
+		x: centerX - 1.5 * colSpacing + col * colSpacing,
+		y: centerY - 1 * rowSpacing + row * rowSpacing
+	};
+}
+
+/**
  * Resolves a position for every node IRI: its stored layout position if one exists, otherwise the
  * next unused auto-layout grid slot — so nodes with no stored position (new since the last save, or
  * loaded for the first time) never stack on top of each other or on top of positioned nodes.

@@ -9,14 +9,17 @@
 </script>
 
 <script lang="ts">
-	import { BaseEdge, EdgeLabel, useInternalNode, useEdges, type EdgeProps } from '@xyflow/svelte';
+	import { BaseEdge, EdgeLabel, useInternalNode, useEdges, useSvelteFlow, type EdgeProps } from '@xyflow/svelte';
 	import {
 		getFloatingEdgeParams,
 		getParallelSmoothStepPath,
 		computeParallelOffset,
 		computeSelfLoopIndex,
-		getSelfLoopPath
+		getSelfLoopPath,
+		pointAlongPath,
+		percentAtPoint
 	} from '$lib/utils/floating-edge';
+	import { edgeLabelPositionStore } from '$lib/stores/edge-label-position-store';
 
 	let { id, source, target, data: rawData }: EdgeProps<InheritanceEdgeType> = $props();
 
@@ -54,16 +57,63 @@
 			borderRadius: 0
 		});
 	});
+
+	// -- Draggable, persisted label position (Sprint 6 Story 021) ---------------------------------
+	const { screenToFlowPosition } = useSvelteFlow();
+	let storedPercent = $state<number | undefined>(edgeLabelPositionStore.getPercent(id));
+	let dragging = $state(false);
+	const labelPoint = $derived(
+		storedPercent === undefined
+			? { x: path[1], y: path[2] }
+			: pointAlongPath(path[0], storedPercent, { x: path[1], y: path[2] })
+	);
+
+	function handleLabelPointerDown(event: PointerEvent) {
+		event.stopPropagation();
+		(event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+		dragging = true;
+	}
+
+	function handleLabelPointerMove(event: PointerEvent) {
+		if (!dragging) return;
+		const flowPos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+		const percent = percentAtPoint(path[0], flowPos);
+		if (percent !== undefined) storedPercent = percent;
+	}
+
+	function handleLabelPointerUp() {
+		if (!dragging) return;
+		dragging = false;
+		edgeLabelPositionStore.setPercent(id, storedPercent);
+	}
 </script>
 
 <BaseEdge {id} path={path[0]} markerEnd="url(#inheritance-arrow)" />
-<EdgeLabel x={path[1]} y={path[2]}>
-	<button class="delete-inheritance" onclick={data.onDelete} aria-label="Delete inheritance edge" title="Delete (is-a)">
-		×
-	</button>
+<EdgeLabel x={labelPoint.x} y={labelPoint.y}>
+	<div class="inheritance-label edge-label">
+		<!-- `nopan`: see RelationEdge.svelte's identical drag-handle for why this class is required. -->
+		<button
+			type="button"
+			class="drag-handle nopan"
+			onpointerdown={handleLabelPointerDown}
+			onpointermove={handleLabelPointerMove}
+			onpointerup={handleLabelPointerUp}
+			aria-label="Drag to reposition label"
+			title="Drag to reposition"
+		>⠿</button>
+		<button class="delete-inheritance" onclick={data.onDelete} aria-label="Delete inheritance edge" title="Delete (is-a)">
+			×
+		</button>
+	</div>
 </EdgeLabel>
 
 <style>
+	.inheritance-label {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+
 	.delete-inheritance {
 		display: flex;
 		align-items: center;
@@ -81,5 +131,18 @@
 	.delete-inheritance:hover {
 		background: var(--color-hover);
 		color: var(--color-error);
+	}
+
+	.drag-handle {
+		cursor: grab;
+		color: var(--color-text-muted, #999);
+		touch-action: none;
+		user-select: none;
+		line-height: 1;
+		font-size: 10px;
+	}
+
+	.drag-handle:active {
+		cursor: grabbing;
 	}
 </style>

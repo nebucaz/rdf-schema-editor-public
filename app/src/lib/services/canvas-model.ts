@@ -3,7 +3,6 @@ import {
 	iriToPrefixedName,
 	EXTERNAL_PREFIXES,
 	ATTRIBUTED_RELATIONSHIP_IRI,
-	AUTHORITATIVE_ENTITY_IRI,
 	type XsdDatatype
 } from '$lib/utils/iri';
 import type { FetchedSchema, FetchedSubClassOf } from './sparql-connector';
@@ -150,20 +149,29 @@ export interface CanvasModel {
 	/** Classes carrying the `AttributedRelationship` marker (STORY-020) — exposed so the UI can
 	 *  pre-check the "treat as association class" toggle correctly. */
 	associationClassIris: Set<string>;
-	/** Classes carrying the `AuthoritativeEntity` marker (data-catalog Story 003) — exposed so the
-	 *  UI can flag catalog-eligible classes (Story 014's "View catalog" menu gating) and Story 008's
-	 *  generation engine can decide which classes to generate a catalog entry for. */
+	/** Classes carrying the configured catalog marker class (data-catalog Story 003, Sprint 5
+	 *  Story 014) — exposed so the UI can flag catalog-eligible classes (Story 014's "View catalog"
+	 *  menu gating) and Story 008's generation engine can decide which classes to generate a catalog
+	 *  entry for. Empty when no marker class is configured. */
 	authoritativeEntityIris: Set<string>;
 }
 
 /**
- * Whether `classIriValue` is declared `rdfs:subClassOf <SCHEMA_NAMESPACE>AuthoritativeEntity`
- * (data-catalog Story 003) — the same single-hop `rdfs:subClassOf` walk `buildCanvasModel` uses to
- * classify association classes, exposed standalone so callers other than `buildCanvasModel` (e.g.
- * Story 008's generation engine) can reuse it against a fetched `subClassOf` list directly.
+ * Whether `classIriValue` is declared `rdfs:subClassOf` the configured catalog marker class
+ * (Sprint 5 Story 014 — `markerClassIri`, the user-configured setting, replacing the old hardcoded
+ * `AUTHORITATIVE_ENTITY_IRI` constant) — the same single-hop `rdfs:subClassOf` walk `buildCanvasModel`
+ * uses to classify association classes, exposed standalone so callers other than `buildCanvasModel`
+ * (e.g. Story 008's generation engine) can reuse it against a fetched `subClassOf` list directly.
+ * Returns `false` unconditionally when `markerClassIri` is `null` — no configured marker means
+ * nothing is catalog-eligible, no fallback.
  */
-export function isAuthoritativeEntity(classIriValue: string, subClassOf: FetchedSubClassOf[]): boolean {
-	return subClassOf.some((r) => r.sub === classIriValue && r.super === AUTHORITATIVE_ENTITY_IRI);
+export function isAuthoritativeEntity(
+	classIriValue: string,
+	subClassOf: FetchedSubClassOf[],
+	markerClassIri: string | null
+): boolean {
+	if (markerClassIri === null) return false;
+	return subClassOf.some((r) => r.sub === classIriValue && r.super === markerClassIri);
 }
 
 /**
@@ -190,21 +198,20 @@ export function isAuthoritativeEntity(classIriValue: string, subClassOf: Fetched
 export function buildCanvasModel(
 	schema: FetchedSchema,
 	externalPrefixes: Record<string, string> = EXTERNAL_PREFIXES,
-	options?: { viewMode?: 'schema' | 'instances' }
+	options?: { viewMode?: 'schema' | 'instances'; authoritativeEntityClassIri?: string | null }
 ): CanvasModel {
+	const markerClassIri = options?.authoritativeEntityClassIri ?? null;
 	const associationClassIris = new Set(
 		schema.subClassOf.filter((r) => r.super === ATTRIBUTED_RELATIONSHIP_IRI).map((r) => r.sub)
 	);
 	const authoritativeEntityIris = new Set(
-		schema.subClassOf.filter((r) => r.super === AUTHORITATIVE_ENTITY_IRI).map((r) => r.sub)
+		markerClassIri === null
+			? []
+			: schema.subClassOf.filter((r) => r.super === markerClassIri).map((r) => r.sub)
 	);
-	const inheritanceTriples = schema.subClassOf.filter(
-		(r) => r.super !== ATTRIBUTED_RELATIONSHIP_IRI && r.super !== AUTHORITATIVE_ENTITY_IRI
-	);
+	const inheritanceTriples = schema.subClassOf.filter((r) => r.super !== ATTRIBUTED_RELATIONSHIP_IRI);
 
-	const localClasses = schema.classes.filter(
-		(c) => c.iri !== ATTRIBUTED_RELATIONSHIP_IRI && c.iri !== AUTHORITATIVE_ENTITY_IRI
-	);
+	const localClasses = schema.classes.filter((c) => c.iri !== ATTRIBUTED_RELATIONSHIP_IRI);
 	const localClassIris = new Set(localClasses.map((c) => c.iri));
 
 	const attributesByClass = new Map<string, CanvasAttributeSpec[]>();

@@ -42,6 +42,7 @@
 	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
+	import ProvenanceReportView from '$lib/components/ProvenanceReportView.svelte';
 	import AddElementForm from '$lib/components/AddElementForm.svelte';
 	import {
 		sparqlConnector,
@@ -49,15 +50,25 @@
 		type FetchedSchema,
 		type FetchedAssertion,
 		type FetchedNote,
-		type NameableEntity
+		type NameableEntity,
+		type FetchedIndividualClassRelation,
+		type FetchedIndividualIndividualRelation
 	} from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import { settingsStore } from '$lib/stores/settings-store.svelte';
 	import { buildCanvasModel } from '$lib/services/canvas-model';
-	import { GraphDbLayoutStore, KeyedDebouncer, resolvePositions } from '$lib/stores/layout-store';
+	import {
+		GraphDbLayoutStore,
+		KeyedDebouncer,
+		debounce,
+		resolvePositions,
+		viewportCenteredGridPosition
+	} from '$lib/stores/layout-store';
 	import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
 	import { nodeColorStore } from '$lib/stores/node-color-store';
-	import { activeNamespaceStore } from '$lib/stores/active-namespace-store';
+	import { viewFrameStore } from '$lib/stores/view-frame-store';
+	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '$lib/stores/active-namespace-store';
 	import { activeWorkspaceStore } from '$lib/stores/active-workspace-store';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { namespaceVisibilityStore } from '$lib/stores/namespace-visibility-store';
@@ -121,6 +132,20 @@
 	let canvasHeight = $state(0);
 	let canvasWrapEl = $state<HTMLDivElement | undefined>();
 
+	// -- Per-Workspace view-frame persistence (Sprint 6 Story 023) ----------------------------------
+	// A pan/zoom preference is a pure browser/UI preference, not semantic RDF (same ADR as
+	// `layout-store.ts`'s positions) — `localStorage`, keyed by Workspace IRI, debounced since
+	// `viewport` changes continuously during a pan/zoom gesture, not just once at the end. Covers the
+	// Workspace *switch* case only (`handleActiveWorkspaceChange` below); initial page load stays
+	// governed by `<SvelteFlow>`'s own static `fitView` prop, unchanged.
+	const persistViewFrameDebounced = debounce((workspaceIri: string, frame: { x: number; y: number; zoom: number }) => {
+		viewFrameStore.setViewFrame(workspaceIri, frame);
+	}, 300);
+	$effect(() => {
+		if (!activeWorkspaceIri) return;
+		persistViewFrameDebounced(activeWorkspaceIri, { x: viewport.x, y: viewport.y, zoom: viewport.zoom });
+	});
+
 	/** Converts a screen/client coordinate (e.g. `MouseEvent.clientX/clientY`) into flow-space,
 	 *  for placements the user pinpoints directly (STORY-066's Option/Alt-drag-drop position) rather than
 	 *  `nextPosition()`'s viewport-centered grid slot. Mirrors `@xyflow/svelte`'s own
@@ -168,10 +193,26 @@
 		}
 	}
 
-	// -- Namespace assignment on entry forms (STORY-032) ------------------------------------------
+	// -- Namespace assignment on entry forms (STORY-032, Sprint 6 Story 016) -----------------------
+	// `+page.svelte` is the canonical owner of the active namespace (mirroring `activeWorkspaceIri`
+	// just above) rather than each call site re-reading `activeNamespaceStore.getActive()` fresh —
+	// this is what lets a Workspace switch's `defaultNamespaceBaseIri` side effect (`resolveWorkspaceDefaultNamespace`)
+	// update one value that both this function and `+layout.svelte`'s namespace `<select>` (via the
+	// `workbenchActions.activeNamespace` mirror below) immediately agree on.
+	let activeNamespaceIri = $state<string>(activeNamespaceStore.getActive() ?? DEFAULT_NAMESPACE_BASE_IRI);
 
 	function activeNamespaceBaseIri(): string {
-		return activeNamespaceStore.getActive() ?? DEFAULT_NAMESPACE_BASE_IRI;
+		return activeNamespaceIri;
+	}
+
+	/** Fired when the navbar's namespace `<select>` changes (a user-driven pick) — mirrors
+	 *  `handleActiveWorkspaceChange`'s shape. Programmatic namespace switches driven by a Workspace's
+	 *  `defaultNamespaceBaseIri` (see `loadSchemaFromGraphDB`/`handleActiveWorkspaceChange` below)
+	 *  write directly to `activeNamespaceIri`/`activeNamespaceStore` instead of going through this
+	 *  handler, since it's registered as the dropdown's own `onchange` path. */
+	function handleActiveNamespaceChange(baseIri: string) {
+		activeNamespaceIri = baseIri;
+		activeNamespaceStore.setActive(baseIri);
 	}
 
 	// -- Namespace filter in the workbench (STORY-033, persisted per STORY-040) --------------------
@@ -252,6 +293,37 @@
 	let viewMode = $state<ViewMode>(viewModeStore.getViewMode());
 	let lastFetchedSchema = $state<FetchedSchema | null>(null);
 
+	/**
+	 * Sprint 6 Story 019: individual-relation edges (create/edit/delete, plus assertion add/remove
+	 * when visible) are drawn onto canvas as optimistic, local-only `edges` mutations — without a
+	 * matching update to `lastFetchedSchema`, `buildAndApplyCanvasModel` silently drops them the next
+	 * time a Schema/Instances toggle or Workspace switch rebuilds `nodes`/`edges` purely from that
+	 * snapshot (no GraphDB re-fetch). This keeps the two in sync immutably (`lastFetchedSchema` is
+	 * `$state`) — `updater` receives both individual-relation arrays and returns their next values.
+	 * A no-op before the initial fetch completes (defensive: every call site here only ever fires
+	 * after a successful GraphDB write).
+	 */
+	function updateIndividualRelationsInSchema(
+		updater: (
+			classRelations: FetchedIndividualClassRelation[],
+			individualRelations: FetchedIndividualIndividualRelation[]
+		) => {
+			classRelations: FetchedIndividualClassRelation[];
+			individualRelations: FetchedIndividualIndividualRelation[];
+		}
+	) {
+		if (!lastFetchedSchema) return;
+		const { classRelations, individualRelations } = updater(
+			lastFetchedSchema.individualClassRelations,
+			lastFetchedSchema.individualIndividualRelations
+		);
+		lastFetchedSchema = {
+			...lastFetchedSchema,
+			individualClassRelations: classRelations,
+			individualIndividualRelations: individualRelations
+		};
+	}
+
 	function handleViewModeChange(mode: ViewMode) {
 		viewMode = mode;
 		viewModeStore.setViewMode(mode);
@@ -288,6 +360,12 @@
 	 *  two scope kinds stay mutually exclusive. */
 	let triplesPanelWorkspaceScope = $state<{ workspaceIri: string; label: string } | null>(null);
 
+	// -- Provenance report (Sprint 4 Story 013) --------------------------------------------------
+
+	/** The class the Provenance report modal is currently open for — `null` when closed, mirroring
+	 *  `deleteEntityId`'s "IRI-as-open-flag" pattern rather than a separate boolean. */
+	let provenanceReportClassIri = $state<string | null>(null);
+
 	/** The discriminated scope `TriplesPanel` renders (STORY-082) — memoized via `$derived` so it
 	 *  only produces a new object when one of the three underlying state values actually changes,
 	 *  not on every unrelated re-render (which would otherwise retrigger the panel's fetch). */
@@ -313,14 +391,7 @@
 	}
 
 	function nextPosition() {
-		const width = canvasWidth || 800;
-		const height = canvasHeight || 600;
-		const centerX = (width / 2 - viewport.x) / viewport.zoom;
-		const centerY = (height / 2 - viewport.y) / viewport.zoom;
-		const i = nodes.length;
-		const col = i % 4;
-		const row = Math.floor(i / 4) % 4;
-		return { x: centerX - 390 + col * 260, y: centerY - 220 + row * 220 };
+		return viewportCenteredGridPosition(viewport, canvasWidth, canvasHeight, nodes.length);
 	}
 
 	const entityOptions = $derived(
@@ -468,6 +539,9 @@
 				triplesPanelNamespaceBaseIri = namespaceBaseIri;
 				triplesPanelInitialTab = 'catalog';
 				showTriplesPanel = true;
+			},
+			onViewProvenance: () => {
+				provenanceReportClassIri = classIriValue;
 			},
 			onRemoveFromWorkspace: () => {
 				void handleRemoveFromWorkspace(classIriValue);
@@ -805,14 +879,45 @@
 				data: makeIndividualRelationEdgeData(edgeId, individualIri, predicateIri, objectIri, predicateLabel)
 			}
 		];
+		const namespaceBaseIri = nodeNamespaces.get(individualIri) ?? activeNamespaceBaseIri();
+		const isIndividualTarget = targetType === 'individual';
+		updateIndividualRelationsInSchema((classRelations, individualRelations) =>
+			isIndividualTarget
+				? {
+						classRelations,
+						individualRelations: [
+							...individualRelations,
+							{ individualIri, predicateIri, name: predicateLabel, targetIndividualIri: objectIri, namespaceBaseIri }
+						]
+					}
+				: {
+						classRelations: [
+							...classRelations,
+							{ individualIri, predicateIri, name: predicateLabel, classIri: objectIri, namespaceBaseIri }
+						],
+						individualRelations
+					}
+		);
 	}
 
 	/** Removes the canvas edge a just-deleted assertion drew, mirroring `addAssertionEdgeIfVisible`'s
 	 *  edge-id derivation so it targets the exact same edge (a no-op if it was never drawn — e.g. the
-	 *  object wasn't a visible entity node at insert time). */
+	 *  object wasn't a visible entity node at insert time). Also keeps `lastFetchedSchema`'s
+	 *  individual-relation arrays in sync the same way (Sprint 6 Story 019) — gated on the edge having
+	 *  actually been drawn, matching the `edges` mutation it mirrors. */
 	function removeAssertionEdgeIfVisible(individualIri: string, predicateIri: string, objectIri: string) {
 		const edgeId = individualRelationEdgeId(individualIri, predicateIri, objectIri);
+		if (!findEdge(edgeId)) return;
 		edges = edges.filter((e) => e.id !== edgeId);
+		updateIndividualRelationsInSchema((classRelations, individualRelations) => ({
+			classRelations: classRelations.filter(
+				(r) => !(r.individualIri === individualIri && r.predicateIri === predicateIri && r.classIri === objectIri)
+			),
+			individualRelations: individualRelations.filter(
+				(r) =>
+					!(r.individualIri === individualIri && r.predicateIri === predicateIri && r.targetIndividualIri === objectIri)
+			)
+		}));
 	}
 
 	async function handleAddAssertion(individualIri: string, predicateLabel: string, objectIri: string) {
@@ -1035,6 +1140,45 @@
 					}
 				: e
 		);
+		const namespaceBaseIri = nodeNamespaces.get(target.subjectIri) ?? activeNamespaceBaseIri();
+		const isIndividualTarget = findNode(targetIri)?.type === 'individual';
+		updateIndividualRelationsInSchema((classRelations, individualRelations) => {
+			const withoutOld = {
+				classRelations: classRelations.filter(
+					(r) =>
+						!(r.individualIri === target.subjectIri && r.predicateIri === target.predicateIri && r.classIri === target.objectIri)
+				),
+				individualRelations: individualRelations.filter(
+					(r) =>
+						!(
+							r.individualIri === target.subjectIri &&
+							r.predicateIri === target.predicateIri &&
+							r.targetIndividualIri === target.objectIri
+						)
+				)
+			};
+			return isIndividualTarget
+				? {
+						...withoutOld,
+						individualRelations: [
+							...withoutOld.individualRelations,
+							{
+								individualIri: target.subjectIri,
+								predicateIri: newPredicateIri,
+								name,
+								targetIndividualIri: targetIri,
+								namespaceBaseIri
+							}
+						]
+					}
+				: {
+						...withoutOld,
+						classRelations: [
+							...withoutOld.classRelations,
+							{ individualIri: target.subjectIri, predicateIri: newPredicateIri, name, classIri: targetIri, namespaceBaseIri }
+						]
+					};
+		});
 		editRelationTarget = {
 			edgeKind: 'individual',
 			edgeId: newEdgeId,
@@ -1256,6 +1400,25 @@
 				data: makeIndividualRelationEdgeData(edgeId, source, iri, target, relationName)
 			}
 		];
+		const namespaceBaseIri = nodeNamespaces.get(source) ?? activeNamespaceBaseIri();
+		const isIndividualTarget = findNode(target)?.type === 'individual';
+		updateIndividualRelationsInSchema((classRelations, individualRelations) =>
+			isIndividualTarget
+				? {
+						classRelations,
+						individualRelations: [
+							...individualRelations,
+							{ individualIri: source, predicateIri: iri, name: relationName, targetIndividualIri: target, namespaceBaseIri }
+						]
+					}
+				: {
+						classRelations: [
+							...classRelations,
+							{ individualIri: source, predicateIri: iri, name: relationName, classIri: target, namespaceBaseIri }
+						],
+						individualRelations
+					}
+		);
 		pendingIndividualRelationCreate = null;
 	}
 
@@ -1270,6 +1433,15 @@
 			// relation's triple exactly as well as an individual→class one's.
 			await sparqlConnector.deleteIndividualClassRelation(individualIri, predicateIri, targetIri);
 			edges = edges.filter((e) => e.id !== edgeId);
+			updateIndividualRelationsInSchema((classRelations, individualRelations) => ({
+				classRelations: classRelations.filter(
+					(r) => !(r.individualIri === individualIri && r.predicateIri === predicateIri && r.classIri === targetIri)
+				),
+				individualRelations: individualRelations.filter(
+					(r) =>
+						!(r.individualIri === individualIri && r.predicateIri === predicateIri && r.targetIndividualIri === targetIri)
+				)
+			}));
 			deleteIndividualRelationTarget = null;
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to delete relation';
@@ -1797,7 +1969,10 @@
 	 *  toggling Schema/Instances re-renders instantly against `lastFetchedSchema` instead of
 	 *  re-querying GraphDB. */
 	function buildAndApplyCanvasModel(schema: FetchedSchema) {
-		const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap(), { viewMode });
+		const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap(), {
+			viewMode,
+			authoritativeEntityClassIri: settingsStore.authoritativeEntityClassIri
+		});
 		lastAssociationClassIris = model.associationClassIris;
 		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
 
@@ -2123,12 +2298,15 @@
 		try {
 			await namespaceStore.refresh();
 			await externalVocabStore.refresh();
+			await settingsStore.refresh();
 			await sparqlConnector.ensureDefaultNamespaceMigrated();
 			await sparqlConnector.ensureAttributedRelationshipClass();
-			await sparqlConnector.ensureAuthoritativeEntityClass();
 			const defaultWorkspaceIri = await sparqlConnector.ensureDefaultWorkspace();
 			await workspaceStore.refresh();
 			activeWorkspaceIri = resolveActiveWorkspaceIri(defaultWorkspaceIri);
+			const activeWorkspaceRecord = workspaceStore.workspaces.find((ws) => ws.iri === activeWorkspaceIri);
+			activeNamespaceIri = resolveWorkspaceDefaultNamespace(activeWorkspaceRecord, activeNamespaceIri);
+			activeNamespaceStore.setActive(activeNamespaceIri);
 			await graphDbLayoutStore.reload(activeWorkspaceIri);
 			workspaceMembers = graphDbLayoutStore.getMemberIris();
 			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
@@ -2150,6 +2328,11 @@
 		if (newWorkspaceIri === activeWorkspaceIri) return;
 		activeWorkspaceIri = newWorkspaceIri;
 		activeWorkspaceStore.setActive(newWorkspaceIri);
+		const newWorkspaceRecord = workspaceStore.workspaces.find((ws) => ws.iri === newWorkspaceIri);
+		activeNamespaceIri = resolveWorkspaceDefaultNamespace(newWorkspaceRecord, activeNamespaceIri);
+		activeNamespaceStore.setActive(activeNamespaceIri);
+		const storedViewFrame = viewFrameStore.getViewFrame(newWorkspaceIri);
+		if (storedViewFrame) viewport = { ...storedViewFrame };
 		await graphDbLayoutStore.reload(newWorkspaceIri);
 		workspaceMembers = graphDbLayoutStore.getMemberIris();
 		if (lastFetchedSchema) buildAndApplyCanvasModel(lastFetchedSchema);
@@ -2264,6 +2447,9 @@
 	$effect(() => {
 		workbenchActions.activeWorkspace = activeWorkspaceIri;
 	});
+	$effect(() => {
+		workbenchActions.activeNamespace = activeNamespaceIri;
+	});
 
 	onMount(() => {
 		workbenchActions.registerReload(() => void loadSchemaFromGraphDB());
@@ -2280,6 +2466,7 @@
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
 		workbenchActions.registerSetViewMode(handleViewModeChange);
 		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
+		workbenchActions.registerSetActiveNamespace(handleActiveNamespaceChange);
 		void loadSchemaFromGraphDB();
 	});
 
@@ -2430,6 +2617,17 @@
 		/>
 	{/if}
 </div>
+
+{#if provenanceReportClassIri}
+	<Modal
+		isOpen
+		title={`Provenance — ${findEntityNode(provenanceReportClassIri)?.data.name ?? extractLocalName(provenanceReportClassIri)}`}
+		maxWidth="720px"
+		onClose={() => (provenanceReportClassIri = null)}
+	>
+		<ProvenanceReportView classIri={provenanceReportClassIri} />
+	</Modal>
+{/if}
 
 {#if workbenchActions.addElementOpen}
 	<Modal isOpen title="Add Element" onClose={() => (workbenchActions.addElementOpen = false)}>
@@ -2717,6 +2915,7 @@
 			submitLabel="Create"
 			allowGeneric={true}
 			{genericRelationOptions}
+			initialKind="generic"
 			onCancel={() => (pendingRelationCreate = null)}
 			onSubmit={handleCreateRelationSubmit}
 		/>
