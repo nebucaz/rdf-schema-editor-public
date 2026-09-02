@@ -32,6 +32,7 @@ import {
 	NOTE_LINKED_ELEMENT_PREDICATE_IRI,
 	noteIri,
 	EXTERNAL_VOCABULARY_CLASS_IRI,
+	BACKSTAGE_KIND_PREDICATE_IRI,
 	catalogIri,
 	datasetIri,
 	distributionIri,
@@ -145,10 +146,12 @@ function mockGraphFetch(
 		classExists?: boolean;
 		propertyExists?: boolean;
 		shapeExists?: boolean;
+		annotationPropertyExists?: boolean;
 		ownProperties?: string[];
 		externalReferences?: string[];
 		ancestors?: string[];
 		classGraph?: Record<string, string>;
+		backstageKind?: string;
 	} = {}
 ) {
 	const updates: string[] = [];
@@ -187,7 +190,18 @@ function mockGraphFetch(
 					status: 200
 				});
 			}
+			if (q.includes('owl:AnnotationProperty')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.annotationPropertyExists ?? false }), {
+					status: 200
+				});
+			}
 			return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+		}
+		if (q.includes('backstageKind')) {
+			const bindings = fixture.backstageKind ? [{ kind: { type: 'literal', value: fixture.backstageKind } }] : [];
+			return new Response(JSON.stringify({ head: { vars: ['kind'] }, results: { bindings } }), {
+				status: 200
+			});
 		}
 		if (q.includes('rdfs:domain')) {
 			const bindings = (fixture.ownProperties ?? []).map((p) => ({ p: { type: 'uri', value: p } }));
@@ -1004,6 +1018,110 @@ describe('SparqlConnector — AuthoritativeEntity marker (data-catalog Story 003
 	});
 });
 
+describe('SparqlConnector — backstageKind annotation (Backstage-mapping Story 003/005)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('setBackstageKind declares the predicate and writes the annotation triple', async () => {
+		const { fn, updates } = mockGraphFetch({ annotationPropertyExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Application');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setBackstageKind(entityIri, 'Component');
+
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`<${BACKSTAGE_KIND_PREDICATE_IRI}> a owl:AnnotationProperty`);
+		expect(updates[1]).toContain('DELETE');
+		expect(updates[1]).toContain(`<${entityIri}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?old`);
+		expect(updates[1]).toContain(`INSERT { <${entityIri}> <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component"`);
+	});
+
+	it('setBackstageKind skips the predicate declaration when it already exists', async () => {
+		const { fn, updates } = mockGraphFetch({ annotationPropertyExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Application');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setBackstageKind(entityIri, 'Component');
+
+		expect(updates).toHaveLength(1);
+	});
+
+	it('setBackstageKind overwrites a previously-set kind (one class -> one kind)', async () => {
+		const { fn, updates } = mockGraphFetch({ annotationPropertyExists: true, backstageKind: 'Component' });
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Application');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setBackstageKind(entityIri, 'System');
+
+		expect(updates[0]).toContain(`INSERT { <${entityIri}> <${BACKSTAGE_KIND_PREDICATE_IRI}> "System"`);
+	});
+
+	it('setBackstageKind rejects an empty kind without making any request', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.setBackstageKind(classIri('Application'), '   ')).rejects.toThrow(/must not be empty/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('setBackstageKind escapes the kind literal and validates the class IRI', async () => {
+		const { fn, updates } = mockGraphFetch({ annotationPropertyExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setBackstageKind(classIri('Application'), 'Weird"Kind');
+		expect(updates[0]).toContain('Weird\\"Kind');
+
+		await expect(connector.setBackstageKind('not-a-safe-iri>', 'Component')).rejects.toThrow();
+	});
+
+	it('clearBackstageKind deletes the annotation triple', async () => {
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const entityIri = classIri('Application');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.clearBackstageKind(entityIri);
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${entityIri}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('fetchBackstageKind returns the current mapping, or null when unset', async () => {
+		const entityIri = classIri('Application');
+
+		const unset = mockGraphFetch();
+		vi.stubGlobal('fetch', unset.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchBackstageKind(entityIri)).resolves.toBeNull();
+		vi.unstubAllGlobals();
+
+		const set = mockGraphFetch({ backstageKind: 'Component' });
+		vi.stubGlobal('fetch', set.fn);
+		await expect(connector.fetchBackstageKind(entityIri)).resolves.toBe('Component');
+	});
+
+	it('insertClassAndSetBackstageKind creates the class and tags it in one call', async () => {
+		const { fn, updates } = mockGraphFetch({ classExists: false, annotationPropertyExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertClassAndSetBackstageKind('Application', 'Component');
+
+		expect(result.iri).toBe(classIri('Application'));
+		expect(updates.some((u) => u.includes(`<${classIri('Application')}> a owl:Class`))).toBe(true);
+		expect(
+			updates.some((u) => u.includes(`<${classIri('Application')}> <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component"`))
+		).toBe(true);
+	});
+});
+
 describe('SparqlConnector — fetchMasterSystemsOfClass (data-catalog Story 004/008/020)', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
@@ -1535,7 +1653,16 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 				}
 			],
 			subClassOf: [],
-			individuals: [{ iri: 'urn:I', label: 'I', classIri: 'urn:C', namespaceBaseIri: NS_CORE }],
+			individuals: [
+				{
+					iri: 'urn:I',
+					label: 'I',
+					classIri: 'urn:C',
+					namespaceBaseIri: NS_CORE,
+					syncSource: null,
+					syncStatus: null
+				}
+			],
 			individualClassRelations: [],
 			individualIndividualRelations: []
 		});
@@ -3999,11 +4126,33 @@ describe('SparqlConnector — WorkspaceMembership CRUD and position storage (STO
 
 		const membershipIri = workspaceMembershipIri(ws, elementIri);
 		expect(updates).toHaveLength(1);
-		expect(updates[0]).toContain(`<${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "88.25"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "88.25"^^xsd:decimal`);
 		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "12.75"^^xsd:decimal`);
-		// Only x/y are targeted — the workspace/element link triples aren't touched by this update.
-		expect(updates[0]).not.toContain(WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI);
-		expect(updates[0]).not.toContain(WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI);
+		// Re-asserts the full row (type + workspace + element link), not just x/y — an external
+		// vocabulary stub can be dragged without ever going through `addWorkspaceMember`, so this
+		// must upsert the whole membership row or the position is unrecoverable by
+		// `fetchWorkspaceMembers` (which requires all five triples) after a reload.
+		expect(updates[0]).toContain(`<${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}>`);
+	});
+
+	it('updateWorkspaceMemberPosition persists a position for an element that never had addWorkspaceMember called (e.g. an external class stub)', async () => {
+		const { fn, updates } = mockWorkspaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const elementIri = 'http://xmlns.com/foaf/0.1/Person';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateWorkspaceMemberPosition(ws, elementIri, 300, 150);
+
+		const membershipIri = workspaceMembershipIri(ws, elementIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "300"^^xsd:decimal`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "150"^^xsd:decimal`);
 	});
 });
 
@@ -4411,7 +4560,14 @@ describe('SparqlConnector — Workspace-scoped Triples export (STORY-082)', () =
 			objectProperties: [],
 			subClassOf: [],
 			individuals: [
-				{ iri: individualIriValue, label: 'SomeIndividual', classIri: someClassInOtherNs, namespaceBaseIri: otherNs }
+				{
+					iri: individualIriValue,
+					label: 'SomeIndividual',
+					classIri: someClassInOtherNs,
+					namespaceBaseIri: otherNs,
+					syncSource: null,
+					syncStatus: null
+				}
 			],
 			individualClassRelations: [],
 			individualIndividualRelations: []
@@ -5670,7 +5826,14 @@ describe('SparqlConnector — default Workspace migration and backfill (STORY-07
 				{ iri: classB, label: 'ClassB', comment: null, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
 			],
 			individuals: [
-				{ iri: individualI, label: 'InstanceI', classIri: classA, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+				{
+					iri: individualI,
+					label: 'InstanceI',
+					classIri: classA,
+					namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI,
+					syncSource: null,
+					syncStatus: null
+				}
 			]
 		});
 

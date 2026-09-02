@@ -8,6 +8,8 @@
 		initialName?: string;
 		initialDescription?: string;
 		initialColor?: string;
+		/** Current `backstageKind` annotation (Story 005), if any — empty string means unset. */
+		initialBackstageKind?: string;
 		namespaceOptions?: FetchedNamespace[];
 		initialNamespaceBaseIri?: string;
 		/** Create mode only: existing classes/individuals to match the typed name against, so a name
@@ -19,7 +21,8 @@
 			name: string,
 			description: string,
 			color: string | undefined,
-			namespaceBaseIri?: string
+			namespaceBaseIri: string | undefined,
+			backstageKind: string
 		) => Promise<void>;
 		/** Create mode only, paired with `existingOptions`: called instead of `onSubmit` when the typed
 		 *  name exactly matches an existing class/individual — adds that existing element to the
@@ -34,6 +37,7 @@
 		initialName = '',
 		initialDescription = '',
 		initialColor,
+		initialBackstageKind = '',
 		namespaceOptions = [],
 		initialNamespaceBaseIri = '',
 		existingOptions = [],
@@ -48,6 +52,7 @@
 	let name = $state(initialName);
 	let description = $state(initialDescription);
 	let color = $state<string | undefined>(initialColor);
+	let backstageKind = $state(initialBackstageKind);
 	let namespaceBaseIri = $state(initialNamespaceBaseIri);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
@@ -70,7 +75,13 @@
 			if (matchedExisting && onSelectExisting) {
 				await onSelectExisting(matchedExisting);
 			} else {
-				await onSubmit(name.trim(), description.trim(), color, mode === 'create' ? namespaceBaseIri : undefined);
+				await onSubmit(
+					name.trim(),
+					description.trim(),
+					color,
+					mode === 'create' ? namespaceBaseIri : undefined,
+					backstageKind.trim()
+				);
 			}
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
@@ -122,6 +133,15 @@
 	<label>
 		Color
 		<ColorSwatchPicker {color} onChange={(c) => (color = c)} disabled={!!matchedExisting} />
+	</label>
+	<label>
+		Backstage kind
+		<input
+			type="text"
+			bind:value={backstageKind}
+			placeholder="Optional — e.g. Component"
+			disabled={!!matchedExisting}
+		/>
 	</label>
 	{#if mode === 'create' && namespaceOptions.length > 0}
 		<label>

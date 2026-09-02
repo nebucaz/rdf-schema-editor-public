@@ -14,6 +14,7 @@
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
 	import ImportResultView from '$lib/components/ImportResultView.svelte';
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
+	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
 	import { sparqlConnector, type ImportSummary } from '$lib/services/sparql-connector';
 	import { quadsToNQuads } from '$lib/services/turtle';
 	import { SchemaValidationError } from '$lib/services/validation';
@@ -30,6 +31,7 @@
 	let showWorkspaceManagement = $state(false);
 	let showExternalVocabManagement = $state(false);
 	let showQueryConsole = $state(false);
+	let showMissingConcepts = $state(false);
 	let exportingQuads = $state(false);
 
 	let importFileInput = $state<HTMLInputElement | undefined>();
@@ -179,6 +181,9 @@
 					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
 						Queries
 					</button>
+					<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
+						Missing Concepts
+					</button>
 					<button
 						type="button"
 						class="menu-item"
@@ -236,6 +241,10 @@
 
 <Modal isOpen={showNamespaceManagement} title="Namespaces" onClose={() => (showNamespaceManagement = false)}>
 	<NamespaceManagementView />
+</Modal>
+
+<Modal isOpen={showMissingConcepts} title="Missing Concepts" onClose={() => (showMissingConcepts = false)}>
+	<MissingConceptsPanel namespaces={namespaceStore.namespaces} onCreated={() => workbenchActions.reload()} />
 </Modal>
 
 <Modal

@@ -34,6 +34,35 @@ export const ATTRIBUTED_RELATIONSHIP_IRI = `${SCHEMA_NAMESPACE}AttributedRelatio
 export const AUTHORITATIVE_ENTITY_IRI = `${SCHEMA_NAMESPACE}AuthoritativeEntity`;
 
 /**
+ * Annotation predicate declaring which Backstage `kind` a local class corresponds to (`spec/report/
+ * plan.md`, Story 003) — `<classIri> rse:backstageKind "Component"`. Lives in the graph itself, not
+ * a Go-side config file, so adding a mapping needs no redeploy (same self-describing-vocabulary
+ * rationale as `AUTHORITATIVE_ENTITY_IRI`). Object is a plain string kind, subject a class — the
+ * same `owl:AnnotationProperty` OWL-punning shape as `isMasterFor`, harmless since this repo runs no
+ * OWL2-RL reasoning.
+ */
+export const BACKSTAGE_KIND_PREDICATE_IRI = `${SCHEMA_NAMESPACE}backstageKind`;
+
+/**
+ * Marker predicate written by a Go sync worker (`backend/internal/sync`) on every individual it
+ * creates/updates — `<individual> rse:syncSource "backstage"` (Story 007/010). Part of that
+ * worker's own generator-owned predicate set, so it's naturally maintained across re-syncs; read
+ * here purely to compute `canvas-model.ts`'s `IndividualNodeSpec.syncSource` flag, the same way
+ * `AUTHORITATIVE_ENTITY_IRI` feeds `isAuthoritativeEntity`. Must match the Go side's
+ * `config.Config.SyncSourcePredicateIRI()` exactly — both derive from the same shared
+ * `PUBLIC_SCHEMA_NAMESPACE` value.
+ */
+export const SYNC_SOURCE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}syncSource`;
+
+/**
+ * Soft-flag staleness marker (Story 009) — `<individual> rse:syncStatus "stale"` when a
+ * previously-synced individual disappeared from its upstream source's latest run. Generator-owned
+ * (cleared automatically if the individual reappears), never a human-editable field. Mirrors the Go
+ * side's `config.Config.SyncStatusPredicateIRI()`.
+ */
+export const SYNC_STATUS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}syncStatus`;
+
+/**
  * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
  * own declaration triple, `<base> a <NAMESPACE_CLASS_IRI> ; <NAMESPACE_PREFIX_PREDICATE_IRI>
  * "prefix" ; rdfs:comment "..."`, stored in the default namespace's own `/schema` graph alongside

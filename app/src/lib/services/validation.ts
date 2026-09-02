@@ -10,11 +10,16 @@
  * either library for what would only ever be a thin, hand-rolled wrapper around it anyway.
  */
 import { isRdfType, DCAT, DCT, OWL, RDF, RDFS, SH, type Quad } from './turtle';
-import { XSD_NAMESPACE } from '$lib/utils/iri';
+import { XSD_NAMESPACE, AUTHORITATIVE_ENTITY_IRI, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
 
 export interface ValidationIssue {
 	layer: 'syntax' | 'shacl' | 'structural';
 	message: string;
+	/** `'warning'` marks an issue that must not block a save (Backstage-mapping Story 005) — every
+	 *  pre-existing check omits this field, which is treated as `'error'` (blocking), so this is
+	 *  additive: no prior caller's behavior changes unless it explicitly opts into filtering
+	 *  warnings out before throwing `SchemaValidationError`. */
+	severity?: 'error' | 'warning';
 }
 
 export class SchemaValidationError extends Error {
@@ -197,6 +202,36 @@ export function checkStructural(quads: Quad[]): ValidationIssue[] {
 			issues.push({
 				layer: 'structural',
 				message: `<${propIri}> has conflicting rdfs:range declarations: ${[...ranges].map((r) => `<${r}>`).join(', ')}`
+			});
+		}
+	}
+
+	// Backstage-mapping Story 005: a `backstageKind`'d class should also be `rdfs:subClassOf
+	// AuthoritativeEntity` for the provenance report/catalog generation to have anything to say
+	// about it — per `research.md`, not enforced by the model, so this is a non-blocking warning
+	// rather than joining the hard-block checks above.
+	const subClassOfEdges = new Map<string, string[]>();
+	for (const q of quads) {
+		if (q.predicate.value !== RDFS.subClassOf) continue;
+		const list = subClassOfEdges.get(q.subject.value) ?? [];
+		list.push(q.object.value);
+		subClassOfEdges.set(q.subject.value, list);
+	}
+	function hasAuthoritativeAncestry(classIriValue: string, seen: Set<string>): boolean {
+		if (seen.has(classIriValue)) return false;
+		seen.add(classIriValue);
+		for (const parent of subClassOfEdges.get(classIriValue) ?? []) {
+			if (parent === AUTHORITATIVE_ENTITY_IRI || hasAuthoritativeAncestry(parent, seen)) return true;
+		}
+		return false;
+	}
+	for (const q of quads) {
+		if (q.predicate.value !== BACKSTAGE_KIND_PREDICATE_IRI) continue;
+		if (!hasAuthoritativeAncestry(q.subject.value, new Set())) {
+			issues.push({
+				layer: 'structural',
+				severity: 'warning',
+				message: `<${q.subject.value}> has a backstageKind annotation but is not rdfs:subClassOf AuthoritativeEntity`
 			});
 		}
 	}

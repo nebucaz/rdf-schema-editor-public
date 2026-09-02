@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkShaclWellFormedness, checkStructural, checkCatalogStructural } from './validation';
 import { parseTurtle } from './turtle';
+import { AUTHORITATIVE_ENTITY_IRI, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
 
 const PREFIXES = `
 	@prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -162,6 +163,39 @@ describe('checkStructural (STORY-013)', () => {
 			)
 		).toBe(true);
 		expect(issues.some((i) => /urn:stmt1/.test(i.message))).toBe(false);
+	});
+
+	it('warns (non-blocking) when a backstageKind-tagged class has no AuthoritativeEntity ancestry (Backstage-mapping Story 005)', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			<urn:Application> a owl:Class ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
+		`);
+		const issues = checkStructural(quads);
+		const warning = issues.find((i) => i.message.includes('backstageKind'));
+		expect(warning).toBeDefined();
+		expect(warning?.severity).toBe('warning');
+		expect(warning?.layer).toBe('structural');
+	});
+
+	it('does not warn when a backstageKind-tagged class is rdfs:subClassOf AuthoritativeEntity', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class .
+			<urn:Application> a owl:Class ; rdfs:subClassOf <${AUTHORITATIVE_ENTITY_IRI}> ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
+		`);
+		const issues = checkStructural(quads);
+		expect(issues.some((i) => i.message.includes('backstageKind'))).toBe(false);
+	});
+
+	it('does not warn when a backstageKind-tagged class inherits AuthoritativeEntity transitively', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			<${AUTHORITATIVE_ENTITY_IRI}> a owl:Class .
+			<urn:Base> a owl:Class ; rdfs:subClassOf <${AUTHORITATIVE_ENTITY_IRI}> .
+			<urn:Application> a owl:Class ; rdfs:subClassOf <urn:Base> ; <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component" .
+		`);
+		const issues = checkStructural(quads);
+		expect(issues.some((i) => i.message.includes('backstageKind'))).toBe(false);
 	});
 });
 

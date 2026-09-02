@@ -1,0 +1,24 @@
+# Backend service definition (spec/report story-001). GraphDB itself is not part of this compose
+# file — it runs as its own container per the root README's "Running a local GraphDB instance"
+# section, independent of this project's other services.
+#
+# Usage:
+#   docker compose up --build backend
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: backend/.env
+        required: false
+    ports:
+      - "${BACKEND_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8090/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

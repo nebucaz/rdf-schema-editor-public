@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { SPARQL_ENDPOINT_URL, SPARQL_USER, SPARQL_PASSWORD } from '$env/static/private';
+import { BACKEND_URL } from '$env/static/private';
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
@@ -10,28 +10,20 @@ export const POST: RequestHandler = async ({ request }) => {
 		throw error(400, 'Missing or invalid "update" parameter');
 	}
 
-	// GraphDB uses the /statements endpoint for SPARQL Update requests.
-	const updateUrl = `${SPARQL_ENDPOINT_URL}/statements`;
-
-	const headers: HeadersInit = {
-		'Content-Type': 'application/sparql-update',
-		Accept: 'application/json'
-	};
-
-	if (SPARQL_USER && SPARQL_PASSWORD) {
-		const credentials = Buffer.from(`${SPARQL_USER}:${SPARQL_PASSWORD}`).toString('base64');
-		headers['Authorization'] = `Basic ${credentials}`;
-	}
-
+	// The Go backend (`backend/`) is the sole thing that talks to GraphDB directly and holds its
+	// credentials — this route just forwards the same form-encoded contract GraphDB itself expects.
 	let response: Response;
 	try {
-		response = await fetch(updateUrl, {
+		response = await fetch(`${BACKEND_URL}/sparql/update`, {
 			method: 'POST',
-			headers,
-			body: update
+			headers: {
+				'Content-Type': 'application/x-www-form-urlencoded',
+				Accept: 'application/json'
+			},
+			body: new URLSearchParams({ update }).toString()
 		});
 	} catch (err) {
-		throw error(502, `GraphDB unreachable: ${err instanceof Error ? err.message : 'Unknown error'}`);
+		throw error(502, `Backend unreachable: ${err instanceof Error ? err.message : 'Unknown error'}`);
 	}
 
 	if (!response.ok) {

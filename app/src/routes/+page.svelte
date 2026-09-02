@@ -387,6 +387,11 @@
 	let addExternalClassAtPosition = $state<{ x: number; y: number } | null>(null);
 
 	let editEntityId = $state<string | null>(null);
+	/** The class's `backstageKind` annotation (Story 005) as of when the Edit Entity dialog opened —
+	 *  fetched asynchronously (`onEdit` below), so `editEntityBackstageKindLoaded` gates rendering
+	 *  the form until it resolves, avoiding a stale-then-overwritten `initialBackstageKind`. */
+	let editEntityBackstageKind = $state('');
+	let editEntityBackstageKindLoaded = $state(false);
 	let deleteEntityId = $state<string | null>(null);
 	let deleteEntityWarning = $state<{ externalReferences: string[]; subClassReferences: string[] } | null>(
 		null
@@ -425,6 +430,13 @@
 					editAssociationId = classIriValue;
 				} else {
 					editEntityId = classIriValue;
+					editEntityBackstageKindLoaded = false;
+					editEntityBackstageKind = '';
+					const namespaceBaseIri = nodeNamespaces.get(classIriValue) ?? activeNamespaceBaseIri();
+					void sparqlConnector.fetchBackstageKind(classIriValue, namespaceBaseIri).then((kind) => {
+						editEntityBackstageKind = kind ?? '';
+						editEntityBackstageKindLoaded = true;
+					});
 				}
 			},
 			onDelete: () => {
@@ -471,10 +483,12 @@
 		name: string,
 		description: string,
 		color: string | undefined,
-		namespaceBaseIri?: string
+		namespaceBaseIri: string | undefined,
+		backstageKind: string
 	) {
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
+		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		// The Option/Alt+click-on-canvas context menu's "+ Add Entity" choice overrides the
@@ -525,12 +539,14 @@
 		name: string,
 		description: string,
 		color: string | undefined,
-		namespaceBaseIri?: string
+		namespaceBaseIri: string | undefined,
+		backstageKind: string
 	) {
 		if (!pendingEntityFromConnection) return;
 		const { sourceNodeId, position } = pendingEntityFromConnection;
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
+		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
@@ -547,7 +563,13 @@
 		void loadGenericRelationOptions(sourceNodeId);
 	}
 
-	async function handleEditEntitySubmit(name: string, description: string, color: string | undefined) {
+	async function handleEditEntitySubmit(
+		name: string,
+		description: string,
+		color: string | undefined,
+		_namespaceBaseIri: string | undefined,
+		backstageKind: string
+	) {
 		if (!editEntityId) return;
 		const node = findEntityNode(editEntityId);
 		if (!node) return;
@@ -559,11 +581,19 @@
 		if (description !== node.data.description) {
 			await sparqlConnector.updateClassDescription(node.data.classIri, description || null, entityNamespaceBaseIri);
 		}
+		if (backstageKind !== editEntityBackstageKind) {
+			if (backstageKind) {
+				await sparqlConnector.setBackstageKind(node.data.classIri, backstageKind, entityNamespaceBaseIri);
+			} else {
+				await sparqlConnector.clearBackstageKind(node.data.classIri, entityNamespaceBaseIri);
+			}
+		}
 		nodeColorStore.setColor(node.data.classIri, color);
 		updateNodeData(editEntityId, (d) =>
 			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members)
 		);
 		editEntityId = null;
+		editEntityBackstageKind = '';
 	}
 
 	async function handleDeleteEntityConfirm(force: boolean) {
@@ -1819,6 +1849,8 @@
 						label: spec.label,
 						classIri: spec.classIri,
 						className: spec.className,
+						syncSource: spec.syncSource,
+						isStale: spec.isStale,
 						onEdit: () => {
 							editIndividualId = spec.iri;
 						},
@@ -2505,13 +2537,14 @@
 </Modal>
 
 <Modal isOpen={editEntityId !== null} title="Edit Entity" onClose={() => (editEntityId = null)}>
-	{#if editingNode}
+	{#if editingNode && editEntityBackstageKindLoaded}
 		<EntityForm
 			mode="edit"
 			iri={editingNode.data.classIri}
 			initialName={editingNode.data.name}
 			initialDescription={editingNode.data.description}
 			initialColor={editingNode.data.color}
+			initialBackstageKind={editEntityBackstageKind}
 			submitLabel="Save"
 			onCancel={() => (editEntityId = null)}
 			onSubmit={handleEditEntitySubmit}

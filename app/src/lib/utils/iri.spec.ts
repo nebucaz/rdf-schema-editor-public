@@ -20,7 +20,8 @@ import {
 	resolvePrefixedName,
 	iriToPrefixedName,
 	SCHEMA_NAMESPACE,
-	SHAPES_NAMESPACE
+	SHAPES_NAMESPACE,
+	BACKSTAGE_KIND_PREDICATE_IRI
 } from './iri';
 import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
 
@@ -353,5 +354,11 @@ describe('xsdDatatypeFromIri', () => {
 
 	it('falls back to "string" for an unrecognized range rather than throwing', () => {
 		expect(xsdDatatypeFromIri('http://www.w3.org/2001/XMLSchema#base64Binary')).toBe('string');
+	});
+});
+
+describe('BACKSTAGE_KIND_PREDICATE_IRI', () => {
+	it('is minted under SCHEMA_NAMESPACE with the expected local name', () => {
+		expect(BACKSTAGE_KIND_PREDICATE_IRI).toBe(`${SCHEMA_NAMESPACE}backstageKind`);
 	});
 });

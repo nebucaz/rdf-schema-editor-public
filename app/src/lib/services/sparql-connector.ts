@@ -9,6 +9,9 @@ import {
 	SHAPES_NAMESPACE,
 	ATTRIBUTED_RELATIONSHIP_IRI,
 	AUTHORITATIVE_ENTITY_IRI,
+	BACKSTAGE_KIND_PREDICATE_IRI,
+	SYNC_SOURCE_PREDICATE_IRI,
+	SYNC_STATUS_PREDICATE_IRI,
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
@@ -220,6 +223,12 @@ export interface FetchedIndividual {
 	classIri: string;
 	/** See `FetchedClass.namespaceBaseIri` (STORY-033). */
 	namespaceBaseIri: string;
+	/** The `rse:syncSource` marker value (e.g. `"backstage"`) a Go sync worker writes on every
+	 *  individual it owns (Story 007/010), or `null` for an ordinary hand-authored individual. */
+	syncSource: string | null;
+	/** The `rse:syncStatus` value (currently only ever `"stale"`, Story 009), or `null` when the
+	 *  individual isn't flagged stale — including for every non-synced individual. */
+	syncStatus: string | null;
 }
 
 /** A generalized individual→class relation — any predicate connecting an individual to a class,
@@ -1769,6 +1778,92 @@ export class SparqlConnector {
 		} else {
 			await this.deleteSubClassOf(classIriValue, AUTHORITATIVE_ENTITY_IRI, namespaceBaseIri);
 		}
+	}
+
+	// -- backstageKind annotation (Backstage-mapping Story 003/005) -----------------------------
+
+	/** Idempotently ensures `<BACKSTAGE_KIND_PREDICATE_IRI> a owl:AnnotationProperty` exists,
+	 *  mirroring `ensureAuthoritativeEntityClass`'s self-describing-vocabulary declaration. Always
+	 *  lives in the *default* namespace's `/schema` graph, even when the class carrying the
+	 *  annotation lives elsewhere. Safe to call on every write: a no-op once the triple exists. */
+	async ensureBackstageKindPredicateDeclared(): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${BACKSTAGE_KIND_PREDICATE_IRI}> a owl:AnnotationProperty }`
+		);
+		if (exists) return;
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${BACKSTAGE_KIND_PREDICATE_IRI}> a owl:AnnotationProperty ; rdfs:label "backstageKind"`, graphs.schema)} }`
+		);
+	}
+
+	/** Declares which Backstage `kind` `classIriValue` corresponds to (Story 005) — one class maps
+	 *  to at most one kind, so re-setting overwrites rather than accumulating, mirroring
+	 *  `renameClass`'s DELETE/INSERT/WHERE-with-OPTIONAL shape. Written into the class's own
+	 *  namespace's `/schema` graph (the caller-supplied `namespaceBaseIri`, matching
+	 *  `setAuthoritativeEntity`'s explicit-namespace convention). */
+	async setBackstageKind(
+		classIriValue: string,
+		kind: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		const trimmedKind = kind.trim();
+		if (!trimmedKind) throw new Error('Backstage kind must not be empty');
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		await this.ensureBackstageKindPredicateDeclared();
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const escapedKind = this.escapeString(trimmedKind);
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${classIriValue}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?old }
+			INSERT { <${classIriValue}> <${BACKSTAGE_KIND_PREDICATE_IRI}> "${escapedKind}" }
+			WHERE { OPTIONAL { <${classIriValue}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Removes `classIriValue`'s `backstageKind` annotation, if any. */
+	async clearBackstageKind(
+		classIriValue: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${classIriValue}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+		);
+	}
+
+	/** Returns `classIriValue`'s current `backstageKind` annotation, or `null` if unset. */
+	async fetchBackstageKind(
+		classIriValue: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<string | null> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?kind ${fromClause(graphs.schema)} WHERE {
+				<${classIriValue}> <${BACKSTAGE_KIND_PREDICATE_IRI}> ?kind
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.kind?.value ?? null;
+	}
+
+	/** Story 006's "Create class now": creates a bare `owl:Class` (via `insertClass`, no attributes
+	 *  prefilled from Backstage's `metadata`/`spec` fields per the plan's ADR) and tags it with a
+	 *  Backstage `kind` in one call, so a class can never end up created-but-forgotten-to-tag.
+	 *  Failure semantics: if `setBackstageKind` fails after `insertClass` already succeeded, the
+	 *  class exists untagged — the caller sees the thrown error and may retry `setBackstageKind`
+	 *  directly against the now-existing class; nothing is rolled back. */
+	async insertClassAndSetBackstageKind(
+		name: string,
+		kind: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<{ iri: string }> {
+		const { iri } = await this.insertClass(name, undefined, namespaceBaseIri);
+		await this.setBackstageKind(iri, kind, namespaceBaseIri);
+		return { iri };
 	}
 
 	/**
@@ -3343,9 +3438,16 @@ export class SparqlConnector {
 		);
 	}
 
-	/** Updates `x`/`y` on an existing membership subject without duplicating or losing its
-	 *  `workspace`/`element` link triples — the connector method itself is a plain async call;
-	 *  `GraphDbLayoutStore` (STORY-074) is responsible for debouncing calls into it. */
+	/** Upserts the full membership row's `x`/`y` (plus its `a`/`workspace`/`element` link triples,
+	 *  re-asserting them idempotently rather than assuming they're already there) — an external
+	 *  vocabulary stub can be dragged (and is visible) without ever going through `addWorkspaceMember`
+	 *  first (`visibility.ts`'s external-node gate doesn't require `WorkspaceMembership`), so a plain
+	 *  x/y-only `DELETE`/`INSERT` here used to write orphaned x/y triples under a membership IRI with
+	 *  no `a`/`workspace`/`element` triples — invisible to `fetchWorkspaceMembers`'s query, which
+	 *  requires all five, so the position silently failed to survive a reload. Re-asserting the full
+	 *  row every time makes this method safe to call whether or not `addWorkspaceMember` ran first.
+	 *  The connector method itself is a plain async call; `GraphDbLayoutStore` (STORY-074) is
+	 *  responsible for debouncing calls into it. */
 	async updateWorkspaceMemberPosition(
 		workspaceIriValue: string,
 		elementIri: string,
@@ -3359,9 +3461,24 @@ export class SparqlConnector {
 		await this.executeUpdate(`
 			${PREFIXES}
 			${withGraph(graphs.schema)}
-			DELETE { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX ; <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY }
-			INSERT { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal }
+			DELETE {
+				<${membershipIri}> a ?oldType ;
+					<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> ?oldWorkspace ;
+					<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?oldElement ;
+					<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX ;
+					<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY
+			}
+			INSERT {
+				<${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+					<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ;
+					<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> ;
+					<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ;
+					<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal
+			}
 			WHERE {
+				OPTIONAL { <${membershipIri}> a ?oldType }
+				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> ?oldWorkspace }
+				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?oldElement }
 				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX }
 				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY }
 			}
@@ -3842,18 +3959,22 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?i ?type ?label ${fromClause(graphs.instances, graphs.schema)} WHERE {
+			SELECT ?i ?type ?label ?syncSource ?syncStatus ${fromClause(graphs.instances, graphs.schema)} WHERE {
 				?i a ?type .
 				?type a owl:Class .
 				${VOCAB_FILTER('?i')}
 				OPTIONAL { ?i rdfs:label ?label }
+				OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
+				OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			iri: b.i.value,
 			classIri: b.type.value,
 			label: b.label?.value ?? extractLocalName(b.i.value),
-			namespaceBaseIri
+			namespaceBaseIri,
+			syncSource: b.syncSource?.value ?? null,
+			syncStatus: b.syncStatus?.value ?? null
 		}));
 	}
 
@@ -4192,7 +4313,10 @@ export class SparqlConnector {
 			...checkShaclWellFormedness(newQuads, declaredClasses),
 			...checkStructural(mergedGraph)
 		];
-		if (issues.length > 0) throw new SchemaValidationError(issues);
+		// Backstage-mapping Story 005: `severity: 'warning'` issues (e.g. a `backstageKind`'d class
+		// missing `AuthoritativeEntity` ancestry) are surfaced but must not block the save.
+		const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');
+		if (blockingIssues.length > 0) throw new SchemaValidationError(blockingIssues);
 
 		const deleteOps = this.buildScopeDeleteOps(iri, fullScopeQuads, partition, graphs);
 		const insertOp = await this.buildScopeInsertOp(newQuads, graphs);
@@ -4325,7 +4449,9 @@ export class SparqlConnector {
 			...checkShaclWellFormedness(inserted, declaredClasses),
 			...checkStructural(mergedGraph)
 		];
-		if (issues.length > 0) throw new SchemaValidationError(issues);
+		// Backstage-mapping Story 005: `severity: 'warning'` issues must not block the import.
+		const blockingIssues = issues.filter((issue) => issue.severity !== 'warning');
+		if (blockingIssues.length > 0) throw new SchemaValidationError(blockingIssues);
 
 		const insertedByNamespace = new Map<string, Quad[]>();
 		for (const q of inserted) {

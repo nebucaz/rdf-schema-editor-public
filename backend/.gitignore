@@ -1,0 +1,11 @@
+# Env
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+/bin/
+/server
+
+# OS
+.DS_Store

@@ -63,8 +63,15 @@ function subClassOf(sub: string, superIri: string, namespaceBaseIri = NS): Fetch
 	return { sub, super: superIri, namespaceBaseIri };
 }
 
-function individual(iri: string, label: string, classIriValue: string, namespaceBaseIri = NS): FetchedIndividual {
-	return { iri, label, classIri: classIriValue, namespaceBaseIri };
+function individual(
+	iri: string,
+	label: string,
+	classIriValue: string,
+	namespaceBaseIri = NS,
+	syncSource: string | null = null,
+	syncStatus: string | null = null
+): FetchedIndividual {
+	return { iri, label, classIri: classIriValue, namespaceBaseIri, syncSource, syncStatus };
 }
 
 function individualClassRelation(
@@ -462,6 +469,44 @@ describe('buildCanvasModel — instances view mode (data-catalog Story 005/006)'
 			className: 'Person',
 			namespace: NS
 		});
+	});
+
+	it('computes a syncSource flag from the rse:syncSource marker triple (Story 010)', () => {
+		const person = classIri('Person');
+		const aliceIri = `${NS}#alice`;
+		const bobIri = `${NS}#bob`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [
+				individual(aliceIri, 'Alice', person, NS, 'backstage'),
+				individual(bobIri, 'Bob', person, NS, null)
+			]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const individualNodes = model.nodes.filter((n) => n.kind === 'individual');
+		const alice = individualNodes.find((n) => n.iri === aliceIri);
+		const bob = individualNodes.find((n) => n.iri === bobIri);
+		expect(alice).toMatchObject({ syncSource: 'backstage', isStale: false });
+		expect(bob).toMatchObject({ syncSource: null, isStale: false });
+	});
+
+	it('computes an isStale flag from the rse:syncStatus "stale" marker (Story 009/010)', () => {
+		const person = classIri('Person');
+		const aliceIri = `${NS}#alice`;
+		const bobIri = `${NS}#bob`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [
+				individual(aliceIri, 'Alice', person, NS, 'backstage', 'stale'),
+				individual(bobIri, 'Bob', person, NS, 'backstage', null)
+			]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const individualNodes = model.nodes.filter((n) => n.kind === 'individual');
+		const alice = individualNodes.find((n) => n.iri === aliceIri);
+		const bob = individualNodes.find((n) => n.iri === bobIri);
+		expect(alice).toMatchObject({ syncSource: 'backstage', isStale: true });
+		expect(bob).toMatchObject({ syncSource: 'backstage', isStale: false });
 	});
 
 	it('"instances" mode includes every namespace-visible entity, not just classes individuals/relations reference (data-catalog Story 016)', () => {

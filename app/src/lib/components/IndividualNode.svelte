@@ -6,12 +6,22 @@
 		classIri: string;
 		className: string;
 		/** data-catalog Story 019: opens this individual for editing (rename + generic assertion
-		 *  CRUD) via the pencil button below. */
+		 *  CRUD) via the pencil button below. Disabled (see `syncSource`) rather than removed for a
+		 *  synced individual — Story 010. */
 		onEdit: () => void;
 		/** Opens the Triples panel scoped to this individual's own IRI — the only way to see an
 		 *  individual's own assertions in isolation (`selectScope`'s subject-only fallback branch
 		 *  already supports this; entity nodes have had the equivalent button since STORY-043). */
 		onViewTriples: () => void;
+		/** The `rse:syncSource` marker value (e.g. `"backstage"`), or `null` for an ordinary
+		 *  hand-authored individual (report Story 007/010, `canvas-model.ts`'s `IndividualNodeSpec`).
+		 *  Non-null renders a badge and disables the pencil edit button — a synced individual is
+		 *  machine-owned and overwritten on the next sync regardless of any manual edit, so editing
+		 *  is disabled rather than silently reverted later. */
+		syncSource: string | null;
+		/** `true` when this synced individual disappeared from its upstream source's latest run
+		 *  (Story 009/010) — renders a visually distinct badge state from a normal synced individual. */
+		isStale: boolean;
 	}
 
 	export type IndividualNodeType = Node<IndividualNodeData, 'individual'>;
@@ -41,9 +51,12 @@
 	<button
 		type="button"
 		class="edit-button"
-		onclick={data.onEdit}
-		aria-label={`Edit ${data.label}`}
-		title="Edit"
+		onclick={data.syncSource ? undefined : data.onEdit}
+		disabled={!!data.syncSource}
+		aria-label={data.syncSource ? `${data.label} is synced and cannot be edited` : `Edit ${data.label}`}
+		title={data.syncSource
+			? `Synced from ${data.syncSource} — edits are overwritten on the next sync`
+			: 'Edit'}
 	>
 		<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 	</button>
@@ -56,6 +69,18 @@
 	>
 		<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
 	</button>
+	{#if data.syncSource}
+		<span
+			class="sync-badge"
+			class:stale={data.isStale}
+			title={data.isStale
+				? `No longer seen in the latest ${data.syncSource} sync`
+				: `Synced from ${data.syncSource}`}
+		>
+			{data.isStale ? '⚠' : '⇄'}
+			{data.syncSource}
+		</span>
+	{/if}
 	<span class="label" title={data.classIri}>{data.label}</span>
 	<span class="class-name">{data.className}</span>
 </div>
@@ -109,8 +134,46 @@
 		color: var(--color-text);
 	}
 
+	.edit-button:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+
+	.edit-button:disabled:hover {
+		background: var(--color-bg-secondary);
+		color: var(--color-text-muted);
+	}
+
 	.individual-node.selected {
 		box-shadow: 0 0 0 2px var(--color-accent);
+	}
+
+	/* Story 010: badge distinguishing a machine-synced individual from a hand-authored one, with a
+	   distinct visual state (amber) once it's gone stale (Story 009) — readable in both themes via
+	   theme-token colors rather than fixed hex values. */
+	.sync-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 3px;
+		align-self: flex-start;
+		padding: 1px 6px;
+		border-radius: 999px;
+		font-size: 9px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.02em;
+		background: var(--color-hover);
+		color: var(--color-accent);
+		border: 1px solid var(--color-accent);
+	}
+
+	/* No dedicated "warning" theme token exists yet (only error/success) — reusing --color-error
+	   here since "no longer seen upstream" is exactly the kind of thing an error color should draw
+	   the eye to, and it's already defined for both light/dark themes. */
+	.sync-badge.stale {
+		background: var(--color-error-bg);
+		color: var(--color-error);
+		border-color: var(--color-error);
 	}
 
 	/* See EntityNode.svelte's identical rule for why handles are hidden until hover/drag. */

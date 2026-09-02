@@ -217,6 +217,14 @@
 	}
 
 	.name {
+		/* Flex items default to `min-width: auto` (min-content), so without an explicit basis and
+			`min-width: 0` this never actually shrinks to the space `.header-actions` leaves it — it
+			either overflows or, worse, ends up frozen at whatever narrow width the flex algorithm
+			happened to resolve when a DOM-serializing tool (SVG export, `html-to-image`) snapshots
+			computed style onto a detached clone. `flex: 1 1 auto` lets it claim the actual remaining
+			width so `text-overflow: ellipsis` only kicks in once the name genuinely doesn't fit. */
+		flex: 1 1 auto;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

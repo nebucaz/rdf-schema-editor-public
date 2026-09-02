@@ -55,6 +55,13 @@ export interface IndividualNodeSpec {
 	className: string;
 	/** See `EntityNodeSpec.namespace` (STORY-033). */
 	namespace: string;
+	/** The `rse:syncSource` marker value (e.g. `"backstage"`) when a Go sync worker owns this
+	 *  individual (Story 007/010), or `null` for an ordinary hand-authored one — computed the same
+	 *  way `isAuthoritativeEntity` is derived from a marker triple, not inferred from IRI shape. */
+	syncSource: string | null;
+	/** `true` when this synced individual disappeared from its upstream source's latest sync run
+	 *  (`rse:syncStatus === 'stale'`, Story 009) — always `false` for a non-synced individual. */
+	isStale: boolean;
 }
 
 export type NodeSpec = EntityNodeSpec | ExternalNodeSpec | IndividualNodeSpec;
@@ -293,7 +300,9 @@ export function buildCanvasModel(
 		label: individual.label,
 		classIri: individual.classIri,
 		className: classByIri.get(individual.classIri)?.label ?? individual.classIri,
-		namespace: individual.namespaceBaseIri
+		namespace: individual.namespaceBaseIri,
+		syncSource: individual.syncSource,
+		isStale: individual.syncStatus === 'stale'
 	}));
 
 	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = [
