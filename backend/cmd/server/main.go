@@ -51,15 +51,7 @@ func main() {
 	})
 	sourceHandler := handler.NewSourceHandler(sourceRegistry, gdbClient, cfg.BackstageKindPredicateIRI(), syncEngine)
 
-	r := chi.NewRouter()
-	r.Use(chimiddleware.Logger)
-	r.Use(chimiddleware.Recoverer)
-
-	r.Get("/health", healthHandler.Check)
-	r.Post("/sparql", sparqlHandler.Query)
-	r.Post("/sparql/update", sparqlHandler.Update)
-	r.Get("/sources/{source}/discover", sourceHandler.Discover)
-	r.Post("/sources/{source}/sync", sourceHandler.Sync)
+	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler)
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -92,4 +84,26 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("server shutdown: %v", err)
 	}
+}
+
+// newRouter builds the service's chi router: /health stays open (docker-compose.yml's `wget`
+// healthcheck can't attach a header, and the route discloses nothing sensitive), every other route
+// requires a validly-signed, unexpired bearer JWT (STORY-002) verified against cfg.AuthJWTSecret.
+// Extracted from main() so it's testable without starting a real listener.
+func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler) chi.Router {
+	r := chi.NewRouter()
+	r.Use(chimiddleware.Logger)
+	r.Use(chimiddleware.Recoverer)
+
+	r.Get("/health", healthHandler.Check)
+
+	r.Group(func(r chi.Router) {
+		r.Use(handler.JWTAuth(cfg.AuthJWTSecret))
+		r.Post("/sparql", sparqlHandler.Query)
+		r.Post("/sparql/update", sparqlHandler.Update)
+		r.Get("/sources/{source}/discover", sourceHandler.Discover)
+		r.Post("/sources/{source}/sync", sourceHandler.Sync)
+	})
+
+	return r
 }

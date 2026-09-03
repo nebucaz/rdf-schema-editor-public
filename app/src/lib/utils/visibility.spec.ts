@@ -3,7 +3,8 @@ import {
 	isEndpointVisible,
 	isEdgeHidden,
 	isExternalNodeHidden,
-	buildExternalReferencingSources
+	buildExternalReferencingSources,
+	filterListedNamespaces
 } from './visibility';
 
 describe('buildExternalReferencingSources', () => {
@@ -137,5 +138,23 @@ describe('isEdgeHidden — workspace-membership composition', () => {
 		]);
 		const workspaceMembers = new Set(['core:A', 'core:B']);
 		expect(isEdgeHidden('core:A', 'core:B', namespaces, new Set(), new Map(), workspaceMembers)).toBe(false);
+	});
+});
+
+describe('filterListedNamespaces (STORY-097)', () => {
+	it('excludes a namespace with listedInFilter: false', () => {
+		const namespaces = [
+			{ baseIri: 'ns1', listedInFilter: true },
+			{ baseIri: 'ns2', listedInFilter: false }
+		];
+		expect(filterListedNamespaces(namespaces)).toEqual([{ baseIri: 'ns1', listedInFilter: true }]);
+	});
+
+	it('keeps every namespace when all are listed', () => {
+		const namespaces = [
+			{ baseIri: 'ns1', listedInFilter: true },
+			{ baseIri: 'ns2', listedInFilter: true }
+		];
+		expect(filterListedNamespaces(namespaces)).toEqual(namespaces);
 	});
 });

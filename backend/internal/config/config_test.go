@@ -7,6 +7,7 @@ import (
 
 func TestLoad_RequiredVarPresent(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("PORT", "")
 	t.Setenv("GRAPHDB_USER", "")
 	t.Setenv("GRAPHDB_PASSWORD", "")
@@ -21,10 +22,14 @@ func TestLoad_RequiredVarPresent(t *testing.T) {
 	if cfg.Port != "8090" {
 		t.Errorf("Port = %q, want default 8090", cfg.Port)
 	}
+	if cfg.AuthJWTSecret != "test-secret" {
+		t.Errorf("AuthJWTSecret = %q, want the configured secret", cfg.AuthJWTSecret)
+	}
 }
 
 func TestLoad_RequiredVarMissing(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 
 	_, err := Load()
 	if err == nil {
@@ -32,8 +37,32 @@ func TestLoad_RequiredVarMissing(t *testing.T) {
 	}
 }
 
+func TestLoad_AuthJWTSecretMissing(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "")
+
+	_, err := Load()
+	if err == nil {
+		t.Fatal("Load() returned no error with AUTH_JWT_SECRET unset, want a fail-fast error")
+	}
+}
+
+func TestLoad_AuthJWTSecretPresent(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "s3cret-signing-key")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() returned error: %v", err)
+	}
+	if cfg.AuthJWTSecret != "s3cret-signing-key" {
+		t.Errorf("AuthJWTSecret = %q, want the configured secret", cfg.AuthJWTSecret)
+	}
+}
+
 func TestLoad_PortOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("PORT", "9999")
 
 	cfg, err := Load()
@@ -47,6 +76,7 @@ func TestLoad_PortOverride(t *testing.T) {
 
 func TestLoad_SchemaNamespaceDefault(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("PUBLIC_SCHEMA_NAMESPACE", "")
 
 	cfg, err := Load()
@@ -63,6 +93,7 @@ func TestLoad_SchemaNamespaceDefault(t *testing.T) {
 
 func TestLoad_SchemaNamespaceOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("PUBLIC_SCHEMA_NAMESPACE", "http://example.org/schema#")
 
 	cfg, err := Load()
@@ -76,6 +107,7 @@ func TestLoad_SchemaNamespaceOverride(t *testing.T) {
 
 func TestLoad_BackstageSettings(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("BACKSTAGE_BASE_URL", "https://backstage.example.com/api/catalog")
 	t.Setenv("BACKSTAGE_TOKEN", "s3cret")
 
@@ -93,6 +125,7 @@ func TestLoad_BackstageSettings(t *testing.T) {
 
 func TestLoad_BackstageSettingsOptional(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("BACKSTAGE_BASE_URL", "")
 	t.Setenv("BACKSTAGE_TOKEN", "")
 
@@ -103,6 +136,7 @@ func TestLoad_BackstageSettingsOptional(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalDefault(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "")
 
 	cfg, err := Load()
@@ -116,6 +150,7 @@ func TestLoad_BackstageSyncIntervalDefault(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "30m")
 
 	cfg, err := Load()
@@ -129,6 +164,7 @@ func TestLoad_BackstageSyncIntervalOverride(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalInvalid(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "not-a-duration")
 
 	if _, err := Load(); err == nil {

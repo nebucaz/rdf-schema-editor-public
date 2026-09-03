@@ -10,6 +10,9 @@ import {
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
+	NAMESPACE_LOCKED_PREDICATE_IRI,
+	NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI,
+	NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI,
 	WORKSPACE_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
@@ -39,7 +42,8 @@ import {
 	splitDatasetIri
 } from '../utils/iri';
 import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_GRAPH, namespaceGraphs } from '../config';
-import { RDF, RDFS, OWL, SH, DCAT, DCT, PROV } from './turtle';
+import { RDF, RDFS, OWL, SH, DCAT, DCT, PROV, parseTurtle } from './turtle';
+import { SchemaValidationError } from './validation';
 
 /** The default (pre-existing, `.env`-seeded) namespace's three storage graphs (STORY-025/026) —
  *  every method below defaults to this namespace when no `namespaceBaseIri` is passed explicitly,
@@ -3393,7 +3397,12 @@ describe('SparqlConnector — migrate mis-minted individual IRIs (STORY-063)', (
  *  existence check) the same way `mockGraphFetch` distinguishes class/property/shape ASKs, plus a
  *  `COUNT(*)` handler for `deleteNamespace`'s non-empty check. */
 function mockNamespaceFetch(
-	fixture: { namespaceClassExists?: boolean; namespaceExists?: boolean; entryCount?: number } = {}
+	fixture: {
+		namespaceClassExists?: boolean;
+		namespaceExists?: boolean;
+		entryCount?: number;
+		locked?: boolean;
+	} = {}
 ) {
 	const updates: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
@@ -3413,6 +3422,11 @@ function mockNamespaceFetch(
 			);
 		}
 		if (q.includes('ASK')) {
+			if (q.includes(NAMESPACE_LOCKED_PREDICATE_IRI)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.locked ?? false }), {
+					status: 200
+				});
+			}
 			if (q.includes('owl:Class')) {
 				return new Response(JSON.stringify({ head: {}, boolean: fixture.namespaceClassExists ?? false }), {
 					status: 200
@@ -3532,7 +3546,10 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 				description: 'Governmental entities',
 				color: null,
 				publisher: null,
-				license: null
+				license: null,
+				locked: false,
+				defaultHidden: false,
+				listedInFilter: true
 			}
 		]);
 	});
@@ -3562,8 +3579,84 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		const namespaces = await connector.fetchNamespaces();
 
 		expect(namespaces).toEqual([
-			{ baseIri: govBase, prefix: 'gov', description: null, color: '#ff0000', publisher: null, license: null }
+			{
+				baseIri: govBase,
+				prefix: 'gov',
+				description: null,
+				color: '#ff0000',
+				publisher: null,
+				license: null,
+				locked: false,
+				defaultHidden: false,
+				listedInFilter: true
+			}
 		]);
+	});
+
+	it('fetchNamespaces round-trips locked/defaultHidden/listedInFilter (STORY-095/096/097)', async () => {
+		const govBase = 'http://example.org/gov';
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['ns', 'prefix', 'locked', 'defaultHidden', 'listedInFilter'] },
+					results: {
+						bindings: [
+							{
+								ns: { type: 'uri', value: govBase },
+								prefix: { type: 'literal', value: 'gov' },
+								locked: { type: 'literal', value: 'true' },
+								defaultHidden: { type: 'literal', value: 'true' },
+								listedInFilter: { type: 'literal', value: 'false' }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const namespaces = await connector.fetchNamespaces();
+
+		expect(namespaces).toEqual([
+			{
+				baseIri: govBase,
+				prefix: 'gov',
+				description: null,
+				color: null,
+				publisher: null,
+				license: null,
+				locked: true,
+				defaultHidden: true,
+				listedInFilter: false
+			}
+		]);
+	});
+
+	it('fetchNamespaces defaults defaultHidden to true for DEFAULT_NAMESPACE_BASE_IRI itself when the triple is absent (STORY-096 backward-compat)', async () => {
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['ns', 'prefix'] },
+					results: {
+						bindings: [
+							{
+								ns: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI },
+								prefix: { type: 'literal', value: 'default' }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const namespaces = await connector.fetchNamespaces();
+
+		expect(namespaces[0].defaultHidden).toBe(true);
 	});
 
 	it('fetchFullSchemaForAllNamespaces merges every registered namespace\'s classes, each tagged with its own namespace (STORY-034)', async () => {
@@ -3772,6 +3865,54 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		]);
 	});
 
+	it('updateNamespaceLocked sets the locked flag (STORY-095)', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceLocked(govBase, true);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> true`);
+	});
+
+	it('updateNamespaceLocked(false) clears the locked flag rather than removing the triple entirely', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceLocked(govBase, false);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> false`);
+	});
+
+	it('updateNamespaceDefaultHidden sets the defaultHidden flag (STORY-096)', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceDefaultHidden(govBase, true);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> true`);
+	});
+
+	it('updateNamespaceListedInFilter sets the listedInFilter flag (STORY-097)', async () => {
+		const { fn, updates } = mockNamespaceFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceListedInFilter(govBase, false);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> false`);
+	});
+
 	it('deleteNamespace without force is refused with the entry count when non-empty', async () => {
 		const { fn, updates } = mockNamespaceFetch({ entryCount: 5 });
 		vi.stubGlobal('fetch', fn);
@@ -3780,6 +3921,29 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 		const result = await connector.deleteNamespace('http://example.org/gov');
 
 		expect(result).toEqual({ deleted: false, entryCount: 5 });
+		expect(updates).toHaveLength(0);
+	});
+
+	it('deleteNamespace refuses unconditionally when locked, even with zero triples (STORY-095)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 0, locked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteNamespace('http://example.org/gov');
+
+		expect(result).toEqual({ deleted: false, entryCount: 0, locked: true });
+		expect(updates).toHaveLength(0);
+	});
+
+	it('deleteNamespace({force: true}) still refuses when locked — force never overrides locked (STORY-095)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 5, locked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteNamespace(govBase, { force: true });
+
+		expect(result).toEqual({ deleted: false, entryCount: 0, locked: true });
 		expect(updates).toHaveLength(0);
 	});
 
@@ -3927,6 +4091,30 @@ describe('SparqlConnector — Workspace CRUD (STORY-072)', () => {
 
 		const connector = new SparqlConnector('/api/sparql');
 		await expect(connector.insertWorkspace('Project Overview')).rejects.toThrow(/already exists/);
+	});
+
+	it('ensureWorkspace inserts the declaration when the given IRI does not yet exist (STORY-091)', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: true, workspaceExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureWorkspace(ws, 'Project Overview');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${ws}> a <${WORKSPACE_CLASS_IRI}>`);
+		expect(updates[0]).toContain('rdfs:label "Project Overview"');
+	});
+
+	it('ensureWorkspace is a no-op, without error, when the given IRI already exists (STORY-091)', async () => {
+		const { fn, updates } = mockWorkspaceFetch({ workspaceClassExists: true, workspaceExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const ws = workspaceIri('Project Overview');
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.ensureWorkspace(ws, 'Some Other Label')).resolves.toBeUndefined();
+
+		expect(updates).toHaveLength(0);
 	});
 
 	it('fetchWorkspaces returns every registered workspace with its label and default namespace', async () => {
@@ -4579,9 +4767,12 @@ describe('SparqlConnector — WorkspaceMembership cascade cleanup on delete (STO
 
 /** Stateful fetch mock for STORY-083's Note CRUD methods: distinguishes `ensureNoteClass`'s
  *  `<NOTE_CLASS_IRI> a owl:Class` marker check the same way `mockWorkspaceFetch` distinguishes its
- *  own ASK shapes. Note methods issue no other `ASK` (unlike `insertWorkspace`/`addWorkspaceMember`
- *  — a Note's IRI is timestamp-unique by construction, no "already exists" guard needed). */
-function mockNoteFetch(fixture: { noteClassExists?: boolean } = {}) {
+ *  own ASK shapes. Plain Note methods issue no other `ASK` (unlike `insertWorkspace`/
+ *  `addWorkspaceMember` — a Note's IRI is timestamp-unique by construction, no "already exists"
+ *  guard needed) — `noteExists` (STORY-091) is only consulted by `ensureNoteAtIri`'s own
+ *  caller-given-IRI exists-guard, distinguished from the marker check by its `a <NOTE_CLASS_IRI>`
+ *  (not `<NOTE_CLASS_IRI> a owl:Class`) shape. */
+function mockNoteFetch(fixture: { noteClassExists?: boolean; noteExists?: boolean } = {}) {
 	const updates: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
 		const body = JSON.parse(opts.body);
@@ -4591,9 +4782,16 @@ function mockNoteFetch(fixture: { noteClassExists?: boolean } = {}) {
 		}
 		const q: string = body.query;
 		if (q.includes('ASK')) {
-			return new Response(JSON.stringify({ head: {}, boolean: fixture.noteClassExists ?? false }), {
-				status: 200
-			});
+			if (q.includes(`<${NOTE_CLASS_IRI}> a owl:Class`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.noteClassExists ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes(`a <${NOTE_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.noteExists ?? false }), {
+					status: 200
+				});
+			}
 		}
 		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
 	});
@@ -4723,6 +4921,33 @@ describe('SparqlConnector — Note (sticky note) CRUD (STORY-083)', () => {
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`<${NOTE_TEXT_PREDICATE_IRI}> "Reminder"`);
 		expect(updates[0]).toContain(`<${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${linkedIri}>`);
+	});
+
+	it('ensureNoteAtIri inserts at the given IRI when it does not yet exist (STORY-091)', async () => {
+		const { fn, updates } = mockNoteFetch({ noteClassExists: true, noteExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureNoteAtIri(noteIriValue, ws, 10, 20, '#fff9b1', 'Reminder');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${noteIriValue}> a <${NOTE_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${NOTE_COLOR_PREDICATE_IRI}> "#fff9b1"`);
+		expect(updates[0]).toContain(`<${NOTE_TEXT_PREDICATE_IRI}> "Reminder"`);
+	});
+
+	it('ensureNoteAtIri is a no-op, without error, when that exact IRI already exists (STORY-091)', async () => {
+		const { fn, updates } = mockNoteFetch({ noteClassExists: true, noteExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const noteIriValue = noteIri(ws, '1700000000000');
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.ensureNoteAtIri(noteIriValue, ws, 10, 20, '#fff9b1', 'Reminder')
+		).resolves.toBeUndefined();
+
+		expect(updates).toHaveLength(0);
 	});
 
 	it('updateNoteText sets the text triple', async () => {
@@ -4921,6 +5146,270 @@ describe('SparqlConnector — Workspace-scoped Triples export (STORY-082)', () =
 
 		expect(result).toEqual({ schema: '', shapes: '' });
 		expect(fetchWholeGraphQuadsSpy).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — exportWorkspaceBundle (workspace-export STORY-090)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const ws = workspaceIri('Project Overview');
+	const personIri = classIri('Person');
+
+	function stubCommon(
+		connector: SparqlConnector,
+		fixture: {
+			members?: { elementIri: string; x: number; y: number }[];
+			notes?: Array<{
+				iri: string;
+				text: string;
+				color: string;
+				x: number;
+				y: number;
+				linkedElementIri: string | null;
+			}>;
+			classes?: Array<{ iri: string; namespaceBaseIri: string }>;
+			individuals?: Array<{ iri: string; namespaceBaseIri: string }>;
+			namespaces?: Array<{ baseIri: string; prefix: string }>;
+		}
+	) {
+		vi.spyOn(connector, 'fetchWorkspaces').mockResolvedValue([
+			{ iri: ws, label: 'Project Overview', defaultNamespaceBaseIri: null }
+		]);
+		vi.spyOn(connector, 'fetchWorkspaceMembers').mockResolvedValue(fixture.members ?? []);
+		vi.spyOn(connector, 'fetchNotesForWorkspace').mockResolvedValue(fixture.notes ?? []);
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: (fixture.classes ?? []).map((c) => ({
+				iri: c.iri,
+				label: '',
+				comment: null,
+				namespaceBaseIri: c.namespaceBaseIri
+			})),
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: (fixture.individuals ?? []).map((i) => ({
+				iri: i.iri,
+				label: '',
+				classIri: '',
+				namespaceBaseIri: i.namespaceBaseIri,
+				syncSource: null,
+				syncStatus: null
+			})),
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		});
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue(
+			(fixture.namespaces ?? []).map((ns) => ({
+				baseIri: ns.baseIri,
+				prefix: ns.prefix,
+				description: null,
+				color: null,
+				publisher: null,
+				license: null,
+				locked: false,
+				defaultHidden: false,
+				listedInFilter: true
+			}))
+		);
+		vi.spyOn(connector, 'fetchExternalVocabularies').mockResolvedValue([]);
+	}
+
+	/** Stubs `fetchWholeGraphQuads` for the raw `FROM <graph>` round-trip, keyed by namespace base IRI
+	 *  (mirroring the STORY-082 test's own matching approach). */
+	function mockRawQuadsFetch(bindingsByNamespace: Record<string, Array<Record<'s' | 'p' | 'o', SparqlBinding[string]>>>) {
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query ?? '';
+			for (const [ns, bindings] of Object.entries(bindingsByNamespace)) {
+				const graphs = namespaceGraphs(ns);
+				if (q.includes(`FROM <${graphs.instances}>`)) {
+					return new Response(
+						JSON.stringify({ head: { vars: ['s', 'p', 'o'] }, results: { bindings } }),
+						{ status: 200 }
+					);
+				}
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return fn;
+	}
+
+	it('bundles a single-namespace workspace with no external dependencies', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {
+			members: [{ elementIri: personIri, x: 0, y: 0 }],
+			classes: [{ iri: personIri, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }],
+			namespaces: [{ baseIri: DEFAULT_NAMESPACE_BASE_IRI, prefix: 'rse' }]
+		});
+		vi.stubGlobal(
+			'fetch',
+			mockRawQuadsFetch({
+				[DEFAULT_NAMESPACE_BASE_IRI]: [
+					{
+						s: { type: 'uri', value: personIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					}
+				]
+			})
+		);
+
+		const result = await connector.exportWorkspaceBundle(ws);
+
+		expect(result.truncatedDependencyCount).toBe(0);
+		expect(result.turtle).toContain(personIri);
+		expect(result.turtle).toContain(`<${ws}>`);
+		expect(result.turtle).toContain('Project Overview');
+		expect(result.turtle).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${personIri}>`);
+		expect(result.turtle).toContain(`<${NAMESPACE_PREFIX_PREDICATE_IRI}> "rse"`);
+	});
+
+	it("includes an external class's own declaration via the dependency closure (STORY-089)", async () => {
+		const externalIri = classIri('LegalEntity');
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {
+			members: [{ elementIri: personIri, x: 0, y: 0 }],
+			classes: [{ iri: personIri, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }],
+			namespaces: [{ baseIri: DEFAULT_NAMESPACE_BASE_IRI, prefix: 'rse' }]
+		});
+		vi.stubGlobal(
+			'fetch',
+			mockRawQuadsFetch({
+				[DEFAULT_NAMESPACE_BASE_IRI]: [
+					{
+						s: { type: 'uri', value: personIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					},
+					{
+						s: { type: 'uri', value: personIri },
+						p: { type: 'uri', value: RDFS.subClassOf },
+						o: { type: 'uri', value: externalIri }
+					},
+					{
+						s: { type: 'uri', value: externalIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					}
+				]
+			})
+		);
+
+		const result = await connector.exportWorkspaceBundle(ws);
+
+		expect(result.turtle).toContain('LegalEntity');
+	});
+
+	it('includes every namespace touched when members span two namespaces', async () => {
+		const otherNs = 'http://example.org/gov';
+		const otherClassIri = `${namespaceGraphs(otherNs).schema}#Application`;
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {
+			members: [
+				{ elementIri: personIri, x: 0, y: 0 },
+				{ elementIri: otherClassIri, x: 10, y: 10 }
+			],
+			classes: [
+				{ iri: personIri, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI },
+				{ iri: otherClassIri, namespaceBaseIri: otherNs }
+			],
+			namespaces: [
+				{ baseIri: DEFAULT_NAMESPACE_BASE_IRI, prefix: 'rse' },
+				{ baseIri: otherNs, prefix: 'gov' }
+			]
+		});
+		vi.stubGlobal(
+			'fetch',
+			mockRawQuadsFetch({
+				[DEFAULT_NAMESPACE_BASE_IRI]: [
+					{
+						s: { type: 'uri', value: personIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					}
+				],
+				[otherNs]: [
+					{
+						s: { type: 'uri', value: otherClassIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					}
+				]
+			})
+		);
+
+		const result = await connector.exportWorkspaceBundle(ws);
+
+		expect(result.turtle).toContain(`<${NAMESPACE_PREFIX_PREDICATE_IRI}> "rse"`);
+		expect(result.turtle).toContain(`<${NAMESPACE_PREFIX_PREDICATE_IRI}> "gov"`);
+		expect(result.turtle).toContain(personIri);
+		expect(result.turtle).toContain(otherClassIri);
+	});
+
+	it('includes Notes with their x/y/text', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {
+			notes: [{ iri: noteIri(ws, '1700000000000'), text: 'Reminder', color: '#fff9b1', x: 5, y: 15, linkedElementIri: null }]
+		});
+		vi.stubGlobal('fetch', mockRawQuadsFetch({}));
+
+		const result = await connector.exportWorkspaceBundle(ws);
+
+		expect(result.turtle).toContain(`<${NOTE_TEXT_PREDICATE_IRI}> "Reminder"`);
+		expect(result.turtle).toContain(`<${NOTE_X_PREDICATE_IRI}> "5"^^<http://www.w3.org/2001/XMLSchema#decimal>`);
+		expect(result.turtle).toContain(`<${NOTE_Y_PREDICATE_IRI}> "15"^^<http://www.w3.org/2001/XMLSchema#decimal>`);
+	});
+
+	it('round-trips the WorkspaceMembership triples back into the exact shape fetchWorkspaceMembers would return', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {
+			members: [{ elementIri: personIri, x: 12.5, y: 40 }],
+			classes: [{ iri: personIri, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }],
+			namespaces: [{ baseIri: DEFAULT_NAMESPACE_BASE_IRI, prefix: 'rse' }]
+		});
+		vi.stubGlobal(
+			'fetch',
+			mockRawQuadsFetch({
+				[DEFAULT_NAMESPACE_BASE_IRI]: [
+					{
+						s: { type: 'uri', value: personIri },
+						p: { type: 'uri', value: RDF.type },
+						o: { type: 'uri', value: OWL.Class }
+					}
+				]
+			})
+		);
+
+		const result = await connector.exportWorkspaceBundle(ws);
+		const parsed = parseTurtle(result.turtle);
+		const membershipIri = workspaceMembershipIri(ws, personIri);
+
+		const element = parsed.find(
+			(q) => q.subject.value === membershipIri && q.predicate.value === WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI
+		)?.object.value;
+		const x = parsed.find(
+			(q) => q.subject.value === membershipIri && q.predicate.value === WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI
+		)?.object.value;
+		const y = parsed.find(
+			(q) => q.subject.value === membershipIri && q.predicate.value === WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI
+		)?.object.value;
+
+		expect({ elementIri: element, x: parseFloat(x ?? ''), y: parseFloat(y ?? '') }).toEqual({
+			elementIri: personIri,
+			x: 12.5,
+			y: 40
+		});
+	});
+
+	it('produces a valid, parseable bundle for a workspace with zero members', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		stubCommon(connector, {});
+		vi.stubGlobal('fetch', mockRawQuadsFetch({}));
+
+		const result = await connector.exportWorkspaceBundle(ws);
+
+		expect(() => parseTurtle(result.turtle)).not.toThrow();
+		expect(result.truncatedDependencyCount).toBe(0);
 	});
 });
 
@@ -5451,6 +5940,218 @@ describe('SparqlConnector — importTurtle (STORY-044)', () => {
 			]
 		});
 		expect(updates).toHaveLength(0);
+	});
+});
+
+describe('SparqlConnector — importWorkspaceBundle (workspace-export STORY-092)', () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+		vi.restoreAllMocks();
+	});
+
+	const ws = workspaceIri('Project Overview');
+	const personIri = classIri('Person');
+	const membershipIriValue = workspaceMembershipIri(ws, personIri);
+	const noteIriValue = noteIri(ws, '1700000000000');
+	const govBase = 'http://example.org/gov';
+
+	function fullBundleText(): string {
+		return `
+			<${govBase}> <${RDF.type}> <${NAMESPACE_CLASS_IRI}> ; <${NAMESPACE_PREFIX_PREDICATE_IRI}> "gov" .
+
+			<${ws}> <${RDF.type}> <${WORKSPACE_CLASS_IRI}> ; <${RDFS.label}> "Project Overview" .
+
+			<${membershipIriValue}> <${RDF.type}> <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+				<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}> ;
+				<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${personIri}> ;
+				<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "0"^^<http://www.w3.org/2001/XMLSchema#decimal> ;
+				<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "0"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+
+			<${noteIriValue}> <${RDF.type}> <${NOTE_CLASS_IRI}> ;
+				<${NOTE_WORKSPACE_PREDICATE_IRI}> <${ws}> ;
+				<${NOTE_COLOR_PREDICATE_IRI}> "#fff9b1" ;
+				<${NOTE_X_PREDICATE_IRI}> "5"^^<http://www.w3.org/2001/XMLSchema#decimal> ;
+				<${NOTE_Y_PREDICATE_IRI}> "15"^^<http://www.w3.org/2001/XMLSchema#decimal> ;
+				<${NOTE_TEXT_PREDICATE_IRI}> "Reminder" .
+
+			<${personIri}> <${RDF.type}> <${OWL.Class}> ; <${RDFS.label}> "Person" .
+		`;
+	}
+
+	it('imports into an empty target — every bucket inserted', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'askQuery').mockResolvedValue(false);
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		const insertNamespaceSpy = vi
+			.spyOn(connector, 'insertNamespace')
+			.mockResolvedValue({ baseIri: govBase });
+		const ensureWorkspaceSpy = vi.spyOn(connector, 'ensureWorkspace').mockResolvedValue(undefined);
+		const addWorkspaceMemberSpy = vi.spyOn(connector, 'addWorkspaceMember').mockResolvedValue(undefined);
+		const ensureNoteAtIriSpy = vi.spyOn(connector, 'ensureNoteAtIri').mockResolvedValue(undefined);
+		const importTurtleSpy = vi.spyOn(connector, 'importTurtle').mockResolvedValue({
+			inserted: [{ subject: personIri, predicate: RDF.type }],
+			duplicates: [],
+			conflicts: []
+		});
+
+		const summary = await connector.importWorkspaceBundle(fullBundleText());
+
+		expect(insertNamespaceSpy).toHaveBeenCalledTimes(1);
+		expect(insertNamespaceSpy).toHaveBeenCalledWith('gov', govBase, undefined, undefined, undefined, undefined);
+		expect(ensureWorkspaceSpy).toHaveBeenCalledWith(ws, 'Project Overview', undefined);
+		expect(addWorkspaceMemberSpy).toHaveBeenCalledWith(ws, personIri, 0, 0);
+		expect(ensureNoteAtIriSpy).toHaveBeenCalledWith(noteIriValue, ws, 5, 15, '#fff9b1', 'Reminder', undefined);
+		expect(importTurtleSpy).toHaveBeenCalledTimes(1);
+
+		expect(summary).toEqual({
+			schema: { inserted: [{ subject: personIri, predicate: RDF.type }], duplicates: [], conflicts: [] },
+			namespaces: { inserted: 1, alreadyPresent: 0 },
+			workspaces: { inserted: 1, alreadyPresent: 0 },
+			memberships: { inserted: 1, alreadyPresent: 0 },
+			notes: { inserted: 1, alreadyPresent: 0 }
+		});
+	});
+
+	it('re-importing the identical bundle is fully idempotent — every bucket reports alreadyPresent, insertNamespace never called', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'askQuery').mockResolvedValue(true);
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		const insertNamespaceSpy = vi.spyOn(connector, 'insertNamespace').mockResolvedValue({ baseIri: govBase });
+		vi.spyOn(connector, 'ensureWorkspace').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'addWorkspaceMember').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'ensureNoteAtIri').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'importTurtle').mockResolvedValue({ inserted: [], duplicates: [{ subject: personIri, predicate: RDF.type }], conflicts: [] });
+
+		const summary = await connector.importWorkspaceBundle(fullBundleText());
+
+		expect(insertNamespaceSpy).not.toHaveBeenCalled();
+		expect(summary.namespaces).toEqual({ inserted: 0, alreadyPresent: 1 });
+		expect(summary.workspaces).toEqual({ inserted: 0, alreadyPresent: 1 });
+		expect(summary.memberships).toEqual({ inserted: 0, alreadyPresent: 1 });
+		expect(summary.notes).toEqual({ inserted: 0, alreadyPresent: 1 });
+	});
+
+	it('merges into a target with a partial overlap — only the rows the target lacks are reported as inserted', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const secondPersonIri = classIri('Employee');
+		const secondMembershipIri = workspaceMembershipIri(ws, secondPersonIri);
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		// The workspace and its first membership/note already exist on the target; the second
+		// membership (a new element added to the same workspace since the last export) does not.
+		vi.spyOn(connector, 'askQuery').mockImplementation(async (query: string) => !query.includes(secondMembershipIri));
+		vi.spyOn(connector, 'insertNamespace').mockResolvedValue({ baseIri: govBase });
+		vi.spyOn(connector, 'ensureWorkspace').mockResolvedValue(undefined);
+		const addWorkspaceMemberSpy = vi.spyOn(connector, 'addWorkspaceMember').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'ensureNoteAtIri').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'importTurtle').mockResolvedValue({ inserted: [], duplicates: [], conflicts: [] });
+
+		const text = `
+			${fullBundleText()}
+			<${secondMembershipIri}> <${RDF.type}> <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+				<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}> ;
+				<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${secondPersonIri}> ;
+				<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "30"^^<http://www.w3.org/2001/XMLSchema#decimal> ;
+				<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "30"^^<http://www.w3.org/2001/XMLSchema#decimal> .
+		`;
+
+		const summary = await connector.importWorkspaceBundle(text);
+
+		expect(summary.workspaces).toEqual({ inserted: 0, alreadyPresent: 1 });
+		expect(summary.memberships).toEqual({ inserted: 1, alreadyPresent: 1 });
+		expect(addWorkspaceMemberSpy).toHaveBeenCalledWith(ws, personIri, 0, 0);
+		expect(addWorkspaceMemberSpy).toHaveBeenCalledWith(ws, secondPersonIri, 30, 30);
+	});
+
+	it('rejects invalid Turtle syntax without touching any bucket', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const insertNamespaceSpy = vi.spyOn(connector, 'insertNamespace').mockResolvedValue({ baseIri: govBase });
+		const ensureWorkspaceSpy = vi.spyOn(connector, 'ensureWorkspace').mockResolvedValue(undefined);
+		const importTurtleSpy = vi.spyOn(connector, 'importTurtle');
+
+		await expect(connector.importWorkspaceBundle('not : valid @@@ turtle')).rejects.toMatchObject({
+			issues: [expect.objectContaining({ layer: 'syntax' })]
+		});
+
+		expect(insertNamespaceSpy).not.toHaveBeenCalled();
+		expect(ensureWorkspaceSpy).not.toHaveBeenCalled();
+		expect(importTurtleSpy).not.toHaveBeenCalled();
+	});
+
+	it('aborts with zero Workspace/Membership/Note writes when the schema bucket fails validation', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'askQuery').mockResolvedValue(false);
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([]);
+		vi.spyOn(connector, 'insertNamespace').mockResolvedValue({ baseIri: govBase });
+		const ensureWorkspaceSpy = vi.spyOn(connector, 'ensureWorkspace').mockResolvedValue(undefined);
+		const addWorkspaceMemberSpy = vi.spyOn(connector, 'addWorkspaceMember').mockResolvedValue(undefined);
+		const ensureNoteAtIriSpy = vi.spyOn(connector, 'ensureNoteAtIri').mockResolvedValue(undefined);
+		vi.spyOn(connector, 'importTurtle').mockRejectedValue(
+			new SchemaValidationError([{ layer: 'structural', message: 'dangling reference' }])
+		);
+
+		await expect(connector.importWorkspaceBundle(fullBundleText())).rejects.toBeInstanceOf(SchemaValidationError);
+
+		expect(ensureWorkspaceSpy).not.toHaveBeenCalled();
+		expect(addWorkspaceMemberSpy).not.toHaveBeenCalled();
+		expect(ensureNoteAtIriSpy).not.toHaveBeenCalled();
+	});
+
+	it("routes a brand-new namespace's class into its own graph, not the caller's active namespace (ordering risk)", async () => {
+		const otherNsBase = 'http://example.org/newns';
+		const otherGraphs = namespaceGraphs(otherNsBase);
+		const otherClassIri = `${otherGraphs.schema}#Vehicle`;
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				// findNamespaceOfSubject's bare cross-graph lookup: the class doesn't exist anywhere yet.
+				return new Response(JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [] } }), {
+					status: 200
+				});
+			}
+			if (q.includes('ASK')) {
+				if (q.includes(`<${NAMESPACE_CLASS_IRI}> a owl:Class`)) {
+					return new Response(JSON.stringify({ head: {}, boolean: true }), { status: 200 });
+				}
+				if (q.includes(`a <${NAMESPACE_CLASS_IRI}>`)) {
+					return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+				}
+				return new Response(JSON.stringify({ head: {}, boolean: false }), { status: 200 });
+			}
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), {
+					status: 200
+				});
+			}
+			// Every FROM <graph> whole-graph fetch (both namespaces) — nothing exists yet.
+			return new Response(JSON.stringify({ head: { vars: ['s', 'p', 'o'] }, results: { bindings: [] } }), {
+				status: 200
+			});
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const summary = await connector.importWorkspaceBundle(`
+			<${otherNsBase}> <${RDF.type}> <${NAMESPACE_CLASS_IRI}> ; <${NAMESPACE_PREFIX_PREDICATE_IRI}> "newns" .
+			<${otherClassIri}> <${RDF.type}> <${OWL.Class}> ; <${RDFS.label}> "Vehicle" .
+		`);
+
+		expect(summary.namespaces).toEqual({ inserted: 1, alreadyPresent: 0 });
+		expect(summary.schema.inserted).toEqual(
+			expect.arrayContaining([{ subject: otherClassIri, predicate: RDF.type }])
+		);
+
+		const insertUpdate = updates.find((u) => u.includes(otherClassIri) && u.includes('INSERT DATA'));
+		expect(insertUpdate).toBeDefined();
+		expect(insertUpdate).toContain(`GRAPH <${otherGraphs.schema}>`);
+		expect(insertUpdate).not.toContain(`GRAPH <${defaultGraphs.schema}>`);
 	});
 });
 

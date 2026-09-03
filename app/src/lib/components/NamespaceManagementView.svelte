@@ -48,17 +48,29 @@
 
 	async function handleEditSubmit(
 		target: FetchedNamespace,
-		values: { description: string; color: string | undefined; publisher: string; license: string }
+		values: {
+			description: string;
+			color: string | undefined;
+			publisher: string;
+			license: string;
+			locked: boolean;
+			defaultHidden: boolean;
+			listedInFilter: boolean;
+		}
 	) {
 		await sparqlConnector.updateNamespaceDescription(target.baseIri, values.description || null);
 		await sparqlConnector.updateNamespaceColor(target.baseIri, values.color ?? null);
 		await sparqlConnector.updateNamespacePublisher(target.baseIri, values.publisher || null);
 		await sparqlConnector.updateNamespaceLicense(target.baseIri, values.license || null);
+		await sparqlConnector.updateNamespaceLocked(target.baseIri, values.locked);
+		await sparqlConnector.updateNamespaceDefaultHidden(target.baseIri, values.defaultHidden);
+		await sparqlConnector.updateNamespaceListedInFilter(target.baseIri, values.listedInFilter);
 		await namespaceStore.refresh();
 		editTarget = null;
 	}
 
 	function requestDelete(ns: FetchedNamespace) {
+		if (ns.locked) return;
 		deleteTarget = ns;
 		deleteEntryCount = null;
 		deleteError = null;
@@ -77,6 +89,10 @@
 		deleteError = null;
 		try {
 			const result = await sparqlConnector.deleteNamespace(target.baseIri, { force });
+			if (result.locked) {
+				deleteError = 'This namespace is locked. Unlock it in Edit before deleting it.';
+				return;
+			}
 			if (!result.deleted) {
 				deleteEntryCount = result.entryCount;
 				return;
@@ -104,6 +120,9 @@
 		initialColor={target.color ?? undefined}
 		initialPublisher={target.publisher ?? ''}
 		initialLicense={target.license ?? ''}
+		initialLocked={target.locked}
+		initialDefaultHidden={target.defaultHidden}
+		initialListedInFilter={target.listedInFilter}
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
 		onSubmit={(values) => handleEditSubmit(target, values)}
@@ -170,8 +189,9 @@
 					<button
 						class="icon-button"
 						onclick={() => requestDelete(ns)}
-						aria-label={`Delete ${ns.prefix}`}
-						title="Delete"
+						disabled={ns.locked}
+						aria-label={ns.locked ? `${ns.prefix} is locked` : `Delete ${ns.prefix}`}
+						title={ns.locked ? 'Locked — unlock in Edit to delete' : 'Delete'}
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
 					</button>

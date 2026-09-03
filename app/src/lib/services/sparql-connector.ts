@@ -16,6 +16,9 @@ import {
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
 	NAMESPACE_COLOR_PREDICATE_IRI,
+	NAMESPACE_LOCKED_PREDICATE_IRI,
+	NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI,
+	NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI,
 	WORKSPACE_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
@@ -47,6 +50,7 @@ import {
 	publicationActivityIri,
 	statementIri,
 	kebabCase,
+	XSD_NAMESPACE,
 	type XsdDatatype
 } from '$lib/utils/iri';
 import {
@@ -70,6 +74,8 @@ import {
 	selectCatalogScope,
 	classIncomingRelationTargets,
 	filterIncomingRelationQuads,
+	resolveExternalDependencyClosure,
+	EXTERNAL_DEPENDENCY_CLOSURE_CAP,
 	RDF,
 	OWL,
 	RDFS,
@@ -163,6 +169,37 @@ export interface ImportSummary {
 	inserted: ImportedTripleInfo[];
 	duplicates: ImportedTripleInfo[];
 	conflicts: ImportedTripleInfo[];
+}
+
+/** Result of `exportWorkspaceBundle` (STORY-090): the self-contained `.ttl` bundle text, plus how
+ *  many external-dependency classes/properties (STORY-089) were left out of it once
+ *  `EXTERNAL_DEPENDENCY_CLOSURE_CAP` was hit — `0` when the closure never saturated the cap, i.e.
+ *  every discovered dependency made it into `turtle`. Surfaced (rather than silently dropped) so
+ *  STORY-093's export UI can warn the user before download. */
+export interface WorkspaceExportBundle {
+	turtle: string;
+	truncatedDependencyCount: number;
+}
+
+/** One bucket's insert/no-op tally within `importWorkspaceBundle`'s combined summary (STORY-092) —
+ *  `alreadyPresent` covers both "this exact row already existed" (STORY-091's idempotent upsert
+ *  primitives) and, for the Namespace bucket, "a namespace with this base IRI was already
+ *  registered". */
+export interface WorkspaceImportBucketSummary {
+	inserted: number;
+	alreadyPresent: number;
+}
+
+/** Result of `importWorkspaceBundle` (STORY-092): `schema` is the exact `ImportSummary` shape
+ *  `importTurtle` itself returns for the bundle's ordinary schema/shapes content, kept distinct from
+ *  the four workspace-vocabulary buckets (`namespaces`/`workspaces`/`memberships`/`notes`) so
+ *  STORY-094's UI can render both clearly. */
+export interface WorkspaceImportSummary {
+	schema: ImportSummary;
+	namespaces: WorkspaceImportBucketSummary;
+	workspaces: WorkspaceImportBucketSummary;
+	memberships: WorkspaceImportBucketSummary;
+	notes: WorkspaceImportBucketSummary;
 }
 
 // -- Full-schema fetch (STORY-009: reconstructing the canvas from GraphDB) --------------------
@@ -350,6 +387,17 @@ export interface FetchedNamespace {
 	/** Optional default `dct:license` (data-catalog Story 011) — a well-formed IRI, same pre-fill
 	 *  semantics as `publisher`. */
 	license: string | null;
+	/** `locked` flag (STORY-095) — when `true`, `deleteNamespace` refuses unconditionally, even
+	 *  under `{force: true}`. Defaults to `false` when the triple is absent. */
+	locked: boolean;
+	/** `defaultHidden` flag (STORY-096) — seeds `namespaceVisibilityStore`'s hidden/visible state
+	 *  the first time a given browser encounters this namespace. Defaults to `false` when absent,
+	 *  except for `DEFAULT_NAMESPACE_BASE_IRI` itself, which defaults to `true` (preserving its
+	 *  pre-existing hardcoded "starts hidden" behavior) unless explicitly overridden. */
+	defaultHidden: boolean;
+	/** `listedInFilter` flag (STORY-097) — when `false`, the namespace is omitted entirely from
+	 *  `NamespaceFilter.svelte`'s toggle list. Defaults to `true` when absent. */
+	listedInFilter: boolean;
 }
 
 // -- Workspace management (STORY-071/072/073) ----------------------------------------------------
@@ -452,6 +500,35 @@ function dedupeQuads(quads: Quad[]): Quad[] {
 		seen.add(key);
 		return true;
 	});
+}
+
+/** Groups `quads` by their (`NamedNode`-only — blank-node subjects have no cross-round-trip identity
+ *  of their own, see `importTurtle`'s doc comment) subject IRI, preserving first-seen subject order —
+ *  the per-subject grouping `importWorkspaceBundle` (STORY-092) needs to reconstruct one
+ *  Workspace/WorkspaceMembership/Note/Namespace row's full set of predicate values at a time. */
+function groupQuadsBySubject(quads: Quad[]): Map<string, Quad[]> {
+	const map = new Map<string, Quad[]>();
+	for (const q of quads) {
+		if (q.subject.termType !== 'NamedNode') continue;
+		const list = map.get(q.subject.value) ?? [];
+		list.push(q);
+		map.set(q.subject.value, list);
+	}
+	return map;
+}
+
+/** First literal object value found for `predicateIri` among `quads` — the per-row field reader
+ *  `importWorkspaceBundle` (STORY-092) uses to pull e.g. a Note's `noteText`/`noteColor` back out of
+ *  one subject's grouped quads. */
+function findLiteral(quads: Quad[], predicateIri: string): string | undefined {
+	return quads.find((q) => q.predicate.value === predicateIri && q.object.termType === 'Literal')?.object.value;
+}
+
+/** First `NamedNode` object value found for `predicateIri` among `quads` — the per-row field reader
+ *  `importWorkspaceBundle` (STORY-092) uses to pull e.g. a `WorkspaceMembership`'s linked element IRI
+ *  back out of one subject's grouped quads. */
+function findNamedNode(quads: Quad[], predicateIri: string): string | undefined {
+	return quads.find((q) => q.predicate.value === predicateIri && q.object.termType === 'NamedNode')?.object.value;
 }
 
 /** Standard vocabulary namespaces (RDF/RDFS/OWL/XSD/SHACL) whose terms are axioms of the
@@ -3014,13 +3091,16 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?ns ?prefix ?desc ?color ?publisher ?license ${fromClause(graphs.schema)} WHERE {
+			SELECT ?ns ?prefix ?desc ?color ?publisher ?license ?locked ?defaultHidden ?listedInFilter ${fromClause(graphs.schema)} WHERE {
 				?ns a <${NAMESPACE_CLASS_IRI}> .
 				OPTIONAL { ?ns <${NAMESPACE_PREFIX_PREDICATE_IRI}> ?prefix }
 				OPTIONAL { ?ns rdfs:comment ?desc }
 				OPTIONAL { ?ns <${NAMESPACE_COLOR_PREDICATE_IRI}> ?color }
 				OPTIONAL { ?ns <${DCT.publisher}> ?publisher }
 				OPTIONAL { ?ns <${DCT.license}> ?license }
+				OPTIONAL { ?ns <${NAMESPACE_LOCKED_PREDICATE_IRI}> ?locked }
+				OPTIONAL { ?ns <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> ?defaultHidden }
+				OPTIONAL { ?ns <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> ?listedInFilter }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
@@ -3029,7 +3109,10 @@ export class SparqlConnector {
 			description: b.desc?.value ?? null,
 			color: b.color?.value ?? null,
 			publisher: b.publisher?.value ?? null,
-			license: b.license?.value ?? null
+			license: b.license?.value ?? null,
+			locked: b.locked?.value === 'true',
+			defaultHidden: b.defaultHidden ? b.defaultHidden.value === 'true' : b.ns.value === DEFAULT_NAMESPACE_BASE_IRI,
+			listedInFilter: b.listedInFilter ? b.listedInFilter.value === 'true' : true
 		}));
 	}
 
@@ -3185,20 +3268,75 @@ export class SparqlConnector {
 		`);
 	}
 
+	/** Sets or clears a namespace's `locked` flag (STORY-095) — mirrors `updateNamespaceColor`'s
+	 *  shape, but always writes an explicit `xsd:boolean` (never removes the triple entirely, since
+	 *  "unlocked" is itself a meaningful, always-present value here, unlike the optional color/
+	 *  publisher/license fields). */
+	async updateNamespaceLocked(baseIri: string, locked: boolean): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> ?old }
+			INSERT { <${baseIri}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> ${locked} }
+			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Sets or clears a namespace's `defaultHidden` flag (STORY-096) — mirrors
+	 *  `updateNamespaceLocked`'s always-explicit-boolean shape. */
+	async updateNamespaceDefaultHidden(baseIri: string, hidden: boolean): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> ?old }
+			INSERT { <${baseIri}> <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> ${hidden} }
+			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Sets or clears a namespace's `listedInFilter` flag (STORY-097) — mirrors
+	 *  `updateNamespaceLocked`'s always-explicit-boolean shape. */
+	async updateNamespaceListedInFilter(baseIri: string, listed: boolean): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> ?old }
+			INSERT { <${baseIri}> <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> ${listed} }
+			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
 	/**
 	 * Deletes a namespace: refused (returning the total triple count across its three graphs)
 	 * unless `{ force: true }` is passed, mirroring `deleteClass`'s `{force?}` pattern (Decision
 	 * 5). `force: true` drops all three of the namespace's graphs (`<base>`, `<base>/schema`,
 	 * `<base>/shapes`) and its own declaration triple — the two are checked/dropped independently
 	 * (deleting the declaration triple never depends on whether the data graphs are empty).
+	 *
+	 * `locked` (STORY-095) is a separate, unconditional gate checked *before* any of the above —
+	 * `force` never overrides it (plan.md ADR: "Locked is an absolute block"). The only way to
+	 * delete a locked namespace is to clear the flag via `updateNamespaceLocked` first.
 	 */
 	async deleteNamespace(
 		baseIri: string,
 		options?: { force?: boolean }
-	): Promise<{ deleted: boolean; entryCount: number }> {
+	): Promise<{ deleted: boolean; entryCount: number; locked?: boolean }> {
 		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
 		const graphs = namespaceGraphs(baseIri);
 		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		const isLocked = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${baseIri}> <${NAMESPACE_LOCKED_PREDICATE_IRI}> true }`
+		);
+		if (isLocked) {
+			return { deleted: false, entryCount: 0, locked: true };
+		}
 
 		const countResult = await this.selectQuery(
 			`SELECT (COUNT(*) AS ?c) ${fromClause(graphs.instances, graphs.schema, graphs.shapes)} WHERE { ?s ?p ?o }`
@@ -3312,6 +3450,39 @@ export class SparqlConnector {
 			)} }`
 		);
 		return iri;
+	}
+
+	/**
+	 * Idempotent upsert primitive for workspace import (STORY-091): inserts the Workspace
+	 * declaration at the caller-given `iri` only if it doesn't already exist; if it does, returns
+	 * without error and without touching the existing `rdfs:label`/default namespace. Mirrors
+	 * `insertWorkspace`'s `INSERT DATA` body exactly, replacing its throw-on-exists with a no-op —
+	 * unlike `insertWorkspace`, `iri` is caller-supplied (the bundle's own IRI), not minted via
+	 * `workspaceIri(name)`, since import must merge into a specific already-known Workspace subject.
+	 */
+	async ensureWorkspace(iri: string, label: string, defaultNamespaceBaseIri?: string): Promise<void> {
+		this.assertSafeSparqlIri(iri, 'workspace IRI');
+		await this.ensureWorkspaceClass();
+
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${WORKSPACE_CLASS_IRI}> }`
+		);
+		if (exists) return;
+
+		const escapedLabel = this.escapeString(label.trim());
+		const trimmedDefaultNs = defaultNamespaceBaseIri?.trim();
+		if (trimmedDefaultNs) this.assertSafeSparqlIri(trimmedDefaultNs, 'default namespace base IRI');
+		const defaultNsTriple = trimmedDefaultNs
+			? ` ; <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${trimmedDefaultNs}>`
+			: '';
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${WORKSPACE_CLASS_IRI}> ; rdfs:label "${escapedLabel}"${defaultNsTriple} .`,
+				graphs.schema
+			)} }`
+		);
 	}
 
 	/** Updates only `rdfs:label` — the workspace's own IRI never changes, mirroring `renameClass`/
@@ -3727,6 +3898,50 @@ export class SparqlConnector {
 			)} }`
 		);
 		return { iri };
+	}
+
+	/**
+	 * Idempotent upsert primitive for workspace import (STORY-091): inserts a Note at the caller-given
+	 * `iri` only if that exact IRI doesn't already exist — distinct from `insertNote`, which always
+	 * mints a fresh timestamp-based IRI and is unchanged by this story. Import needs this instead
+	 * because a bundled Note's `iri` isn't content-deterministic (`research.md` §4.3 step 6): keying
+	 * the exists-guard on the bundle's own literal IRI is what makes re-importing the same file
+	 * idempotent even though `noteIri` itself carries no such guarantee in general.
+	 */
+	async ensureNoteAtIri(
+		iri: string,
+		workspaceIriValue: string,
+		x: number,
+		y: number,
+		color: string,
+		text?: string,
+		linkedElementIri?: string
+	): Promise<void> {
+		this.assertSafeSparqlIri(iri, 'note IRI');
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		if (linkedElementIri) this.assertSafeSparqlIri(linkedElementIri, 'linked element IRI');
+		await this.ensureNoteClass();
+
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const exists = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${NOTE_CLASS_IRI}> }`
+		);
+		if (exists) return;
+
+		const trimmedText = text?.trim();
+		const textTriple = trimmedText ? ` ; <${NOTE_TEXT_PREDICATE_IRI}> "${this.escapeString(trimmedText)}"` : '';
+		const linkedTriple = linkedElementIri ? ` ; <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${linkedElementIri}>` : '';
+
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${NOTE_CLASS_IRI}> ; ` +
+					`<${NOTE_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+					`<${NOTE_COLOR_PREDICATE_IRI}> "${this.escapeString(color)}" ; ` +
+					`<${NOTE_X_PREDICATE_IRI}> "${x}"^^xsd:decimal ; ` +
+					`<${NOTE_Y_PREDICATE_IRI}> "${y}"^^xsd:decimal${textTriple}${linkedTriple} .`,
+				graphs.schema
+			)} }`
+		);
 	}
 
 	/** Sets, replaces, or (passing empty/blank) removes a Note's `noteText` — a blank sticky note is
@@ -4421,6 +4636,169 @@ export class SparqlConnector {
 		return { schema: schemaParts.join('\n'), shapes: shapesParts.join('\n') };
 	}
 
+	/** Hand-formats a Workspace's own declaration triple, mirroring `insertWorkspace`'s `INSERT DATA`
+	 *  body exactly (STORY-090) — spelled out with full `<IRI>` predicates rather than the `rdfs:`
+	 *  prefix, since this text is appended directly into the bundle rather than run as a SPARQL
+	 *  update. */
+	private buildWorkspaceDeclTurtle(workspace: FetchedWorkspace): string {
+		const label = this.escapeString(workspace.label);
+		const defaultNsTriple = workspace.defaultNamespaceBaseIri
+			? ` ; <${WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI}> <${workspace.defaultNamespaceBaseIri}>`
+			: '';
+		return `<${workspace.iri}> <${RDF.type}> <${WORKSPACE_CLASS_IRI}> ; <${RDFS.label}> "${label}"${defaultNsTriple} .\n`;
+	}
+
+	/** Hand-formats one `WorkspaceMembership` row's triples, mirroring `addWorkspaceMember`'s
+	 *  `INSERT DATA` body exactly (STORY-090). */
+	private buildMembershipTurtle(workspaceIriValue: string, elementIri: string, x: number, y: number): string {
+		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		return (
+			`<${membershipIri}> <${RDF.type}> <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ; ` +
+			`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+			`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> ; ` +
+			`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${x}"^^<${XSD_NAMESPACE}decimal> ; ` +
+			`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${y}"^^<${XSD_NAMESPACE}decimal> .\n`
+		);
+	}
+
+	/** Hand-formats one Note's triples, mirroring `insertNote`'s `INSERT DATA` body exactly
+	 *  (STORY-090). */
+	private buildNoteTurtle(workspaceIriValue: string, note: FetchedNote): string {
+		const color = this.escapeString(note.color);
+		const textTriple = note.text ? ` ; <${NOTE_TEXT_PREDICATE_IRI}> "${this.escapeString(note.text)}"` : '';
+		const linkedTriple = note.linkedElementIri
+			? ` ; <${NOTE_LINKED_ELEMENT_PREDICATE_IRI}> <${note.linkedElementIri}>`
+			: '';
+		return (
+			`<${note.iri}> <${RDF.type}> <${NOTE_CLASS_IRI}> ; ` +
+			`<${NOTE_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+			`<${NOTE_COLOR_PREDICATE_IRI}> "${color}" ; ` +
+			`<${NOTE_X_PREDICATE_IRI}> "${note.x}"^^<${XSD_NAMESPACE}decimal> ; ` +
+			`<${NOTE_Y_PREDICATE_IRI}> "${note.y}"^^<${XSD_NAMESPACE}decimal>${textTriple}${linkedTriple} .\n`
+		);
+	}
+
+	/** Hand-formats one namespace's own declaration triple, mirroring `insertNamespace`'s
+	 *  `INSERT DATA` body exactly (STORY-090). */
+	private buildNamespaceDeclTurtle(namespace: FetchedNamespace): string {
+		const prefix = this.escapeString(namespace.prefix);
+		const commentTriple = namespace.description
+			? ` ; <${RDFS.comment}> "${this.escapeString(namespace.description)}"`
+			: '';
+		const colorTriple = namespace.color
+			? ` ; <${NAMESPACE_COLOR_PREDICATE_IRI}> "${this.escapeString(namespace.color)}"`
+			: '';
+		const publisherTriple = namespace.publisher
+			? ` ; <${DCT.publisher}> "${this.escapeString(namespace.publisher)}"`
+			: '';
+		const licenseTriple = namespace.license ? ` ; <${DCT.license}> <${namespace.license}>` : '';
+		return (
+			`<${namespace.baseIri}> <${RDF.type}> <${NAMESPACE_CLASS_IRI}> ; ` +
+			`<${NAMESPACE_PREFIX_PREDICATE_IRI}> "${prefix}"${commentTriple}${colorTriple}${publisherTriple}${licenseTriple} .\n`
+		);
+	}
+
+	/**
+	 * STORY-090: assembles a Workspace into one self-contained `.ttl` bundle — its own declaration,
+	 * every `WorkspaceMembership` row, every `Note`, every member's own schema+shapes triples (the
+	 * same per-namespace `selectScope` union `fetchScopedTurtleForWorkspace` already computes),
+	 * STORY-089's external-dependency-closure classes' own schema+shapes triples, and the `Namespace`
+	 * declaration of every namespace touched by either — so the result can be handed to a colleague
+	 * running an entirely separate GraphDB repository and merged in via `importWorkspaceBundle`
+	 * (STORY-092) without dangling references.
+	 *
+	 * The dependency closure (STORY-089) is resolved independently per member namespace group: a
+	 * namespace's own `declaredClassIris` are derived from that same namespace's already-fetched
+	 * `allQuads`, so a closure hit is always a class/property declared in the *same* namespace as the
+	 * member that referenced it (e.g. a workspace member's `rdfs:subClassOf` pointing at a
+	 * non-member superclass in its own namespace) — this is the common case research.md's export
+	 * scenario describes; a reference crossing into a *different* namespace entirely is out of scope
+	 * for this closure pass (`declaredClassIris` never matches across namespaces), same limitation
+	 * `fetchScopedTurtleForWorkspace` already has for cross-namespace incoming relations.
+	 */
+	async exportWorkspaceBundle(workspaceIriValue: string): Promise<WorkspaceExportBundle> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		const [workspaces, members, notes, schema, namespaces, externalVocabularies] = await Promise.all([
+			this.fetchWorkspaces(),
+			this.fetchWorkspaceMembers(workspaceIriValue),
+			this.fetchNotesForWorkspace(workspaceIriValue),
+			this.fetchFullSchemaForAllNamespaces(),
+			this.fetchNamespaces(),
+			this.fetchExternalVocabularies()
+		]);
+
+		const workspace = workspaces.find((w) => w.iri === workspaceIriValue);
+		if (!workspace) throw new Error(`Workspace not found: ${workspaceIriValue}`);
+
+		const namespaceByIri = new Map<string, string>();
+		for (const c of schema.classes) namespaceByIri.set(c.iri, c.namespaceBaseIri);
+		for (const i of schema.individuals) namespaceByIri.set(i.iri, i.namespaceBaseIri);
+
+		const memberIrisByNamespace = new Map<string, string[]>();
+		for (const { elementIri } of members) {
+			const namespaceBaseIri = namespaceByIri.get(elementIri);
+			if (!namespaceBaseIri) continue;
+			const list = memberIrisByNamespace.get(namespaceBaseIri) ?? [];
+			list.push(elementIri);
+			memberIrisByNamespace.set(namespaceBaseIri, list);
+		}
+
+		const prefixes = buildDisplayPrefixes(namespaces, externalVocabularies);
+		const schemaParts: string[] = [];
+		const shapesParts: string[] = [];
+		let truncatedDependencyCount = 0;
+
+		for (const [namespaceBaseIri, memberIris] of memberIrisByNamespace) {
+			const allQuads = await this.fetchWholeGraphQuads(namespaceBaseIri);
+			const declaredClassIris = new Set(
+				allQuads
+					.filter(
+						(q) =>
+							isRdfType(q, OWL.Class) || isRdfType(q, OWL.DatatypeProperty) || isRdfType(q, OWL.ObjectProperty)
+					)
+					.map((q) => q.subject.value)
+			);
+			const closure = resolveExternalDependencyClosure(
+				allQuads,
+				memberIris,
+				declaredClassIris,
+				EXTERNAL_DEPENDENCY_CLOSURE_CAP
+			);
+			if (closure.size >= EXTERNAL_DEPENDENCY_CLOSURE_CAP) {
+				const fullClosure = resolveExternalDependencyClosure(
+					allQuads,
+					memberIris,
+					declaredClassIris,
+					Number.MAX_SAFE_INTEGER
+				);
+				truncatedDependencyCount += fullClosure.size - closure.size;
+			}
+
+			const scopedIris = [...memberIris, ...closure];
+			const schemaQuads = dedupeQuads(scopedIris.flatMap((iri) => selectScope(allQuads, iri, 'schema')));
+			const shapesQuads = dedupeQuads(scopedIris.flatMap((iri) => selectScope(allQuads, iri, 'shapes')));
+			schemaParts.push(await quadsToTurtle(groupSchemaQuads(schemaQuads), prefixes));
+			shapesParts.push(nestBlankNodes(shapesQuads, prefixes));
+		}
+
+		const touchedNamespaces = new Set(memberIrisByNamespace.keys());
+		const namespaceDeclBlock = namespaces
+			.filter((ns) => touchedNamespaces.has(ns.baseIri))
+			.map((ns) => this.buildNamespaceDeclTurtle(ns))
+			.join('');
+		const workspaceBlock = this.buildWorkspaceDeclTurtle(workspace);
+		const membershipBlock = members
+			.map((m) => this.buildMembershipTurtle(workspaceIriValue, m.elementIri, m.x, m.y))
+			.join('');
+		const noteBlock = notes.map((n) => this.buildNoteTurtle(workspaceIriValue, n)).join('');
+
+		const turtle = [...schemaParts, ...shapesParts, namespaceDeclBlock, workspaceBlock, membershipBlock, noteBlock]
+			.filter((part) => part.trim().length > 0)
+			.join('\n');
+
+		return { turtle, truncatedDependencyCount };
+	}
+
 	/**
 	 * STORY-012/013: parses `turtleText` as the new content for `iri`'s scope (or the whole graph,
 	 * if `iri` is `null`), validates it (syntax, then SHACL well-formedness + OWL/RDFS structural
@@ -4640,6 +5018,228 @@ export class SparqlConnector {
 		}
 
 		return { inserted: insertedInfo, duplicates, conflicts };
+	}
+
+	/**
+	 * STORY-092: imports a bundle produced by `exportWorkspaceBundle` (STORY-090) and merges it into
+	 * the graph, per `research.md` §4.3:
+	 *
+	 * 1. Parses `text`, then partitions the quads by which vocabulary type their subject carries:
+	 *    `Workspace`/`WorkspaceMembership`/`Note`/`Namespace` go to their own bucket regardless of the
+	 *    caller's active namespace; everything else ("rest") is ordinary schema/shapes content.
+	 * 2. Registers any namespace referenced in the Namespace bucket that the target doesn't already
+	 *    have, **before** the rest bucket is merged — the ordering is load-bearing, since a
+	 *    newly-introduced class's own namespace must already exist for `importTurtle`'s per-subject
+	 *    `findNamespaceOfSubject` resolution to land it in the right graph instead of falling back to
+	 *    the caller's active namespace.
+	 * 3. Merges the rest bucket through the existing, **unmodified** `importTurtle` — same
+	 *    duplicate/conflict classification and validation gate it already runs. A validation failure
+	 *    here aborts the whole import (this method never reaches steps 4–6) with zero
+	 *    Workspace/Membership/Note writes; namespace registration from step 2 is a durable
+	 *    prerequisite step, not part of what step 3 might roll back, so it's the one write that can
+	 *    precede a subsequent failure — an accepted trade-off (plan.md's Epic A risk assessment),
+	 *    since re-importing after fixing the bundle just finds that namespace already registered.
+	 * 4. `Workspace` bucket via STORY-091's `ensureWorkspace` per declaration found.
+	 * 5. `WorkspaceMembership` bucket via STORY-091's (confirmed-idempotent) `addWorkspaceMember` per
+	 *    row, using the bundle's own `x`/`y` — never overwrites an existing position.
+	 * 6. `Note` bucket via STORY-091's `ensureNoteAtIri` per note, keyed on the bundle's own literal
+	 *    IRI (not re-minted) — what makes re-importing the same file idempotent for Notes too.
+	 */
+	async importWorkspaceBundle(text: string): Promise<WorkspaceImportSummary> {
+		let allQuads: Quad[];
+		try {
+			allQuads = parseTurtle(text);
+		} catch (err) {
+			throw new SchemaValidationError([
+				{ layer: 'syntax', message: err instanceof Error ? err.message : String(err) }
+			]);
+		}
+
+		const specialTypeIris = new Set<string>([
+			WORKSPACE_CLASS_IRI,
+			WORKSPACE_MEMBERSHIP_CLASS_IRI,
+			NOTE_CLASS_IRI,
+			NAMESPACE_CLASS_IRI
+		]);
+		const subjectType = new Map<string, string>();
+		for (const q of allQuads) {
+			if (
+				q.predicate.value === RDF.type &&
+				q.subject.termType === 'NamedNode' &&
+				q.object.termType === 'NamedNode' &&
+				specialTypeIris.has(q.object.value)
+			) {
+				subjectType.set(q.subject.value, q.object.value);
+			}
+		}
+
+		const workspaceQuads: Quad[] = [];
+		const membershipQuads: Quad[] = [];
+		const noteQuads: Quad[] = [];
+		const namespaceQuads: Quad[] = [];
+		const restQuads: Quad[] = [];
+		for (const q of allQuads) {
+			const type = q.subject.termType === 'NamedNode' ? subjectType.get(q.subject.value) : undefined;
+			if (type === WORKSPACE_CLASS_IRI) workspaceQuads.push(q);
+			else if (type === WORKSPACE_MEMBERSHIP_CLASS_IRI) membershipQuads.push(q);
+			else if (type === NOTE_CLASS_IRI) noteQuads.push(q);
+			else if (type === NAMESPACE_CLASS_IRI) namespaceQuads.push(q);
+			else restQuads.push(q);
+		}
+
+		const defaultGraphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+
+		// Step 2: register namespaces first — load-bearing ordering, see doc comment above.
+		let namespacesInserted = 0;
+		let namespacesAlreadyPresent = 0;
+		for (const [baseIri, quads] of groupQuadsBySubject(namespaceQuads)) {
+			const exists = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${baseIri}> a <${NAMESPACE_CLASS_IRI}> }`
+			);
+			if (exists) {
+				namespacesAlreadyPresent++;
+				continue;
+			}
+			const prefix = findLiteral(quads, NAMESPACE_PREFIX_PREDICATE_IRI) ?? '';
+			await this.insertNamespace(
+				prefix,
+				baseIri,
+				findLiteral(quads, RDFS.comment),
+				findLiteral(quads, NAMESPACE_COLOR_PREDICATE_IRI),
+				findLiteral(quads, DCT.publisher),
+				findNamedNode(quads, DCT.license)
+			);
+			namespacesInserted++;
+		}
+
+		// Step 3: ordinary schema/shapes content through the existing, unmodified importTurtle — but
+		// split into one call per namespace the content actually belongs to, rather than one call for
+		// the whole rest bucket. A brand-new namespace (just registered in step 2, above) has no
+		// existing graph content yet, so `importTurtle`'s own per-subject `findNamespaceOfSubject`
+		// cross-graph lookup would find nothing for a genuinely new class and fall back to whatever
+		// single `namespaceBaseIri` default this call passed — silently misfiling it into the caller's
+		// active namespace instead of the one it was actually exported from (plan.md's flagged risk).
+		// Grouping every subject by which registered namespace's own `<base>/schema#`/`/instances#`/
+		// `/shapes#` prefix its IRI structurally starts with sidesteps that: `classIri`/`propertyIri`/
+		// `individualIri` (`iri.ts`) always mint under exactly one namespace's graphs, so the IRI alone
+		// already encodes its owning namespace, independent of whether any triple for it exists yet
+		// anywhere — then each group's own namespace is passed as `importTurtle`'s fallback default,
+		// so its brand-new subjects land in the right graph. A thrown `SchemaValidationError` on any
+		// group's call propagates immediately, aborting before any Workspace/Membership/Note write.
+		let schemaSummary: ImportSummary = { inserted: [], duplicates: [], conflicts: [] };
+		if (restQuads.length > 0) {
+			const candidateNamespaces = [
+				...new Set([
+					...groupQuadsBySubject(namespaceQuads).keys(),
+					...(await this.fetchNamespaces()).map((ns) => ns.baseIri)
+				])
+			];
+			const candidateGraphs = candidateNamespaces.map((ns) => ({ ns, graphs: namespaceGraphs(ns) }));
+			const resolveGroupNamespace = (iriValue: string): string | undefined =>
+				candidateGraphs.find(
+					({ graphs }) =>
+						iriValue.startsWith(`${graphs.schema}#`) ||
+						iriValue.startsWith(`${graphs.instances}#`) ||
+						iriValue.startsWith(`${graphs.shapes}#`)
+				)?.ns;
+			const resolveBlankGroupNamespace = (blankValue: string, seen: Set<string>): string | undefined => {
+				if (seen.has(blankValue)) return undefined;
+				seen.add(blankValue);
+				const referencing = restQuads.find(
+					(q) => q.object.termType === 'BlankNode' && q.object.value === blankValue
+				);
+				if (!referencing) return undefined;
+				return referencing.subject.termType === 'BlankNode'
+					? resolveBlankGroupNamespace(referencing.subject.value, seen)
+					: resolveGroupNamespace(referencing.subject.value);
+			};
+
+			const restByNamespace = new Map<string, Quad[]>();
+			for (const q of restQuads) {
+				const ns =
+					(q.subject.termType === 'NamedNode'
+						? resolveGroupNamespace(q.subject.value)
+						: resolveBlankGroupNamespace(q.subject.value, new Set())) ?? DEFAULT_NAMESPACE_BASE_IRI;
+				const list = restByNamespace.get(ns) ?? [];
+				list.push(q);
+				restByNamespace.set(ns, list);
+			}
+
+			for (const [ns, quads] of restByNamespace) {
+				const groupSummary = await this.importTurtle(await quadsToTurtle(quads), ns);
+				schemaSummary = {
+					inserted: [...schemaSummary.inserted, ...groupSummary.inserted],
+					duplicates: [...schemaSummary.duplicates, ...groupSummary.duplicates],
+					conflicts: [...schemaSummary.conflicts, ...groupSummary.conflicts]
+				};
+			}
+		}
+
+		// Step 4: Workspace bucket.
+		let workspacesInserted = 0;
+		let workspacesAlreadyPresent = 0;
+		for (const [iri, quads] of groupQuadsBySubject(workspaceQuads)) {
+			const existed = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${iri}> a <${WORKSPACE_CLASS_IRI}> }`
+			);
+			await this.ensureWorkspace(
+				iri,
+				findLiteral(quads, RDFS.label) ?? '',
+				findNamedNode(quads, WORKSPACE_DEFAULT_NAMESPACE_PREDICATE_IRI)
+			);
+			if (existed) workspacesAlreadyPresent++;
+			else workspacesInserted++;
+		}
+
+		// Step 5: WorkspaceMembership bucket.
+		let membershipsInserted = 0;
+		let membershipsAlreadyPresent = 0;
+		for (const [membershipIriValue, quads] of groupQuadsBySubject(membershipQuads)) {
+			const workspaceIriValue = findNamedNode(quads, WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI);
+			const elementIri = findNamedNode(quads, WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI);
+			if (!workspaceIriValue || !elementIri) continue;
+			const x = parseFloat(findLiteral(quads, WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI) ?? '0');
+			const y = parseFloat(findLiteral(quads, WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI) ?? '0');
+			const existed = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${membershipIriValue}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> }`
+			);
+			await this.addWorkspaceMember(workspaceIriValue, elementIri, x, y);
+			if (existed) membershipsAlreadyPresent++;
+			else membershipsInserted++;
+		}
+
+		// Step 6: Note bucket.
+		let notesInserted = 0;
+		let notesAlreadyPresent = 0;
+		for (const [noteIriValue, quads] of groupQuadsBySubject(noteQuads)) {
+			const workspaceIriValue = findNamedNode(quads, NOTE_WORKSPACE_PREDICATE_IRI);
+			if (!workspaceIriValue) continue;
+			const x = parseFloat(findLiteral(quads, NOTE_X_PREDICATE_IRI) ?? '0');
+			const y = parseFloat(findLiteral(quads, NOTE_Y_PREDICATE_IRI) ?? '0');
+			const color = findLiteral(quads, NOTE_COLOR_PREDICATE_IRI) ?? '';
+			const existed = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${noteIriValue}> a <${NOTE_CLASS_IRI}> }`
+			);
+			await this.ensureNoteAtIri(
+				noteIriValue,
+				workspaceIriValue,
+				x,
+				y,
+				color,
+				findLiteral(quads, NOTE_TEXT_PREDICATE_IRI),
+				findNamedNode(quads, NOTE_LINKED_ELEMENT_PREDICATE_IRI)
+			);
+			if (existed) notesAlreadyPresent++;
+			else notesInserted++;
+		}
+
+		return {
+			schema: schemaSummary,
+			namespaces: { inserted: namespacesInserted, alreadyPresent: namespacesAlreadyPresent },
+			workspaces: { inserted: workspacesInserted, alreadyPresent: workspacesAlreadyPresent },
+			memberships: { inserted: membershipsInserted, alreadyPresent: membershipsAlreadyPresent },
+			notes: { inserted: notesInserted, alreadyPresent: notesAlreadyPresent }
+		};
 	}
 
 	/** Classifies `newQuads` into the namespace's three graphs (`partitionQuads` for

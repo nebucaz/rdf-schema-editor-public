@@ -16,13 +16,20 @@
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
 	import SettingsView from '$lib/components/SettingsView.svelte';
-	import { sparqlConnector, type ImportSummary } from '$lib/services/sparql-connector';
+	import {
+		sparqlConnector,
+		type ImportSummary,
+		type WorkspaceImportSummary
+	} from '$lib/services/sparql-connector';
 	import { quadsToNQuads } from '$lib/services/turtle';
 	import { SchemaValidationError } from '$lib/services/validation';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import { downloadFile } from '$lib/utils/download';
+	import { filterListedNamespaces } from '$lib/utils/visibility';
+	import WorkspaceImportResultView from '$lib/components/WorkspaceImportResultView.svelte';
 
 	let { children } = $props();
 
@@ -39,22 +46,16 @@
 	let importSummary = $state<ImportSummary | null>(null);
 	let importError = $state<string | null>(null);
 
+	let importWorkspaceFileInput = $state<HTMLInputElement | undefined>();
+	let importingWorkspace = $state(false);
+	let workspaceImportSummary = $state<WorkspaceImportSummary | null>(null);
+	let workspaceImportError = $state<string | null>(null);
+
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
 		void workspaceStore.ensureLoaded();
 		void externalVocabStore.ensureLoaded();
 	});
-
-	/** Browser-native download — no new dependency (matches `TriplesPanel.svelte`'s helper). */
-	function downloadFile(filename: string, text: string, mimeType: string) {
-		const blob = new Blob([text], { type: mimeType });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
 
 	/** STORY-036: exports every registered namespace's three graphs as one N-Quads file, each
 	 *  triple's graph term preserved. */
@@ -110,6 +111,40 @@
 			importing = false;
 		}
 	}
+
+	/** STORY-094: reads a workspace-export bundle (STORY-090's `exportWorkspaceBundle` output)
+	 *  client-side and merges it via STORY-092's `importWorkspaceBundle` — a separate entry from
+	 *  "Import Turtle…" since the bundle carries Workspace/WorkspaceMembership/Note/Namespace rows
+	 *  alongside ordinary schema/shapes content, and needs the workspace store refreshed on success
+	 *  (a plain schema import never creates/merges a Workspace, so it only refreshes the namespace
+	 *  list). */
+	async function handleImportWorkspaceFileSelected(event: Event) {
+		const input = event.currentTarget as HTMLInputElement;
+		const file = input.files?.[0];
+		input.value = ''; // allow re-selecting the same file later (no change-event otherwise)
+		if (!file) return;
+
+		importingWorkspace = true;
+		workspaceImportSummary = null;
+		workspaceImportError = null;
+		try {
+			const text = await readFileAsText(file);
+			const summary = await sparqlConnector.importWorkspaceBundle(text);
+			workspaceImportSummary = summary;
+			workbenchActions.reload();
+			void namespaceStore.refresh();
+			void workspaceStore.refresh();
+		} catch (err) {
+			workspaceImportError =
+				err instanceof SchemaValidationError
+					? err.issues.map((i) => `[${i.layer}] ${i.message}`).join('\n')
+					: err instanceof Error
+						? err.message
+						: 'Failed to import workspace bundle';
+		} finally {
+			importingWorkspace = false;
+		}
+	}
 </script>
 
 <ModeWatcher defaultMode="system" />
@@ -155,7 +190,7 @@
 			/>
 			<DescriptionVisibilityToggle />
 			<NamespaceFilter
-				namespaces={namespaceStore.namespaces}
+				namespaces={filterListedNamespaces(namespaceStore.namespaces)}
 				hiddenNamespaces={workbenchActions.hiddenNamespaces}
 				onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
 			/>
@@ -219,6 +254,15 @@
 					>
 						{importing ? 'Importing…' : 'Import Turtle…'}
 					</button>
+					<button
+						type="button"
+						class="menu-item"
+						onclick={() => importWorkspaceFileInput?.click()}
+						disabled={importingWorkspace}
+						title="Merge a workspace-export bundle (STORY-090) — recreates the workspace, layout, and notes"
+					>
+						{importingWorkspace ? 'Importing…' : 'Import Workspace…'}
+					</button>
 				{/snippet}
 			</HamburgerMenu>
 			<input
@@ -227,6 +271,13 @@
 				accept=".ttl"
 				class="import-file-input"
 				onchange={(e) => void handleImportFileSelected(e)}
+			/>
+			<input
+				bind:this={importWorkspaceFileInput}
+				type="file"
+				accept=".ttl"
+				class="import-file-input"
+				onchange={(e) => void handleImportWorkspaceFileSelected(e)}
 			/>
 		</div>
 	</header>
@@ -294,6 +345,21 @@
 		<p class="import-error">{importError}</p>
 	{:else if importSummary}
 		<ImportResultView summary={importSummary} />
+	{/if}
+</Modal>
+
+<Modal
+	isOpen={workspaceImportSummary !== null || workspaceImportError !== null}
+	title={workspaceImportError ? 'Workspace Import Failed' : 'Workspace Import Result'}
+	onClose={() => {
+		workspaceImportSummary = null;
+		workspaceImportError = null;
+	}}
+>
+	{#if workspaceImportError}
+		<p class="import-error">{workspaceImportError}</p>
+	{:else if workspaceImportSummary}
+		<WorkspaceImportResultView summary={workspaceImportSummary} />
 	{/if}
 </Modal>
 

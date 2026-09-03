@@ -172,12 +172,50 @@ export function parseTurtle(text: string): Quad[] {
 	return new Parser().parse(text);
 }
 
+/** Default datatype IRIs `n3.Writer` renders as a bare quoted literal (no `^^type` suffix) — a
+ *  plain string literal's/`@lang` literal's *implicit* datatype is one of these, so treating them
+ *  as "the datatype IRI is referenced" would mark `xsd`/`rdf` used by every schema regardless of
+ *  whether any literal actually renders an explicit `^^xsd:...` suffix. Used only by
+ *  `filterUsedPrefixes` below. */
+const DEFAULT_LITERAL_DATATYPES = new Set([`${XSD_NAMESPACE}string`, `${RDF_NS}langString`]);
+
+/**
+ * Narrows a display-prefix map down to the entries a given quad set actually renders (a `@prefix`
+ * a reader can't match to any triple in the body is just noise, and `buildDisplayPrefixes` always
+ * returns one entry per *registered* namespace/external vocabulary regardless of whether this
+ * particular export scope touches it). A prefix is "used" if its base IRI is a prefix of some
+ * subject/predicate/object IRI, or of an explicit (non-default) literal datatype IRI, appearing in
+ * `quads`. Over-inclusive by design when two entries share a base-IRI prefix relationship (e.g. a
+ * namespace's plain base vs. its `/schema#` base) — picking the *rendered* prefix for a given term
+ * is `n3.Writer`'s own job; this only decides whether an entry is dropped entirely.
+ */
+function filterUsedPrefixes(quads: Quad[], prefixes: Record<string, string>): Record<string, string> {
+	const entries = Object.entries(prefixes);
+	const used = new Set<string>();
+	const checkIri = (iri: string) => {
+		for (const [name, baseIri] of entries) {
+			if (!used.has(name) && iri.startsWith(baseIri)) used.add(name);
+		}
+	};
+	for (const q of quads) {
+		if (used.size === entries.length) break;
+		if (q.subject.termType === 'NamedNode') checkIri(q.subject.value);
+		if (q.predicate.termType === 'NamedNode') checkIri(q.predicate.value);
+		if (q.object.termType === 'NamedNode') checkIri(q.object.value);
+		else if (q.object.termType === 'Literal' && !DEFAULT_LITERAL_DATATYPES.has(q.object.datatype.value)) {
+			checkIri(q.object.datatype.value);
+		}
+	}
+	return Object.fromEntries(entries.filter(([name]) => used.has(name)));
+}
+
 /** Serializes quads as human-facing Turtle with standard prefixes (STORY-011's view), plus
  *  whichever registered-namespace prefixes `prefixes` supplies (STORY-048's `buildDisplayPrefixes`)
- *  — defaults to the static `rse`/`rse_sh`-only map when no registered-namespace list is available. */
+ *  — defaults to the static `rse`/`rse_sh`-only map when no registered-namespace list is available.
+ *  Only the subset of `prefixes` actually referenced by `quads` is emitted (`filterUsedPrefixes`). */
 export function quadsToTurtle(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): Promise<string> {
 	return new Promise((resolve, reject) => {
-		const writer = new Writer({ prefixes });
+		const writer = new Writer({ prefixes: filterUsedPrefixes(quads, prefixes) });
 		writer.addQuads(quads);
 		writer.end((err, result) => (err ? reject(err) : resolve(result)));
 	});
@@ -340,7 +378,8 @@ export function groupSchemaQuads(schemaQuads: Quad[]): Quad[] {
  * `Promise`, unlike `quadsToTurtle`.
  *
  * `prefixes` mirrors `quadsToTurtle`'s parameter (STORY-048) — defaults to the static
- * `rse`/`rse_sh`-only map when no registered-namespace list is available.
+ * `rse`/`rse_sh`-only map when no registered-namespace list is available. Like `quadsToTurtle`,
+ * only the subset of `prefixes` actually referenced by `quads` is emitted (`filterUsedPrefixes`).
  */
 export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> = DISPLAY_PREFIXES): string {
 	const bySubject = new Map<string, Quad[]>();
@@ -358,7 +397,7 @@ export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> =
 		}
 	}
 
-	const writer = new Writer({ prefixes });
+	const writer = new Writer({ prefixes: filterUsedPrefixes(quads, prefixes) });
 	const isNestable = (blankValue: string) => (blankRefCount.get(blankValue) ?? 0) === 1;
 
 	function buildObject(term: Quad_Object): Quad_Object {
@@ -383,6 +422,61 @@ export function nestBlankNodes(quads: Quad[], prefixes: Record<string, string> =
 		result = res;
 	});
 	return result;
+}
+
+// -- External dependency closure (workspace-export STORY-089) -----------------------------------
+
+/** How many external dependency IRIs `resolveExternalDependencyClosure` will discover before
+ *  stopping — a named cap (research.md §5's "dependency-closure cost") rather than a magic number,
+ *  so a very densely cross-referenced schema can't make a workspace export grow unbounded. */
+export const EXTERNAL_DEPENDENCY_CLOSURE_CAP = 200;
+
+/**
+ * Finds every class/property IRI referenced from `memberIris`' own `selectScope('schema')` output
+ * (e.g. an `rdfs:subClassOf` superclass, or an individual's own ABox assertion pointing at another
+ * declared resource) that is (a) locally declared somewhere in `allQuads` — per the caller-supplied
+ * `declaredClassIris` — and (b) not already one of `memberIris`, so a workspace export
+ * (`resolveExternalDependencyClosure`'s only caller, STORY-090) is self-contained enough to open in
+ * an empty target repository.
+ *
+ * Computed to a fixpoint: a discovered dependency's own referenced dependencies are pulled in too,
+ * transitively, by re-running the same scan against each newly discovered IRI. A cycle (two
+ * external resources referencing each other, neither a workspace member) terminates correctly
+ * rather than looping, since a dependency already in the closure is never re-queued. Stops
+ * discovering further dependencies once `cap` is reached (`EXTERNAL_DEPENDENCY_CLOSURE_CAP` by
+ * default) — the caller is responsible for surfacing that the cap was hit, not this function.
+ *
+ * Pure: operates entirely on the already-fetched `allQuads`, consistent with `selectScope`'s own
+ * "single SPARQL round-trip" contract — never mutates or re-fetches.
+ */
+export function resolveExternalDependencyClosure(
+	allQuads: Quad[],
+	memberIris: Iterable<string>,
+	declaredClassIris: Set<string>,
+	cap: number = EXTERNAL_DEPENDENCY_CLOSURE_CAP
+): Set<string> {
+	const members = new Set(memberIris);
+	const closure = new Set<string>();
+	let frontier = [...members];
+
+	while (frontier.length > 0 && closure.size < cap) {
+		const nextFrontier: string[] = [];
+		outer: for (const iri of frontier) {
+			const scopeQuads = selectScope(allQuads, iri, 'schema');
+			for (const q of scopeQuads) {
+				if (q.object.termType !== 'NamedNode') continue;
+				const target = q.object.value;
+				if (members.has(target) || closure.has(target)) continue;
+				if (!declaredClassIris.has(target)) continue;
+				closure.add(target);
+				nextFrontier.push(target);
+				if (closure.size >= cap) break outer;
+			}
+		}
+		frontier = nextFrontier;
+	}
+
+	return closure;
 }
 
 // -- Catalog scope selection (data-catalog Story 008/009) ---------------------------------------

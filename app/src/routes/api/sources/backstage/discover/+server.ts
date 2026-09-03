@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { BACKEND_URL } from '$env/static/private';
+import { BACKEND_URL, BACKEND_AUTH_TOKEN } from '$env/static/private';
 
 /**
  * Thin proxy for the Go backend's `GET /sources/backstage/discover` (Story 004) — no business logic
@@ -11,7 +11,10 @@ export const GET: RequestHandler = async () => {
 	let response: Response;
 	try {
 		response = await fetch(`${BACKEND_URL}/sources/backstage/discover`, {
-			headers: { Accept: 'application/json' }
+			headers: {
+				Accept: 'application/json',
+				Authorization: `Bearer ${BACKEND_AUTH_TOKEN}`
+			}
 		});
 	} catch (err) {
 		throw error(502, `Backend unreachable: ${err instanceof Error ? err.message : 'Unknown error'}`);

@@ -43,12 +43,14 @@ func (h *SparqlHandler) setBasicAuth(req *http.Request) {
 // GraphDB's SPARQL protocol endpoint, returning its sparql-results+json response unchanged.
 func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		auditLog(r, "", http.StatusBadRequest, "malformed request body")
 		http.Error(w, "malformed request body", http.StatusBadRequest)
 		return
 	}
 
 	query := r.FormValue("query")
 	if strings.TrimSpace(query) == "" {
+		auditLog(r, "", http.StatusBadRequest, `Missing or invalid "query" parameter`)
 		http.Error(w, `Missing or invalid "query" parameter`, http.StatusBadRequest)
 		return
 	}
@@ -60,6 +62,7 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {
+		auditLog(r, query, http.StatusInternalServerError, "failed to build GraphDB request")
 		http.Error(w, "failed to build GraphDB request", http.StatusInternalServerError)
 		return
 	}
@@ -69,11 +72,13 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.client.Do(req)
 	if err != nil {
+		auditLog(r, query, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
 		http.Error(w, "GraphDB unreachable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	auditLog(r, query, resp.StatusCode, "")
 	proxyResponse(w, resp, "application/sparql-results+json")
 }
 
@@ -81,18 +86,21 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 // endpoint as raw application/sparql-update content, matching GraphDB's SPARQL Update protocol.
 func (h *SparqlHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
+		auditLog(r, "", http.StatusBadRequest, "malformed request body")
 		http.Error(w, "malformed request body", http.StatusBadRequest)
 		return
 	}
 
 	update := r.FormValue("update")
 	if strings.TrimSpace(update) == "" {
+		auditLog(r, "", http.StatusBadRequest, `Missing or invalid "update" parameter`)
 		http.Error(w, `Missing or invalid "update" parameter`, http.StatusBadRequest)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.endpointURL+"/statements", strings.NewReader(update))
 	if err != nil {
+		auditLog(r, update, http.StatusInternalServerError, "failed to build GraphDB request")
 		http.Error(w, "failed to build GraphDB request", http.StatusInternalServerError)
 		return
 	}
@@ -102,11 +110,13 @@ func (h *SparqlHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.client.Do(req)
 	if err != nil {
+		auditLog(r, update, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
 		http.Error(w, "GraphDB unreachable: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
+	auditLog(r, update, resp.StatusCode, "")
 	proxyResponse(w, resp, "application/json")
 }
 

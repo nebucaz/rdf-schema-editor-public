@@ -11,6 +11,7 @@ import {
 	groupSchemaQuads,
 	nestBlankNodes,
 	buildDisplayPrefixes,
+	resolveExternalDependencyClosure,
 	isRdfType,
 	OWL,
 	RDF,
@@ -52,6 +53,58 @@ describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 		const body = await quadsToGroundTriples(quads);
 		expect(body).toContain('_:');
 		expect(body).not.toContain('@prefix');
+	});
+});
+
+describe('quadsToTurtle / nestBlankNodes omit unreferenced prefixes', () => {
+	it('drops a supplied prefix whose base IRI matches no term in the quads', async () => {
+		const quads = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			<urn:example:s> a owl:Class .
+		`);
+		const prefixes = {
+			owl: 'http://www.w3.org/2002/07/owl#',
+			unused: 'http://example.org/unused#'
+		};
+
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).toContain('@prefix owl:');
+		expect(turtle).not.toContain('@prefix unused:');
+	});
+
+	it('does not treat a plain string literal\'s implicit xsd:string datatype as a use of the xsd: prefix', async () => {
+		const quads = parseTurtle(`<urn:example:s> <urn:example:p> "plain literal" .`);
+		const prefixes = { xsd: 'http://www.w3.org/2001/XMLSchema#' };
+
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).not.toContain('@prefix xsd:');
+	});
+
+	it('keeps a prefix used only via an explicit non-default literal datatype (e.g. xsd:integer)', async () => {
+		const quads = parseTurtle(`<urn:example:s> <urn:example:p> "42"^^<http://www.w3.org/2001/XMLSchema#integer> .`);
+		const prefixes = { xsd: 'http://www.w3.org/2001/XMLSchema#' };
+
+		const turtle = await quadsToTurtle(quads, prefixes);
+
+		expect(turtle).toContain('@prefix xsd:');
+	});
+
+	it('nestBlankNodes drops a supplied prefix whose base IRI matches no term in the quads', () => {
+		const quads = parseTurtle(`
+			@prefix sh: <http://www.w3.org/ns/shacl#> .
+			<urn:shape> sh:property [ sh:path <urn:p> ] .
+		`);
+		const prefixes = {
+			sh: 'http://www.w3.org/ns/shacl#',
+			unused: 'http://example.org/unused#'
+		};
+
+		const turtle = nestBlankNodes(quads, prefixes);
+
+		expect(turtle).toContain('@prefix sh:');
+		expect(turtle).not.toContain('@prefix unused:');
 	});
 });
 
@@ -436,6 +489,107 @@ describe('selectScope class scope widened to incoming individual relations (rela
 					q.object.value === applicationIri
 			)
 		).toBe(true);
+	});
+});
+
+describe('resolveExternalDependencyClosure (workspace-export STORY-089)', () => {
+	const memberIri = classIri('Employee');
+	const externalIri = classIri('Person');
+	const external2Iri = classIri('LegalEntity');
+
+	function declaredClassSet(...ids: string[]): Set<string> {
+		return new Set(ids);
+	}
+
+	it('includes one level of external reference (member subClassOf an external class)', () => {
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${memberIri}> a owl:Class ; rdfs:label "Employee" ; rdfs:subClassOf <${externalIri}> .
+			<${externalIri}> a owl:Class ; rdfs:label "Person" .
+		`);
+
+		const closure = resolveExternalDependencyClosure(all, [memberIri], declaredClassSet(memberIri, externalIri));
+
+		expect(closure).toEqual(new Set([externalIri]));
+	});
+
+	it('follows a chain of two external references transitively', () => {
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${memberIri}> a owl:Class ; rdfs:label "Employee" ; rdfs:subClassOf <${externalIri}> .
+			<${externalIri}> a owl:Class ; rdfs:label "Person" ; rdfs:subClassOf <${external2Iri}> .
+			<${external2Iri}> a owl:Class ; rdfs:label "LegalEntity" .
+		`);
+
+		const closure = resolveExternalDependencyClosure(
+			all,
+			[memberIri],
+			declaredClassSet(memberIri, externalIri, external2Iri)
+		);
+
+		expect(closure).toEqual(new Set([externalIri, external2Iri]));
+	});
+
+	it('terminates on a cycle between two external classes, including both exactly once', () => {
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${memberIri}> a owl:Class ; rdfs:label "Employee" ; rdfs:subClassOf <${externalIri}> .
+			<${externalIri}> a owl:Class ; rdfs:label "Person" ; rdfs:subClassOf <${external2Iri}> .
+			<${external2Iri}> a owl:Class ; rdfs:label "LegalEntity" ; rdfs:subClassOf <${externalIri}> .
+		`);
+
+		const closure = resolveExternalDependencyClosure(
+			all,
+			[memberIri],
+			declaredClassSet(memberIri, externalIri, external2Iri)
+		);
+
+		expect(closure).toEqual(new Set([externalIri, external2Iri]));
+	});
+
+	it('returns an empty closure for a member with no external references', () => {
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+			<${memberIri}> a owl:Class ; rdfs:label "Employee" .
+		`);
+
+		const closure = resolveExternalDependencyClosure(all, [memberIri], declaredClassSet(memberIri));
+
+		expect(closure.size).toBe(0);
+	});
+
+	it('stops discovering further dependencies once the cap is hit, returning cleanly', () => {
+		const chainLength = 10;
+		const chainIris = Array.from({ length: chainLength }, (_, i) => classIri(`Chain${i}`));
+		const lines = chainIris.map((iri, i) => {
+			const next = chainIris[i + 1];
+			return next
+				? `<${iri}> a owl:Class ; rdfs:label "Chain${i}" ; rdfs:subClassOf <${next}> .`
+				: `<${iri}> a owl:Class ; rdfs:label "Chain${i}" .`;
+		});
+		const all = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+			<${memberIri}> a owl:Class ; rdfs:label "Employee" ; rdfs:subClassOf <${chainIris[0]}> .
+			${lines.join('\n')}
+		`);
+
+		const closure = resolveExternalDependencyClosure(
+			all,
+			[memberIri],
+			declaredClassSet(memberIri, ...chainIris),
+			3
+		);
+
+		expect(closure.size).toBe(3);
 	});
 });
 

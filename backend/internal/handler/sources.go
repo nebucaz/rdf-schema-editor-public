@@ -37,18 +37,21 @@ func (h *SourceHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	sourceName := chi.URLParam(r, "source")
 	source, ok := h.registry.Get(sourceName)
 	if !ok {
+		auditLog(r, sourceName, http.StatusNotFound, "unknown source")
 		http.Error(w, "unknown source: "+sourceName, http.StatusNotFound)
 		return
 	}
 
 	kinds, err := source.DiscoverKinds(r.Context())
 	if err != nil {
+		auditLog(r, sourceName, http.StatusBadGateway, "discover upstream kinds: "+err.Error())
 		http.Error(w, "discover upstream kinds: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
 	mapping, err := sync.FetchKindMapping(r.Context(), h.gdb, h.backstageKindPredicateIRI)
 	if err != nil {
+		auditLog(r, sourceName, http.StatusBadGateway, "fetch kind mapping: "+err.Error())
 		http.Error(w, "fetch kind mapping: "+err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -60,6 +63,7 @@ func (h *SourceHandler) Discover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	auditLog(r, sourceName, http.StatusOK, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(discoverResponse{Source: sourceName, UnmappedKinds: unmapped})
@@ -71,6 +75,7 @@ func (h *SourceHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	sourceName := chi.URLParam(r, "source")
 	source, ok := h.registry.Get(sourceName)
 	if !ok {
+		auditLog(r, sourceName, http.StatusNotFound, "unknown source")
 		http.Error(w, "unknown source: "+sourceName, http.StatusNotFound)
 		return
 	}
@@ -80,13 +85,16 @@ func (h *SourceHandler) Sync(w http.ResponseWriter, r *http.Request) {
 	summary, err := h.engine.RunSync(r.Context(), source, dryRun)
 	if err != nil {
 		if errors.Is(err, sync.ErrSyncInProgress) {
+			auditLog(r, sourceName, http.StatusConflict, "a real sync is already in progress")
 			http.Error(w, "a real sync is already in progress for source: "+sourceName, http.StatusConflict)
 			return
 		}
+		auditLog(r, sourceName, http.StatusBadGateway, "run sync: "+err.Error())
 		http.Error(w, "run sync: "+err.Error(), http.StatusBadGateway)
 		return
 	}
 
+	auditLog(r, sourceName, http.StatusOK, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(summary)

@@ -87,3 +87,15 @@ export function buildExternalReferencingSources(
 	}
 	return map;
 }
+
+/**
+ * STORY-097: which registered namespaces should appear as a togglable row in
+ * `NamespaceFilter.svelte` — every namespace with `listedInFilter !== false`. A namespace excluded
+ * this way is untouched otherwise (still fully usable on canvas/forms; its existing hidden/shown
+ * state from `namespaceVisibilityStore` is left exactly as-is — this only affects the filter
+ * panel's own row list). Extracted as a pure function, mirroring this file's other helpers, so the
+ * filtering itself stays unit-testable without a live component.
+ */
+export function filterListedNamespaces<T extends { listedInFilter: boolean }>(namespaces: T[]): T[] {
+	return namespaces.filter((ns) => ns.listedInFilter);
+}

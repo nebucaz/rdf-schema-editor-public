@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/jwtauth"
 )
 
 func TestRun_Discover_UnmappedKindsPresent(t *testing.T) {
@@ -188,5 +191,138 @@ func TestRun_NeverHardcodesBackstageInRequestPath(t *testing.T) {
 	}
 	if gotPath != "/sources/gitlab/discover" {
 		t.Errorf("path = %s, want /sources/gitlab/discover — source name must come straight from the CLI arg", gotPath)
+	}
+}
+
+func TestRun_Discover_AttachesBearerToken(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, `{"source":"backstage","unmappedKinds":[]}`)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"discover", "backstage", "--backend-url", server.URL, "--token", "test-jwt"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr.String())
+	}
+	if gotAuth != "Bearer test-jwt" {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, "Bearer test-jwt")
+	}
+}
+
+func TestRun_Sync_AttachesBearerTokenFromEnv(t *testing.T) {
+	t.Setenv("IMPORTCTL_AUTH_TOKEN", "env-jwt")
+
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		fmt.Fprint(w, `{"source":"backstage","dryRun":true,"syncedPerKind":{},"mapping":{},"skippedKinds":[]}`)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"sync", "backstage", "--backend-url", server.URL}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr.String())
+	}
+	if gotAuth != "Bearer env-jwt" {
+		t.Errorf("Authorization header = %q, want %q", gotAuth, "Bearer env-jwt")
+	}
+}
+
+func TestRun_Discover_MissingTokenSurfacesBackend401LikeAnyOtherError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		fmt.Fprint(w, `{"source":"backstage","unmappedKinds":[]}`)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"discover", "backstage", "--backend-url", server.URL}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Error("exit code = 0, want non-zero when the backend rejects a missing token")
+	}
+	if !strings.Contains(stderr.String(), "401") {
+		t.Errorf("stderr = %q, want it to mention the 401 status, matching apiError's existing format", stderr.String())
+	}
+}
+
+func TestRun_MintToken_ProducesValidJWT(t *testing.T) {
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"mint-token", "--sub", "frontend-app"}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr.String())
+	}
+
+	token := strings.TrimSpace(stdout.String())
+	sub, err := jwtauth.Verify(token, "test-secret")
+	if err != nil {
+		t.Fatalf("minted token did not verify: %v", err)
+	}
+	if sub != "frontend-app" {
+		t.Errorf("sub = %q, want frontend-app", sub)
+	}
+}
+
+func TestRun_MintToken_TTLOverride(t *testing.T) {
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+
+	var stdout1, stderr1 bytes.Buffer
+	code := run([]string{"mint-token", "--sub", "importctl", "--ttl", "1h"}, &stdout1, &stderr1)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr1.String())
+	}
+
+	// JWT NumericDate claims truncate to whole seconds, so the gap must exceed 1s for iat/exp to
+	// actually differ between the two invocations.
+	time.Sleep(1100 * time.Millisecond)
+
+	var stdout2, stderr2 bytes.Buffer
+	code = run([]string{"mint-token", "--sub", "importctl", "--ttl", "1h"}, &stdout2, &stderr2)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr2.String())
+	}
+
+	if stdout1.String() == stdout2.String() {
+		t.Error("two mint-token invocations produced identical tokens, want iat/exp to differ per invocation")
+	}
+}
+
+func TestRun_MintToken_MissingSubRequired(t *testing.T) {
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"mint-token"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Error("exit code = 0, want non-zero when --sub is missing")
+	}
+	if !strings.Contains(stderr.String(), "--sub") {
+		t.Errorf("stderr = %q, want it to mention --sub", stderr.String())
+	}
+}
+
+func TestRun_MintToken_MissingSecret(t *testing.T) {
+	t.Setenv("AUTH_JWT_SECRET", "")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"mint-token", "--sub", "frontend-app"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Error("exit code = 0, want non-zero when AUTH_JWT_SECRET is unset")
+	}
+	if !strings.Contains(stderr.String(), "AUTH_JWT_SECRET") {
+		t.Errorf("stderr = %q, want it to mention AUTH_JWT_SECRET", stderr.String())
 	}
 }

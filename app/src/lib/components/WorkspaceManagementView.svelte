@@ -4,7 +4,8 @@
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
-	import { extractLocalName } from '$lib/utils/iri';
+	import { extractLocalName, kebabCase } from '$lib/utils/iri';
+	import { downloadFile } from '$lib/utils/download';
 
 	let loadError = $state<string | null>(null);
 
@@ -23,6 +24,10 @@
 	let deleteTarget = $state<FetchedWorkspace | null>(null);
 	let deleteBusy = $state(false);
 	let deleteError = $state<string | null>(null);
+
+	let exportBusyIri = $state<string | null>(null);
+	let exportError = $state<string | null>(null);
+	let exportNotice = $state<string | null>(null);
 
 	onMount(async () => {
 		loadError = null;
@@ -129,6 +134,31 @@
 	function handleViewTriples(ws: FetchedWorkspace) {
 		workbenchActions.triplesWorkspaceScope = { workspaceIri: ws.iri, label: labelOf(ws) };
 	}
+
+	/** STORY-093: downloads STORY-090's `exportWorkspaceBundle` output as `workspace-<slug>.ttl` — a
+	 *  full round-trip bundle (members, positions, notes, namespace declarations, dependency closure),
+	 *  distinct from "View triples"'s read-only, single-tab inspector. Surfaces the
+	 *  dependency-closure-cap truncation count (if any) as an inline notice rather than letting it pass
+	 *  silently, per STORY-090's `truncatedDependencyCount`. */
+	async function handleExportWorkspace(ws: FetchedWorkspace) {
+		exportError = null;
+		exportNotice = null;
+		exportBusyIri = ws.iri;
+		try {
+			const bundle = await sparqlConnector.exportWorkspaceBundle(ws.iri);
+			downloadFile(`workspace-${kebabCase(labelOf(ws))}.ttl`, bundle.turtle, 'text/turtle');
+			if (bundle.truncatedDependencyCount > 0) {
+				exportNotice =
+					`${bundle.truncatedDependencyCount} external dependency ` +
+					`${bundle.truncatedDependencyCount === 1 ? 'class was' : 'classes were'} left out of the bundle ` +
+					`(dependency-closure cap reached).`;
+			}
+		} catch (err) {
+			exportError = err instanceof Error ? err.message : 'Failed to export workspace';
+		} finally {
+			exportBusyIri = null;
+		}
+	}
 </script>
 
 {#if showAddForm}
@@ -218,6 +248,12 @@
 {:else if loadError}
 	<p class="error">{loadError}</p>
 {:else}
+	{#if exportError}
+		<p class="error">{exportError}</p>
+	{/if}
+	{#if exportNotice}
+		<p class="notice">{exportNotice}</p>
+	{/if}
 	<ul class="workspaces">
 		{#each workspaceStore.workspaces as ws (ws.iri)}
 			<li>
@@ -235,6 +271,15 @@
 						title="View triples"
 					>
 						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+					</button>
+					<button
+						class="icon-button"
+						onclick={() => handleExportWorkspace(ws)}
+						disabled={exportBusyIri === ws.iri}
+						aria-label={`Export ${labelOf(ws)}`}
+						title="Export Workspace…"
+					>
+						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
 					</button>
 					<button class="icon-button" onclick={() => startEdit(ws)} aria-label={`Edit ${labelOf(ws)}`} title="Edit">
 						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
@@ -382,6 +427,12 @@
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
+	}
+
+	.notice {
+		color: var(--color-text-muted);
+		font-size: 0.85rem;
+		margin: 0 0 0.5rem;
 	}
 
 	.actions {

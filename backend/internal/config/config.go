@@ -37,6 +37,9 @@ type Config struct {
 	// (non-dry-run) sync. Parsed from BACKSTAGE_SYNC_INTERVAL (a Go time.Duration string, e.g.
 	// "1h"); defaults to defaultBackstageSyncInterval when unset.
 	BackstageSyncInterval time.Duration
+	// AuthJWTSecret is the HS256 signing secret shared between the JWT verification middleware
+	// (STORY-002) and the minting tool (STORY-003). Required — see Load()'s fail-fast behavior.
+	AuthJWTSecret string
 }
 
 // BackstageKindPredicateIRI is the `backstageKind` annotation-property IRI (Story 003), derived
@@ -87,6 +90,11 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("GRAPHDB_ENDPOINT_URL is required but not set")
 	}
 
+	authJWTSecret := os.Getenv("AUTH_JWT_SECRET")
+	if authJWTSecret == "" {
+		return Config{}, fmt.Errorf("AUTH_JWT_SECRET is required but not set")
+	}
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8090"
@@ -115,5 +123,6 @@ func Load() (Config, error) {
 		BackstageBaseURL:      os.Getenv("BACKSTAGE_BASE_URL"),
 		BackstageToken:        os.Getenv("BACKSTAGE_TOKEN"),
 		BackstageSyncInterval: syncInterval,
+		AuthJWTSecret:         authJWTSecret,
 	}, nil
 }

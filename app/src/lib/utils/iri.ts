@@ -89,6 +89,28 @@ export const NAMESPACE_PREFIX_PREDICATE_IRI = `${SCHEMA_NAMESPACE}prefix`;
 export const NAMESPACE_COLOR_PREDICATE_IRI = `${SCHEMA_NAMESPACE}color`;
 
 /**
+ * Predicate for a namespace's `locked` flag (STORY-095) — an `xsd:boolean` literal on the
+ * namespace's own base-IRI subject, same shape as `NAMESPACE_COLOR_PREDICATE_IRI`. When `true`,
+ * `deleteNamespace` refuses unconditionally, even under `{force: true}`.
+ */
+export const NAMESPACE_LOCKED_PREDICATE_IRI = `${SCHEMA_NAMESPACE}locked`;
+
+/**
+ * Predicate for a namespace's `defaultHidden` flag (STORY-096) — an `xsd:boolean` literal, same
+ * shape as `NAMESPACE_COLOR_PREDICATE_IRI`. Seeds `namespaceVisibilityStore`'s hidden/visible state
+ * the first time a given browser encounters this namespace; a browser that has already toggled it
+ * ignores this flag from then on.
+ */
+export const NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI = `${SCHEMA_NAMESPACE}defaultHidden`;
+
+/**
+ * Predicate for a namespace's `listedInFilter` flag (STORY-097) — an `xsd:boolean` literal, same
+ * shape as `NAMESPACE_COLOR_PREDICATE_IRI`. When `false`, the namespace is omitted entirely from
+ * `NamespaceFilter.svelte`'s toggle list (distinct from `defaultHidden`, which still lists it).
+ */
+export const NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI = `${SCHEMA_NAMESPACE}listedInFilter`;
+
+/**
  * Workspace-management vocabulary (STORY-071, `spec/views/plan.md`): a named container a schema
  * author places elements onto so only that container's members render on the canvas at once.
  * Always stored in the default namespace's own `/schema` graph regardless of a Workspace's own

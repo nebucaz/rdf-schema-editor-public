@@ -283,6 +283,24 @@
 		applyVisibilityFilters();
 	}
 
+	/** STORY-096: seeds `hiddenNamespaces`/`namespaceVisibilityStore` for every namespace this
+	 *  browser has never explicitly toggled, from that namespace's own author-set `defaultHidden`
+	 *  flag — generalizes what used to be a single hardcoded "the built-in default namespace starts
+	 *  hidden" case in `namespaceVisibilityStore` itself. Called once `namespaceStore.namespaces` is
+	 *  fresh (see `loadSchemaFromGraphDB`); a namespace already present in the store's persisted
+	 *  record (hidden or explicitly shown) is left untouched. */
+	function seedDefaultNamespaceVisibility() {
+		const next = new Set(hiddenNamespaces);
+		let changed = false;
+		for (const ns of namespaceStore.namespaces) {
+			if (namespaceVisibilityStore.hasStoredPreference(ns.baseIri)) continue;
+			namespaceVisibilityStore.setHidden(ns.baseIri, ns.defaultHidden);
+			if (ns.defaultHidden) next.add(ns.baseIri);
+			changed = true;
+		}
+		if (changed) hiddenNamespaces = next;
+	}
+
 	// -- Schema/Instances view mode (data-catalog Story 007) ---------------------------------------
 	// A different dimension from the namespace-visibility funnel above (view mode, not visibility) —
 	// deliberately a separate control (`ViewModeToggle` in `+layout.svelte`, bridged via
@@ -2297,6 +2315,7 @@
 		errorMessage = null;
 		try {
 			await namespaceStore.refresh();
+			seedDefaultNamespaceVisibility();
 			await externalVocabStore.refresh();
 			await settingsStore.refresh();
 			await sparqlConnector.ensureDefaultNamespaceMigrated();

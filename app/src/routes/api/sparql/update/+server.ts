@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { BACKEND_URL } from '$env/static/private';
+import { BACKEND_URL, BACKEND_AUTH_TOKEN } from '$env/static/private';
 
 export const POST: RequestHandler = async ({ request }) => {
 	const body = await request.json().catch(() => null);
@@ -18,7 +18,8 @@ export const POST: RequestHandler = async ({ request }) => {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/x-www-form-urlencoded',
-				Accept: 'application/json'
+				Accept: 'application/json',
+				Authorization: `Bearer ${BACKEND_AUTH_TOKEN}`
 			},
 			body: new URLSearchParams({ update }).toString()
 		});

@@ -3,6 +3,7 @@
 	import { SchemaValidationError, type ValidationIssue } from '$lib/services/validation';
 	import { extractLocalName } from '$lib/utils/iri';
 	import { highlightTurtle } from '$lib/utils/turtle-highlight';
+	import { downloadFile } from '$lib/utils/download';
 	import { buildCanvasModel } from '$lib/services/canvas-model';
 	import { canvasModelToLinkML } from '$lib/services/linkml';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
@@ -225,17 +226,6 @@
 		}
 	}
 
-	/** Browser-native download — no new dependency (`research.md` §4.7). */
-	function downloadTurtle(filename: string, text: string) {
-		const blob = new Blob([text], { type: 'text/turtle' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
-
 	function handleDownload() {
 		const base =
 			scope.kind === 'node'
@@ -244,7 +234,7 @@
 					? scope.label.replace(/\s+/g, '-')
 					: null;
 		const filename = base ? `${base}.${activeTab}.ttl` : `${activeTab}.ttl`;
-		downloadTurtle(filename, currentTab.draftText);
+		downloadFile(filename, currentTab.draftText, 'text/turtle');
 	}
 
 	// -- LinkML export (STORY-070) --------------------------------------------------------------
@@ -257,16 +247,6 @@
 	let exportingLinkML = $state(false);
 	let linkMLError = $state<string | null>(null);
 
-	function downloadYaml(filename: string, text: string) {
-		const blob = new Blob([text], { type: 'text/yaml' });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
-
 	async function handleDownloadLinkML() {
 		exportingLinkML = true;
 		linkMLError = null;
@@ -275,7 +255,7 @@
 			const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap());
 			const ns = namespaces.find((n) => n.baseIri === selectedNamespace);
 			const yaml = canvasModelToLinkML(model, namespaces, ns?.prefix ?? 'schema');
-			downloadYaml(`${ns?.prefix ?? 'schema'}.linkml.yaml`, yaml);
+			downloadFile(`${ns?.prefix ?? 'schema'}.linkml.yaml`, yaml, 'text/yaml');
 		} catch (err) {
 			linkMLError = err instanceof Error ? err.message : 'Failed to export LinkML';
 		} finally {

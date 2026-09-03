@@ -40,9 +40,12 @@ func (e *apiError) Error() string {
 	return fmt.Sprintf("backend returned status %d: %s", e.status, e.body)
 }
 
-// apiClient is a thin HTTP client over the backend's source-parameterized routes.
+// apiClient is a thin HTTP client over the backend's source-parameterized routes. token, when set,
+// is sent as `Authorization: Bearer <token>` on every request — importctl's own signed JWT
+// (STORY-005), distinct from the frontend's, so the audit log (STORY-006) can tell them apart.
 type apiClient struct {
 	baseURL string
+	token   string
 	http    *http.Client
 }
 
@@ -51,11 +54,18 @@ func (c *apiClient) discover(ctx context.Context, source string) (discoverRespon
 	if err != nil {
 		return discoverResponse{}, err
 	}
+	c.setAuth(req)
 	var out discoverResponse
 	if err := c.doJSON(req, &out); err != nil {
 		return discoverResponse{}, err
 	}
 	return out, nil
+}
+
+func (c *apiClient) setAuth(req *http.Request) {
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 }
 
 // sync calls POST /sources/{source}/sync?dryRun=<dryRun>. Never omits the query parameter — Story
@@ -67,6 +77,7 @@ func (c *apiClient) sync(ctx context.Context, source string, dryRun bool) (syncR
 	if err != nil {
 		return syncResponse{}, err
 	}
+	c.setAuth(req)
 	var out syncResponse
 	if err := c.doJSON(req, &out); err != nil {
 		return syncResponse{}, err

@@ -14,7 +14,11 @@
 	let { namespaces, hiddenNamespaces, onToggle }: Props = $props();
 
 	let isOpen = $state(false);
-	const hiddenCount = $derived(hiddenNamespaces.size);
+	// Counts only namespaces that actually appear as a row in this panel (`namespaces` is already
+	// STORY-097-filtered to `listedInFilter`) — a namespace excluded from the filter but hidden by
+	// default (STORY-096) would otherwise inflate the badge with a hidden namespace the user has no
+	// way to see or un-hide from here.
+	const hiddenCount = $derived(namespaces.filter((ns) => hiddenNamespaces.has(ns.baseIri)).length);
 	const tooltip = $derived(hiddenCount > 0 ? `${hiddenCount} hidden` : 'Filter namespaces');
 
 	function toggleOpen() {
