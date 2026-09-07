@@ -8,6 +8,7 @@
 	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
 	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
 	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
+	import InheritedAttributesVisibilityToggle from '$lib/components/InheritedAttributesVisibilityToggle.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
 	import WorkspaceManagementView from '$lib/components/WorkspaceManagementView.svelte';
@@ -189,6 +190,7 @@
 				onChange={(mode) => workbenchActions.setViewMode(mode)}
 			/>
 			<DescriptionVisibilityToggle />
+			<InheritedAttributesVisibilityToggle />
 			<NamespaceFilter
 				namespaces={filterListedNamespaces(namespaceStore.namespaces)}
 				hiddenNamespaces={workbenchActions.hiddenNamespaces}

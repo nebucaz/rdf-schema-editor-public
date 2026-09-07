@@ -40,6 +40,46 @@ func TestFetchKindMapping_MultipleNamespacesAndUnmapped(t *testing.T) {
 	}
 }
 
+func TestFetchRepresentsPredicateIri_Unset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/sparql-results+json")
+		w.Write([]byte(`{"results":{"bindings":[]}}`))
+	}))
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	got, err := FetchRepresentsPredicateIri(context.Background(), gdb, "http://example.org/schema#AppSettings", "http://example.org/schema#representsPredicate")
+	if err != nil {
+		t.Fatalf("FetchRepresentsPredicateIri() error = %v", err)
+	}
+	if got != "" {
+		t.Errorf("FetchRepresentsPredicateIri() = %q, want \"\"", got)
+	}
+}
+
+func TestFetchRepresentsPredicateIri_Set(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/sparql-results+json")
+		w.Write([]byte(`{
+			"results": {
+				"bindings": [
+					{"p": {"type": "uri", "value": "http://ld.example.org/schema#represents"}}
+				]
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	got, err := FetchRepresentsPredicateIri(context.Background(), gdb, "http://example.org/schema#AppSettings", "http://example.org/schema#representsPredicate")
+	if err != nil {
+		t.Fatalf("FetchRepresentsPredicateIri() error = %v", err)
+	}
+	if got != "http://ld.example.org/schema#represents" {
+		t.Errorf("FetchRepresentsPredicateIri() = %q, want the configured predicate IRI", got)
+	}
+}
+
 func TestFetchKindMapping_Empty(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/sparql-results+json")

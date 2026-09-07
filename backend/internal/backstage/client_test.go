@@ -94,8 +94,143 @@ func TestClient_FetchEntities_FiltersByKindAndParsesSpec(t *testing.T) {
 	if got.UID != "uid-1" || got.Name != "my-service" || got.Kind != "Component" {
 		t.Errorf("entity = %+v", got)
 	}
-	if got.Attributes["type"] != "service" || got.Attributes["lifecycle"] != "production" {
-		t.Errorf("attributes = %v", got.Attributes)
+	if got.Fields["spec.type"] != "service" || got.Fields["spec.lifecycle"] != "production" {
+		t.Errorf("fields = %v", got.Fields)
+	}
+}
+
+// TestClient_FetchEntities_WidenedMetadataAndRelations is Story 098's own dedicated fixture test:
+// metadata.labels/annotations/tags and relations[] all decode into sync.Entity's widened shape,
+// including a Backstage-shaped `enterprise.catalog.iri` annotation Story 105 later depends on.
+func TestClient_FetchEntities_WidenedMetadataAndRelations(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"items": [
+				{
+					"apiVersion": "backstage.io/v1alpha1",
+					"kind": "Component",
+					"metadata": {
+						"uid": "uid-1",
+						"name": "my-service",
+						"description": "A payments service",
+						"labels": {"environment": "production"},
+						"annotations": {"enterprise.catalog.iri": "http://example.org/App-1"},
+						"tags": ["payments", "critical"]
+					},
+					"spec": {"type": "service", "dependsOn": ["Component:default/other"]},
+					"relations": [
+						{"type": "ownedBy", "targetRef": "group:default/payments-team"}
+					]
+				}
+			],
+			"totalItems": 1,
+			"pageInfo": {}
+		}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	entities, err := c.FetchEntities(context.Background(), "Component")
+	if err != nil {
+		t.Fatalf("FetchEntities() error = %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("entities = %d, want 1", len(entities))
+	}
+	got := entities[0]
+
+	if got.Fields["metadata.description"] != "A payments service" {
+		t.Errorf("metadata.description = %q", got.Fields["metadata.description"])
+	}
+	if got.Fields["metadata.labels.environment"] != "production" {
+		t.Errorf("metadata.labels.environment = %q", got.Fields["metadata.labels.environment"])
+	}
+	if got.Fields["metadata.annotations.enterprise.catalog.iri"] != "http://example.org/App-1" {
+		t.Errorf("metadata.annotations.enterprise.catalog.iri = %q", got.Fields["metadata.annotations.enterprise.catalog.iri"])
+	}
+	if got.Fields["spec.type"] != "service" {
+		t.Errorf("spec.type = %q", got.Fields["spec.type"])
+	}
+	wantTags := []string{"payments", "critical"}
+	if len(got.FieldLists["metadata.tags"]) != 2 || got.FieldLists["metadata.tags"][0] != wantTags[0] || got.FieldLists["metadata.tags"][1] != wantTags[1] {
+		t.Errorf("metadata.tags = %v, want %v", got.FieldLists["metadata.tags"], wantTags)
+	}
+	if len(got.FieldLists["spec.dependsOn"]) != 1 || got.FieldLists["spec.dependsOn"][0] != "Component:default/other" {
+		t.Errorf("spec.dependsOn = %v", got.FieldLists["spec.dependsOn"])
+	}
+	if len(got.Relations) != 1 || got.Relations[0].Type != "ownedBy" || got.Relations[0].TargetRef != "group:default/payments-team" {
+		t.Errorf("relations = %+v", got.Relations)
+	}
+	if got.SourceRef != "component:default/my-service" {
+		t.Errorf("SourceRef = %q, want %q (lowercase kind, namespace defaulted to \"default\")", got.SourceRef, "component:default/my-service")
+	}
+}
+
+// TestClient_FetchEntities_SourceRefUsesExplicitNamespace proves a non-default `metadata.namespace`
+// is honored verbatim in the computed `targetRef`-shaped SourceRef (STORY-106), rather than always
+// falling back to "default".
+func TestClient_FetchEntities_SourceRefUsesExplicitNamespace(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"items": [
+				{
+					"apiVersion": "backstage.io/v1alpha1",
+					"kind": "Group",
+					"metadata": {"uid": "uid-2", "name": "payments-team", "namespace": "teams"}
+				}
+			],
+			"totalItems": 1,
+			"pageInfo": {}
+		}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	entities, err := c.FetchEntities(context.Background(), "Group")
+	if err != nil {
+		t.Fatalf("FetchEntities() error = %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("entities = %d, want 1", len(entities))
+	}
+	if got, want := entities[0].SourceRef, "group:teams/payments-team"; got != want {
+		t.Errorf("SourceRef = %q, want %q", got, want)
+	}
+}
+
+// TestClient_FetchEntities_MissingAnnotationsDecodesEmpty proves a response with no
+// `metadata.annotations` at all still decodes without error/panic — Story 098's AC explicitly calls
+// this out since Story 105's later lookup must never crash on an absent annotations block.
+func TestClient_FetchEntities_MissingAnnotationsDecodesEmpty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"items": [
+				{
+					"apiVersion": "backstage.io/v1alpha1",
+					"kind": "Component",
+					"metadata": {"uid": "uid-1", "name": "my-service"},
+					"spec": {}
+				}
+			],
+			"totalItems": 1,
+			"pageInfo": {}
+		}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	entities, err := c.FetchEntities(context.Background(), "Component")
+	if err != nil {
+		t.Fatalf("FetchEntities() error = %v", err)
+	}
+	if len(entities) != 1 {
+		t.Fatalf("entities = %d, want 1", len(entities))
+	}
+	if v, ok := entities[0].Fields["metadata.annotations.enterprise.catalog.iri"]; ok {
+		t.Errorf("expected no entry for an absent annotation, got %q", v)
 	}
 }
 

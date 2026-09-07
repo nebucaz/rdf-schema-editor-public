@@ -72,6 +72,60 @@ func (c Config) NamespacePrefixPredicateIRI() string {
 	return c.SchemaNamespace + "prefix"
 }
 
+// NamespacePredicateIRI is `rse:namespace` (STORY-099) — declared on a shadow concept class (own or
+// inherited via `rdfs:subClassOf*` from `backstage:CoreConcept`), pointing at the `Namespace` base
+// IRI its synced individuals mint under. Mirrored on the frontend as `iri.ts`'s
+// `NAMESPACE_PREDICATE_IRI`.
+func (c Config) NamespacePredicateIRI() string {
+	return c.SchemaNamespace + "namespace"
+}
+
+// SourceFieldPredicateIRI is `rse:sourceField` (STORY-101) — declared on an already-existing
+// `owl:DatatypeProperty`, mapping it onto free-form mapping information (a field path, a JSON
+// pointer, a query, ...) an ingestion source interprets in its own way at sync time.
+// Source-agnostic: Backstage is the first ingestor to read it, not the only one it's meant for.
+// Mirrored on the frontend as `iri.ts`'s `SOURCE_FIELD_PREDICATE_IRI`.
+func (c Config) SourceFieldPredicateIRI() string {
+	return c.SchemaNamespace + "sourceField"
+}
+
+// SourceRelationPredicateIRI is `rse:sourceRelation` (STORY-106) — declared on an already-existing
+// `owl:ObjectProperty`, mapping it onto free-form relation-type mapping information an ingestion
+// source interprets in its own way at sync time, mirrored as an edge between two synced shadow
+// individuals when it resolves. Source-agnostic like `SourceFieldPredicateIRI` above: Backstage is
+// the first ingestor to read it (its own `relations[].type`, e.g. `ownedBy`/`partOf`/`dependsOn`),
+// not the only one it's meant for. Mirrored on the frontend as `iri.ts`'s
+// `SOURCE_RELATION_PREDICATE_IRI`.
+func (c Config) SourceRelationPredicateIRI() string {
+	return c.SchemaNamespace + "sourceRelation"
+}
+
+// SyncSourceRefPredicateIRI is `rse:syncSourceRef` (STORY-106) — a generator-owned marker predicate,
+// alongside `SyncSourcePredicateIRI`, written on every synced shadow individual holding its own
+// upstream target-reference identity (Backstage: `kind:namespace/name`) — the join key a relation's
+// `targetRef` is resolved against, since a target's `uid` (what individual IRIs actually mint from)
+// is never present in an upstream `relations[]` entry.
+func (c Config) SyncSourceRefPredicateIRI() string {
+	return c.SchemaNamespace + "syncSourceRef"
+}
+
+// AppSettingsIRI is the single, fixed, well-known settings subject (STORY-103) — mirrored on the
+// frontend as `iri.ts`'s `APP_SETTINGS_IRI` (Sprint 5 Story 014). The Go side had no reason to know
+// this IRI until STORY-103's `representsPredicate` setting became the first app-settings value the
+// sync engine itself must read.
+func (c Config) AppSettingsIRI() string {
+	return c.SchemaNamespace + "AppSettings"
+}
+
+// RepresentsPredicateSettingIRI is `rse:representsPredicate` (STORY-103) — the *setting* predicate
+// on `AppSettingsIRI` holding the user-configured `owl:ObjectProperty` IRI a synced shadow
+// individual's `represents` link is written with (STORY-105). Never a fixed/app-reserved predicate
+// name itself — that value is resolved at sync time via `FetchRepresentsPredicateIri`. Mirrored on
+// the frontend as `iri.ts`'s `REPRESENTS_PREDICATE_SETTING_IRI`.
+func (c Config) RepresentsPredicateSettingIRI() string {
+	return c.SchemaNamespace + "representsPredicate"
+}
+
 // DefaultNamespaceBaseIRI is the app's default namespace's base IRI (no trailing `#`/`/schema`),
 // mirroring `app/src/lib/config.ts`'s `deriveDefaultNamespaceBaseIri` exactly — the seed value
 // every ingestion source's own namespace mints under (e.g. `<DefaultNamespaceBaseIRI>/backstage`).

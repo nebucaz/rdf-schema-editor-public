@@ -5,7 +5,7 @@ import {
 	ATTRIBUTED_RELATIONSHIP_IRI,
 	type XsdDatatype
 } from '$lib/utils/iri';
-import type { FetchedSchema, FetchedSubClassOf } from './sparql-connector';
+import type { FetchedProperty, FetchedSchema, FetchedSubClassOf } from './sparql-connector';
 
 export interface CanvasAttributeSpec {
 	iri: string;
@@ -13,6 +13,38 @@ export interface CanvasAttributeSpec {
 	datatype: XsdDatatype;
 	required: boolean;
 	repeatable: boolean;
+	/** Whether this attribute is required as a class-level value on direct subclasses of its owning
+	 *  class instead of on instances — when true, `required` above is already forced `false` (an
+	 *  attribute is never both at once, `buildCanvasModel`'s own construction). Carried through
+	 *  purely so `AttributeForm`'s edit mode can pre-populate its own checkbox; `EntityNode`/
+	 *  `MemberForm` never read it directly. Optional so existing hand-built test fixtures don't all
+	 *  need updating; treat a missing value as `false`. */
+	requiredForSubclasses?: boolean;
+	/** Set when this attribute is inherited from an ancestor class (STORY-108) — absent for a
+	 *  class's own attributes. `className` is resolved here (not left to the renderer) so
+	 *  `EntityNode` stays pure display. */
+	inheritedFrom?: { classIri: string; className: string };
+}
+
+/**
+ * A schema-declared `owl:ObjectProperty` relation, usable as a typed "pick an instance of the range
+ * class" field on the instance form (STORY-114) — the object-property counterpart of
+ * `CanvasAttributeSpec`. `targetClassIri`/`targetClassName` are the relation's `rdfs:range`, letting
+ * the form scope its typeahead to instances of exactly that class rather than every individual in the
+ * graph (unlike the generic Assertions object picker). Excludes relations whose domain is an
+ * attributed-relationship (association) class — those are modeled as `AttributedLinkEdgeSpec` instead
+ * and edited via `AssociationForm`/`AssociationEditForm`, not `MemberForm`.
+ */
+export interface CanvasRelationFieldSpec {
+	iri: string;
+	name: string;
+	targetClassIri: string;
+	targetClassName: string;
+	required: boolean;
+	repeatable: boolean;
+	/** See `CanvasAttributeSpec.inheritedFrom` (STORY-108) — same ancestor-merge concept, reused here
+	 *  by `mergeAncestorRelations`. */
+	inheritedFrom?: { classIri: string; className: string };
 }
 
 /** An enumerated class member (STORY-019) — e.g. `core:RelationType`'s `nutzt`. */
@@ -27,12 +59,26 @@ export interface EntityNodeSpec {
 	name: string;
 	description: string;
 	attributes: CanvasAttributeSpec[];
+	/** This class's own+inherited schema-declared object-property relations (STORY-114) — the
+	 *  instance form's "pick an instance of the range class" fields, computed the same
+	 *  own+inherited-nearest-first-shadowed way as `attributes` via `mergeAncestorRelations`. */
+	relationFields: CanvasRelationFieldSpec[];
 	/** Always-available, possibly-empty list of this class's enumerated members — no separate
 	 *  "is this an enumeration" flag, consistent with how attributes/relations work (Decision 3). */
 	members: CanvasMemberSpec[];
 	/** Base IRI of the namespace this class belongs to (STORY-033) — lets the workbench's
 	 *  namespace filter hide/show this node client-side, without re-querying GraphDB. */
 	namespace: string;
+	/** `true` when this class's own `sh:NodeShape`, or any ancestor's, constrains
+	 *  `sh:path rdfs:label` with `sh:minCount >= 1` (STORY-112) — computed here (own class or
+	 *  ancestor) so `MemberForm` doesn't need to re-walk `subClassOf` itself. */
+	labelRequired: boolean;
+	/** Attributes this class's *direct* superclasses mark "required for subclasses" — computed here
+	 *  (via `directSuperclassRequiredAttributes`) so `EntityForm` doesn't need to re-walk
+	 *  `subClassOf`/`datatypeProperties` itself, the same reasoning as `labelRequired` above.
+	 *  Optional so existing hand-built `EntityNodeSpec` fixtures don't all need updating; treat a
+	 *  missing value as empty. */
+	subclassRequiredAttributes?: CanvasClassLevelAttributeSpec[];
 }
 
 export interface ExternalNodeSpec {
@@ -154,6 +200,162 @@ export interface CanvasModel {
 	 *  menu gating) and Story 008's generation engine can decide which classes to generate a catalog
 	 *  entry for. Empty when no marker class is configured. */
 	authoritativeEntityIris: Set<string>;
+	/** Classes for which `rdfs:label` is shape-required (STORY-112) — own class or any ancestor,
+	 *  already ancestor-resolved the same way `EntityNodeSpec.labelRequired` is, exposed at the model
+	 *  level too so a caller that isn't rendering `EntityNodeSpec`s (e.g. a lookup keyed by class IRI
+	 *  for a form that isn't itself a canvas node) doesn't need to re-derive it. */
+	labelRequiredClassIris: Set<string>;
+}
+
+/**
+ * Nearest-ancestor-first order of `classIriValue`'s transitive `rdfs:subClassOf` ancestors, as a
+ * plain in-memory BFS over an already-fetched `subClassOf` edge list (STORY-108/109) — shared by
+ * `mergeAncestorAttributes` and `isLabelRequiredForClass` (STORY-112) so both walk ancestors exactly
+ * the same way. Not `SparqlConnector.findAncestors`: that's a SPARQL property path (`+`) round-trip
+ * with no ordering guarantee, per `research.md`'s flagged gap.
+ */
+function orderedAncestors(classIriValue: string, subClassOf: FetchedSubClassOf[]): string[] {
+	const parentsOf = new Map<string, string[]>();
+	for (const { sub, super: superIri } of subClassOf) {
+		const list = parentsOf.get(sub) ?? [];
+		list.push(superIri);
+		parentsOf.set(sub, list);
+	}
+
+	const visited = new Set<string>();
+	const order: string[] = [];
+	let frontier = parentsOf.get(classIriValue) ?? [];
+	while (frontier.length > 0) {
+		const next: string[] = [];
+		for (const parent of frontier) {
+			if (visited.has(parent)) continue;
+			visited.add(parent);
+			order.push(parent);
+			next.push(...(parentsOf.get(parent) ?? []));
+		}
+		frontier = next;
+	}
+	return order;
+}
+
+/**
+ * Whether `classIriValue`'s own `sh:NodeShape`, or any ancestor's, constrains `sh:path rdfs:label`
+ * with `sh:minCount >= 1` (STORY-112) — `labelRequiredClassIris` is the already-per-class-resolved
+ * set `SparqlConnector.fetchLabelRequiredClasses` returns; this just adds the same ancestor-inclusion
+ * rule attribute inheritance already uses (own class or any ancestor, per `research.md`'s confirmed
+ * `core:CoreEntityShape`/`core:CoreEntity`/`core:Application` example).
+ */
+export function isLabelRequiredForClass(
+	classIriValue: string,
+	labelRequiredClassIris: ReadonlySet<string>,
+	subClassOf: FetchedSubClassOf[]
+): boolean {
+	if (labelRequiredClassIris.has(classIriValue)) return true;
+	return orderedAncestors(classIriValue, subClassOf).some((ancestor) => labelRequiredClassIris.has(ancestor));
+}
+
+/**
+ * A class's own attributes plus every ancestor's own attributes merged in, nearest ancestor first
+ * (STORY-108, extracted as a standalone utility by STORY-109 so the dynamic instance form, STORY-111,
+ * can reuse the exact same merge instead of reimplementing it).
+ *
+ * Shadowing is by attribute *name* (not `sh:path` IRI — `propertyIri` scopes an attribute's IRI by
+ * its declaring class, so a subclass redeclaring the same-named attribute always mints a different
+ * IRI; matching on IRI could never actually shadow anything): the subclass's own copy of a name
+ * always wins, and among ancestors the nearest one to declare a given name wins over a farther one —
+ * mirroring OWL/SHACL property redefinition elsewhere.
+ *
+ * Takes plain data only (a class IRI, the own-attributes-by-class map, the `subClassOf` edge list,
+ * and a class-label lookup for `inheritedFrom.className`) — no GraphDB access, no canvas-specific
+ * concerns (nodes/edges/positions), so it's usable outside `buildCanvasModel` too.
+ */
+export function mergeAncestorAttributes(
+	classIriValue: string,
+	attributesByClass: Map<string, CanvasAttributeSpec[]>,
+	subClassOf: FetchedSubClassOf[],
+	classLabelByIri: Map<string, string>
+): CanvasAttributeSpec[] {
+	const own = attributesByClass.get(classIriValue) ?? [];
+	const seenNames = new Set(own.map((a) => a.name));
+	const inherited: CanvasAttributeSpec[] = [];
+	for (const ancestorIri of orderedAncestors(classIriValue, subClassOf)) {
+		for (const attr of attributesByClass.get(ancestorIri) ?? []) {
+			if (seenNames.has(attr.name)) continue;
+			seenNames.add(attr.name);
+			inherited.push({
+				...attr,
+				inheritedFrom: { classIri: ancestorIri, className: classLabelByIri.get(ancestorIri) ?? ancestorIri }
+			});
+		}
+	}
+	return [...own, ...inherited];
+}
+
+/**
+ * A class's own object-property relations plus every ancestor's, nearest ancestor first (STORY-114) —
+ * the exact same own+inherited, name-shadowed merge `mergeAncestorAttributes` performs, just over
+ * `CanvasRelationFieldSpec` instead of `CanvasAttributeSpec`. Kept as a separate sibling function
+ * rather than a shared generic: the two specs' fields diverge (`datatype` vs `targetClassIri`/
+ * `targetClassName`) enough that a generic would need its own shadowing-key parameter anyway.
+ */
+export function mergeAncestorRelations(
+	classIriValue: string,
+	relationsByClass: Map<string, CanvasRelationFieldSpec[]>,
+	subClassOf: FetchedSubClassOf[],
+	classLabelByIri: Map<string, string>
+): CanvasRelationFieldSpec[] {
+	const own = relationsByClass.get(classIriValue) ?? [];
+	const seenNames = new Set(own.map((r) => r.name));
+	const inherited: CanvasRelationFieldSpec[] = [];
+	for (const ancestorIri of orderedAncestors(classIriValue, subClassOf)) {
+		for (const rel of relationsByClass.get(ancestorIri) ?? []) {
+			if (seenNames.has(rel.name)) continue;
+			seenNames.add(rel.name);
+			inherited.push({
+				...rel,
+				inheritedFrom: { classIri: ancestorIri, className: classLabelByIri.get(ancestorIri) ?? ancestorIri }
+			});
+		}
+	}
+	return [...own, ...inherited];
+}
+
+/** An attribute a direct superclass of the edited class marks "required for subclasses"
+ *  (`REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`) — a class-level value `EntityForm` must collect, not
+ *  an instance-facing `CanvasAttributeSpec` field. */
+export interface CanvasClassLevelAttributeSpec {
+	iri: string;
+	name: string;
+	datatype: XsdDatatype;
+	ownerClassIri: string;
+	ownerClassName: string;
+}
+
+/**
+ * Attributes required as a class-level value on `classIriValue`'s *direct* `rdfs:subClassOf`
+ * superclasses (`FetchedProperty.requiredForSubclasses`) — one hop only, mirroring the Catalog
+ * marker class's own `isAuthoritativeEntity` check, unlike `mergeAncestorAttributes`'s transitive
+ * walk for instance-facing fields (a class-level requirement doesn't cascade past its own direct
+ * children the same way an instance-facing attribute inherits down an entire subtree). Drives
+ * `EntityForm`'s required-class-level-attribute inputs (generalizes the Concept Namespace pattern
+ * to any user-defined attribute, not just `rse:namespace`).
+ */
+export function directSuperclassRequiredAttributes(
+	classIriValue: string,
+	subClassOf: FetchedSubClassOf[],
+	datatypeProperties: FetchedProperty[],
+	classLabelByIri: Map<string, string>
+): CanvasClassLevelAttributeSpec[] {
+	const directSupers = new Set(subClassOf.filter((r) => r.sub === classIriValue).map((r) => r.super));
+	return datatypeProperties
+		.filter((p) => p.requiredForSubclasses && directSupers.has(p.domain))
+		.map((p) => ({
+			iri: p.iri,
+			name: p.label,
+			datatype: xsdDatatypeFromIri(p.range),
+			ownerClassIri: p.domain,
+			ownerClassName: classLabelByIri.get(p.domain) ?? p.domain
+		}));
 }
 
 /**
@@ -221,8 +423,12 @@ export function buildCanvasModel(
 			iri: dp.iri,
 			name: dp.label,
 			datatype: xsdDatatypeFromIri(dp.range),
-			required: dp.required,
-			repeatable: dp.repeatable
+			// requiredForSubclasses always wins over sh:minCount for instance purposes — an attribute
+			// is either an instance-facing requirement or a class-level one, never both at once
+			// (STORY: generalized Concept Namespace pattern).
+			required: dp.required && !dp.requiredForSubclasses,
+			repeatable: dp.repeatable,
+			requiredForSubclasses: dp.requiredForSubclasses
 		});
 		attributesByClass.set(dp.domain, list);
 	}
@@ -234,14 +440,59 @@ export function buildCanvasModel(
 		membersByClass.set(individual.classIri, list);
 	}
 
+	// -- Inherited attributes (STORY-108, merge logic extracted to `mergeAncestorAttributes` by
+	// STORY-109 so STORY-111's dynamic instance form can reuse it directly) ---------------------
+	const classLabelByIri = new Map(localClasses.map((c) => [c.iri, c.label]));
+
+	// -- Relation fields (STORY-114) — schema-declared owl:ObjectProperty relations, keyed by domain
+	// exactly like attributesByClass is keyed by domain, excluding association-class domains (those
+	// become AttributedLinkEdgeSpec below instead, edited via AssociationForm, not MemberForm).
+	// A generic relation (STORY-051/054) reused from the same domain against more than one range class
+	// produces one `schema.objectProperties` row per (domain, range) pair, unlike a datatype property
+	// (always single-owner) — deduped here by predicate IRI so a relation gets exactly one form field
+	// regardless of how many ranges it's declared against, keeping the first-seen range as the field's
+	// typeahead scope (accepted v1 limitation, same "not widened" spirit as the target-scope ADR).
+	const relationsByClass = new Map<string, CanvasRelationFieldSpec[]>();
+	for (const op of schema.objectProperties) {
+		if (associationClassIris.has(op.domain)) continue;
+		const list = relationsByClass.get(op.domain) ?? [];
+		if (list.some((r) => r.iri === op.iri)) continue;
+		list.push({
+			iri: op.iri,
+			name: op.label,
+			targetClassIri: op.range,
+			targetClassName: classLabelByIri.get(op.range) ?? op.range,
+			required: op.required,
+			repeatable: op.repeatable
+		});
+		relationsByClass.set(op.domain, list);
+	}
+
+	// -- Shape-required rdfs:label (STORY-112) — resolved per class here (own or ancestor) so
+	// EntityNodeSpec carries a flat boolean, same shape as attributes' own required flag.
+	const ownLabelRequiredClassIris = new Set(schema.labelRequiredClassIris ?? []);
+	const labelRequiredClassIris = new Set(
+		localClasses
+			.map((c) => c.iri)
+			.filter((iri) => isLabelRequiredForClass(iri, ownLabelRequiredClassIris, inheritanceTriples))
+	);
+
 	const entityNodes: EntityNodeSpec[] = localClasses.map((c) => ({
 		kind: 'entity',
 		iri: c.iri,
 		name: c.label,
 		description: c.comment ?? '',
-		attributes: attributesByClass.get(c.iri) ?? [],
+		attributes: mergeAncestorAttributes(c.iri, attributesByClass, inheritanceTriples, classLabelByIri),
+		relationFields: mergeAncestorRelations(c.iri, relationsByClass, inheritanceTriples, classLabelByIri),
 		members: membersByClass.get(c.iri) ?? [],
-		namespace: c.namespaceBaseIri
+		namespace: c.namespaceBaseIri,
+		labelRequired: labelRequiredClassIris.has(c.iri),
+		subclassRequiredAttributes: directSuperclassRequiredAttributes(
+			c.iri,
+			inheritanceTriples,
+			schema.datatypeProperties,
+			classLabelByIri
+		)
 	}));
 
 	const edges: EdgeSpec[] = [];
@@ -290,7 +541,8 @@ export function buildCanvasModel(
 			nodes: [...entityNodes, ...externalNodes.values()],
 			edges,
 			associationClassIris,
-			authoritativeEntityIris
+			authoritativeEntityIris,
+			labelRequiredClassIris
 		};
 	}
 
@@ -349,6 +601,7 @@ export function buildCanvasModel(
 		nodes: [...individualNodes, ...entityNodes],
 		edges: [...instanceOfEdges, ...individualRelationEdges],
 		associationClassIris,
-		authoritativeEntityIris
+		authoritativeEntityIris,
+		labelRequiredClassIris
 	};
 }

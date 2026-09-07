@@ -1,6 +1,8 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
 	import type { FetchedNamespace, NameableEntity } from '$lib/services/sparql-connector';
+	import type { CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
+	import type { XsdDatatype } from '$lib/utils/iri';
 
 	interface Props {
 		mode?: 'create' | 'edit';
@@ -10,6 +12,42 @@
 		initialColor?: string;
 		/** Current `backstageKind` annotation (Story 005), if any — empty string means unset. */
 		initialBackstageKind?: string;
+		/** STORY-100: this class's own `rse:namespace` value (base IRI), if it declares one directly
+		 *  — empty string means unset (inherits, per `effectiveConceptNamespace`'s indicator below).
+		 *  Rendered as a `<select>` constrained to `namespaceOptions` (a *registered* namespace, same
+		 *  set the "Namespace" field below picks from) — a value here that isn't itself in
+		 *  `namespaceOptions` (a stale value set before this constraint existed) won't appear selected
+		 *  until the field is explicitly re-picked, since an unregistered Concept Namespace is exactly
+		 *  what orphaned data before (nothing ever queries an unregistered namespace's graph again). */
+		initialConceptNamespace?: string;
+		/** STORY-100: the currently-effective Backstage-sync Concept Namespace (own declaration or
+		 *  inherited from an ancestor via `rdfs:subClassOf*`), for the "own vs inherited" indicator —
+		 *  `null` when neither this class nor any ancestor declares one; omitted (`undefined`)
+		 *  suppresses the indicator entirely (e.g. create mode, where there's no existing class to
+		 *  walk ancestry from yet). */
+		effectiveConceptNamespace?: { baseIri: string; own: boolean } | null;
+		/** Whether this class is a direct `rdfs:subClassOf` the user-configured Catalog marker class
+		 *  (Settings' "Catalog marker class" — the same marker `isAuthoritativeEntity` already checks
+		 *  for DCAT catalog eligibility; never a hardcoded class name). When true, Concept Namespace
+		 *  becomes a required field (must resolve to *some* effective value, own or inherited) rather
+		 *  than the purely optional field it is for every other class. Edit mode only, like
+		 *  `effectiveConceptNamespace`, since create mode has no `rdfs:subClassOf` relationship yet to
+		 *  check. */
+		requireConceptNamespace?: boolean;
+		/** Attributes a direct superclass marks "required for subclasses" (general mechanism, not
+		 *  Backstage-specific — `REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`) — one input rendered per
+		 *  entry, required regardless of the "Required" checkbox on the attribute itself. Edit mode
+		 *  only, like `requireConceptNamespace` above (no `rdfs:subClassOf` relationship exists yet
+		 *  at create time). */
+		subclassRequiredAttributes?: CanvasClassLevelAttributeSpec[];
+		/** This class's own current value per `subclassRequiredAttributes` entry, keyed by attribute
+		 *  IRI — the edit-mode pre-population, fetched alongside `initialConceptNamespace`. */
+		subclassAttributeValues?: Record<string, string>;
+		/** Registered namespaces — backs both the "Namespace" select (create mode, this class's own
+		 *  declaring namespace) and the "Concept namespace" select above (any mode, STORY-100's
+		 *  Backstage-sync target namespace). Empty hides the "Namespace" field entirely (create mode
+		 *  still needs *some* namespace to mint the class into, so it falls back silently); the
+		 *  "Concept namespace" field stays visible either way since it's always optional. */
 		namespaceOptions?: FetchedNamespace[];
 		initialNamespaceBaseIri?: string;
 		/** Create mode only: existing classes/individuals to match the typed name against, so a name
@@ -22,7 +60,9 @@
 			description: string,
 			color: string | undefined,
 			namespaceBaseIri: string | undefined,
-			backstageKind: string
+			backstageKind: string,
+			conceptNamespace: string,
+			subclassAttributeValues: Record<string, string>
 		) => Promise<void>;
 		/** Create mode only, paired with `existingOptions`: called instead of `onSubmit` when the typed
 		 *  name exactly matches an existing class/individual — adds that existing element to the
@@ -38,6 +78,11 @@
 		initialDescription = '',
 		initialColor,
 		initialBackstageKind = '',
+		initialConceptNamespace = '',
+		effectiveConceptNamespace = undefined,
+		requireConceptNamespace = false,
+		subclassRequiredAttributes = [],
+		subclassAttributeValues = {},
 		namespaceOptions = [],
 		initialNamespaceBaseIri = '',
 		existingOptions = [],
@@ -53,9 +98,21 @@
 	let description = $state(initialDescription);
 	let color = $state<string | undefined>(initialColor);
 	let backstageKind = $state(initialBackstageKind);
+	let conceptNamespace = $state(initialConceptNamespace);
 	let namespaceBaseIri = $state(initialNamespaceBaseIri);
+	let subclassAttrValues = $state<Record<string, string>>({ ...subclassAttributeValues });
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
+
+	const inputTypeByDatatype: Record<XsdDatatype, string> = {
+		string: 'text',
+		integer: 'number',
+		decimal: 'number',
+		date: 'date',
+		dateTime: 'datetime-local',
+		boolean: 'text',
+		anyURI: 'url'
+	};
 
 	let matchedExisting = $derived(
 		mode === 'create'
@@ -69,6 +126,20 @@
 			error = 'Name must not be empty';
 			return;
 		}
+		if (
+			requireConceptNamespace &&
+			!conceptNamespace.trim() &&
+			(effectiveConceptNamespace === null || effectiveConceptNamespace === undefined)
+		) {
+			error = 'Concept namespace is required for a direct subclass of the configured Catalog marker class';
+			return;
+		}
+		for (const attr of subclassRequiredAttributes) {
+			if (!(subclassAttrValues[attr.iri] ?? '').trim()) {
+				error = `"${attr.name}" is required for a direct subclass of ${attr.ownerClassName}`;
+				return;
+			}
+		}
 		error = null;
 		submitting = true;
 		try {
@@ -80,7 +151,11 @@
 					description.trim(),
 					color,
 					mode === 'create' ? namespaceBaseIri : undefined,
-					backstageKind.trim()
+					backstageKind.trim(),
+					conceptNamespace.trim(),
+					Object.fromEntries(
+						subclassRequiredAttributes.map((attr) => [attr.iri, (subclassAttrValues[attr.iri] ?? '').trim()])
+					)
 				);
 			}
 		} catch (err) {
@@ -143,6 +218,42 @@
 			disabled={!!matchedExisting}
 		/>
 	</label>
+	<label>
+		Concept namespace{#if requireConceptNamespace}<span class="required-mark"> *</span>{/if}
+		<select bind:value={conceptNamespace} disabled={!!matchedExisting}>
+			<option value="">
+				{effectiveConceptNamespace?.own === false
+					? `— None — inherits ${effectiveConceptNamespace.baseIri} —`
+					: '— None —'}
+			</option>
+			{#each namespaceOptions as ns (ns.baseIri)}
+				<option value={ns.baseIri}>{ns.prefix}</option>
+			{/each}
+		</select>
+	</label>
+	{#if effectiveConceptNamespace !== undefined}
+		<p class="hint">
+			{#if effectiveConceptNamespace === null}
+				No Concept Namespace configured (own or inherited) — Backstage sync will skip this class.
+			{:else if effectiveConceptNamespace.own}
+				Set directly on this class.
+			{:else}
+				Inherited from an ancestor class: <code>{effectiveConceptNamespace.baseIri}</code>
+			{/if}
+		</p>
+	{/if}
+	{#each subclassRequiredAttributes as attr (attr.iri)}
+		<label>
+			{attr.name}<span class="required-mark"> *</span>
+			<input
+				type={inputTypeByDatatype[attr.datatype]}
+				value={subclassAttrValues[attr.iri] ?? ''}
+				oninput={(e) => (subclassAttrValues = { ...subclassAttrValues, [attr.iri]: (e.currentTarget as HTMLInputElement).value })}
+				disabled={!!matchedExisting}
+			/>
+		</label>
+		<p class="hint">Required for a direct subclass of <code>{attr.ownerClassName}</code>.</p>
+	{/each}
 	{#if mode === 'create' && namespaceOptions.length > 0}
 		<label>
 			Namespace
@@ -213,6 +324,15 @@
 		color: var(--color-text-muted);
 		font-size: 0.8rem;
 		margin: -0.5rem 0 0;
+	}
+
+	.hint code {
+		font-family: 'SF Mono', Menlo, Consolas, monospace;
+		font-size: 0.75rem;
+	}
+
+	.required-mark {
+		color: var(--color-error);
 	}
 
 	.actions {

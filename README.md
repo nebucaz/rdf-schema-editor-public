@@ -71,10 +71,14 @@ Requires Go 1.25+ (`go version` to check).
    GRAPHDB_USER=
    GRAPHDB_PASSWORD=
    PORT=8090
+   AUTH_JWT_SECRET=
    ```
 
    Leave `GRAPHDB_USER`/`GRAPHDB_PASSWORD` blank for an unauthenticated repository (the default from
-   the Docker setup above); `PORT` is optional and defaults to `8090`.
+   the Docker setup above); `PORT` is optional and defaults to `8090`. `AUTH_JWT_SECRET` is
+   **required** — the backend refuses to start without it (every route but `/health` needs a signed
+   bearer JWT, see `backend/README.md`'s "Authentication" section). Generate one with
+   `openssl rand -base64 32`.
 
 2. **Run it:**
 
@@ -153,38 +157,107 @@ app already running per the sections above.
 
    Restart `go run ./cmd/server` after changing `.env`.
 
-2. **See what Backstage has that you haven't mapped locally yet** — either open the app's hamburger
-   menu → **Missing concepts** panel, or from the command line:
+2. **Mint a bearer token for `importctl`** — every backend route but `/health` requires one (see
+   `backend/README.md`'s "Authentication" section):
 
    ```sh
    cd backend
+   export IMPORTCTL_AUTH_TOKEN=$(AUTH_JWT_SECRET=<same value as backend/.env> go run ./cmd/cli mint-token --sub importctl)
+   ```
+
+3. **See what Backstage has that you haven't mapped locally yet** — either open the app's hamburger
+   menu → **Missing concepts** panel, or from the command line:
+
+   ```sh
    go run ./cmd/cli discover backstage
    ```
 
-3. **Map at least one kind to a local class.** In the Missing Concepts panel, use "Create class now"
+4. **Map at least one kind to a local class.** In the Missing Concepts panel, use "Create class now"
    against one of the listed kinds (e.g. `Component`) — or, on an existing class, set its
    `backstageKind` field (in the entity edit form) to match a kind by hand.
 
-4. **Dry-run the sync** to preview what it would do, without writing anything to GraphDB:
+5. **Dry-run the sync** to preview what it would do, without writing anything to GraphDB:
 
    ```sh
    go run ./cmd/cli sync backstage
    ```
 
-5. **Run it for real:**
+6. **Run it for real:**
 
    ```sh
    go run ./cmd/cli sync backstage --apply
    ```
 
-   (Equivalently: `curl -X POST "http://localhost:8090/sources/backstage/sync?dryRun=false"`.) A
-   background worker also re-runs this automatically every `BACKSTAGE_SYNC_INTERVAL` — the CLI/route
+   (Equivalently: `curl -X POST "http://localhost:8090/sources/backstage/sync?dryRun=false" -H "Authorization: Bearer $IMPORTCTL_AUTH_TOKEN"`.)
+   A background worker also re-runs this automatically every `BACKSTAGE_SYNC_INTERVAL` — the CLI/route
    above is for on-demand runs, not a replacement for it.
 
-6. **Check the app.** Switch the canvas to **Instances** view mode — synced individuals show a small
+7. **Check the app.** Switch the canvas to **Instances** view mode — synced individuals show a small
    `⇄ backstage` badge and have their edit (pencil) button disabled, since a sync overwrites manual
    edits on the next run. An individual that disappears from Backstage in a later sync is soft-flagged
    stale (`⚠` badge) rather than deleted — see `spec/report/story-009-staleness-handling.md`.
 
 See `backend/README.md`'s "CLI (`importctl`)" section for the full command reference (`--backend-url`,
 error/exit-code behavior, etc.).
+
+### Testing the `represents` link (Component/API → an existing core concept)
+
+Beyond minting a bare individual per Backstage entity, a synced `backstage:Component`/`backstage:API`
+individual can also be linked to an existing "real" concept individual you already modeled by hand
+(e.g. `core:Application`, `core:Schnittstelle`) — via one `represents` object property, resolved from a
+fixed Backstage annotation, `metadata.annotations["enterprise.catalog.iri"]`. Its value must be the
+**exact IRI** of the target individual — this is a direct reference, not an identifier lookup, so the
+target individual's IRI needs to be predictable and stable before you can annotate anything in
+Backstage with it. Setting this up end-to-end:
+
+1. **Give the target class a Concept Namespace**, so its individuals mint under a predictable base IRI
+   instead of whichever namespace happens to be active in the canvas. Open the class's edit form (e.g.
+   `core:Application`) and set **Concept namespace** to the base IRI you want its individuals' IRIs
+   prefixed with, e.g. `https://ld.pageagent.com/application/`. This is stored as
+   `<classIri> rse:namespace <baseIri>` and is inherited by subclasses that don't declare their own
+   (STORY-099/100).
+
+2. **Create the target individual with an explicit Identifier.** Node menu → **Manage Instances** →
+   add a new member, and fill in the **Identifier** field (e.g. `871944`) rather than leaving it blank.
+   With a Concept Namespace declared (step 1), the individual mints as
+   `<conceptNamespaceBaseIri>#<identifier>` — e.g. `https://ld.pageagent.com/application#871944` — not
+   under the namespace selected in the dropdown above it. (An identifier-less, label-derived member
+   still mints under the selected namespace as before — the Concept Namespace override only applies
+   to this explicit-identifier path.) Copy this IRI (open the individual's "View triples") — Backstage
+   needs it verbatim in the next step.
+
+3. **Configure the `represents` predicate once, in the app.** Hamburger menu → **Settings** →
+   **Represents predicate** → pick (or first create, via a normal relation edge) the
+   `owl:ObjectProperty` you want `represents` links written with. Draw a relation edge using that same
+   predicate from `backstage:Component` to `core:Schnittstelle`'s class, and from `backstage:API` to
+   `core:Application`'s class — each class's own SHACL shape needs an `sh:property`/`sh:class` entry
+   for this predicate, one per (shadow class, target class) pair, or the link resolves to a
+   "no shape entry for `<predicate>`" failure at sync time (see step 5).
+
+4. **Annotate the Backstage entity.** On the Component/API entity in Backstage
+   (`catalog-info.yaml`'s `metadata.annotations`), set:
+
+   ```yaml
+   metadata:
+     annotations:
+       enterprise.catalog.iri: "https://ld.pageagent.com/application#871944"
+   ```
+
+   using the exact IRI copied in step 2.
+
+5. **Dry-run the sync and inspect the full JSON** — `importctl`'s table view (`go run ./cmd/cli sync
+   backstage`) only shows proposed individual counts, not per-entity link failures. To see whether the
+   `represents` link actually resolved (bad/missing IRI, missing shape entry, or a target-type
+   mismatch all fail silently in the table view), call the route directly and check
+   `representsFailures`:
+
+   ```sh
+   curl -s -X POST "http://localhost:8090/sources/backstage/sync?dryRun=true" \
+     -H "Authorization: Bearer $IMPORTCTL_AUTH_TOKEN" | jq .
+   ```
+
+   An empty/absent `representsFailures` array means every annotated entity's link resolved cleanly.
+
+6. **Apply the sync** (`go run ./cmd/cli sync backstage --apply`), then check the app: the synced
+   `backstage:Component`/`backstage:API` individual should show a relation edge (using the predicate
+   from step 3) pointing at the `core:Application`/`core:Schnittstelle` individual from step 2.

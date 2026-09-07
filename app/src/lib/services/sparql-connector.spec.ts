@@ -36,6 +36,9 @@ import {
 	noteIri,
 	EXTERNAL_VOCABULARY_CLASS_IRI,
 	BACKSTAGE_KIND_PREDICATE_IRI,
+	NAMESPACE_PREDICATE_IRI,
+	SOURCE_FIELD_PREDICATE_IRI,
+	SOURCE_RELATION_PREDICATE_IRI,
 	catalogIri,
 	datasetIri,
 	distributionIri,
@@ -156,7 +159,22 @@ function mockGraphFetch(
 		ancestors?: string[];
 		classGraph?: Record<string, string>;
 		backstageKind?: string;
+		/** STORY-102: the property IRI's current `rse:sourceField` mapping, for
+		 *  `fetchAttributeSourceField`. */
+		sourceField?: string;
+		/** STORY-107: the property IRI's current `rse:sourceRelation` mapping, for
+		 *  `fetchRelationSourceType`. */
+		sourceType?: string;
 		authoritativeEntityClassIri?: string;
+		/** STORY-103: the configured `rse:representsPredicate` setting value, for
+		 *  `fetchRepresentsPredicateIri`. */
+		representsPredicateIri?: string;
+		/** STORY-100: subject IRI -> its own `rse:namespace` value, for
+		 *  `resolveEffectiveClassNamespace`'s per-node own-declaration lookup. */
+		ownNamespace?: Record<string, string>;
+		/** STORY-100: subject IRI -> its direct `rdfs:subClassOf` superclasses, for
+		 *  `resolveEffectiveClassNamespace`'s breadth-first ancestry walk. */
+		superClasses?: Record<string, string[]>;
 	} = {}
 ) {
 	const updates: string[] = [];
@@ -167,6 +185,20 @@ function mockGraphFetch(
 			return new Response(JSON.stringify({ success: true }), { status: 200 });
 		}
 		const q: string = body.query;
+		if (q.includes('SELECT ?ns WHERE')) {
+			const match = q.match(/<([^>]+)> <[^>]+> \?ns/);
+			const subjectIri = match?.[1];
+			const value = subjectIri ? fixture.ownNamespace?.[subjectIri] : undefined;
+			const bindings = value ? [{ ns: { type: 'uri', value } }] : [];
+			return new Response(JSON.stringify({ head: { vars: ['ns'] }, results: { bindings } }), { status: 200 });
+		}
+		if (q.includes('SELECT ?super WHERE')) {
+			const match = q.match(/<([^>]+)> rdfs:subClassOf \?super/);
+			const subjectIri = match?.[1];
+			const supers = (subjectIri ? fixture.superClasses?.[subjectIri] : undefined) ?? [];
+			const bindings = supers.map((s) => ({ super: { type: 'uri', value: s } }));
+			return new Response(JSON.stringify({ head: { vars: ['super'] }, results: { bindings } }), { status: 200 });
+		}
 		if (q.includes('GRAPH ?g')) {
 			const match = q.match(/GRAPH \?g \{ <([^>]+)> a owl:Class \}/);
 			const classIriValue = match?.[1];
@@ -208,11 +240,31 @@ function mockGraphFetch(
 				status: 200
 			});
 		}
+		if (q.includes('sourceRelation')) {
+			const bindings = fixture.sourceType ? [{ type: { type: 'literal', value: fixture.sourceType } }] : [];
+			return new Response(JSON.stringify({ head: { vars: ['type'] }, results: { bindings } }), {
+				status: 200
+			});
+		}
+		if (q.includes('sourceField')) {
+			const bindings = fixture.sourceField ? [{ path: { type: 'literal', value: fixture.sourceField } }] : [];
+			return new Response(JSON.stringify({ head: { vars: ['path'] }, results: { bindings } }), {
+				status: 200
+			});
+		}
 		if (q.includes('authoritativeEntityClass')) {
 			const bindings = fixture.authoritativeEntityClassIri
 				? [{ classIri: { type: 'uri', value: fixture.authoritativeEntityClassIri } }]
 				: [];
 			return new Response(JSON.stringify({ head: { vars: ['classIri'] }, results: { bindings } }), {
+				status: 200
+			});
+		}
+		if (q.includes('representsPredicate')) {
+			const bindings = fixture.representsPredicateIri
+				? [{ predIri: { type: 'uri', value: fixture.representsPredicateIri } }]
+				: [];
+			return new Response(JSON.stringify({ head: { vars: ['predIri'] }, results: { bindings } }), {
 				status: 200
 			});
 		}
@@ -408,6 +460,36 @@ describe('SparqlConnector — attribute CRUD (STORY-005)', () => {
 		expect(updates[0]).toContain('sh:maxCount 1');
 	});
 
+	it('insertDatatypeProperty writes REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI true when requiredForSubclasses is set', async () => {
+		const iri = classIri('CoreConcept');
+		const { fn, updates } = mockGraphFetch({ propertyExists: false, shapeExists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertDatatypeProperty(iri, 'bAttr', 'string', false, true, undefined, true);
+
+		expect(updates[0]).toContain(`<${SCHEMA_NAMESPACE}requiredForSubclasses> true`);
+	});
+
+	it('updateDatatypeProperty swaps the REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI flag like minCount/maxCount', async () => {
+		const iri = classIri('CoreConcept');
+		const propIri = propertyIri(iri, 'bAttr');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateDatatypeProperty(iri, propIri, {
+			name: 'bAttr',
+			datatype: 'string',
+			required: false,
+			repeatable: true,
+			requiredForSubclasses: true
+		});
+
+		expect(updates[0]).toContain(`?propShape <${SCHEMA_NAMESPACE}requiredForSubclasses> ?oldRequiredForSubclasses`);
+		expect(updates[0]).toContain(`<${SCHEMA_NAMESPACE}requiredForSubclasses> true`);
+	});
+
 	it('deleteDatatypeProperty removes both the property and its shape entry', async () => {
 		const iri = classIri('Person');
 		const propIri = propertyIri(iri, 'nickname');
@@ -522,6 +604,16 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 			propertyExists?: boolean;
 			shapeExists?: boolean;
 			classGraph?: Record<string, string>;
+			/** Every registered namespace `findGenericObjectProperty`/`listGenericObjectProperties`
+			 *  should walk, for tests exercising cross-namespace reuse — defaults to a single-namespace
+			 *  world (just the default namespace). */
+			namespaces?: string[];
+			/** The namespace `existingGenericIri` is actually declared in — defaults to the default
+			 *  namespace. When it differs from the source class's own namespace (`classGraph`), the
+			 *  `FILTER NOT EXISTS` branch below only answers a match for *that* namespace's own
+			 *  `/schema` graph, exactly like a real per-namespace SPARQL query would, so a cross-
+			 *  namespace reuse test can't accidentally "find" the relation via the wrong namespace. */
+			existingGenericNamespaceBaseIri?: string;
 		} = {}
 	) {
 		const updates: string[] = [];
@@ -532,6 +624,19 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 				return new Response(JSON.stringify({ success: true }), { status: 200 });
 			}
 			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				// `fetchNamespaces()` — `findGenericObjectProperty`/`listGenericObjectProperties` now
+				// walk every registered namespace; this fixture's tests all model a single-namespace
+				// world by default, so one row (the default namespace) is enough to exercise that walk.
+				const namespaces = fixture.namespaces ?? [DEFAULT_NAMESPACE_BASE_IRI];
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns', 'prefix'] },
+						results: { bindings: namespaces.map((ns) => ({ ns: { type: 'uri', value: ns } })) }
+					}),
+					{ status: 200 }
+				);
+			}
 			if (q.includes('GRAPH ?g')) {
 				const match = q.match(/GRAPH \?g \{ <([^>]+)> a owl:Class \}/);
 				const classIriValue = match?.[1];
@@ -545,9 +650,14 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 				);
 			}
 			if (q.includes('FILTER NOT EXISTS')) {
-				const bindings = fixture.existingGenericIri
-					? [{ p: { type: 'uri', value: fixture.existingGenericIri } }]
-					: [];
+				const existingGenericGraph = namespaceGraphs(
+					fixture.existingGenericNamespaceBaseIri ?? DEFAULT_NAMESPACE_BASE_IRI
+				).schema;
+				const matchesQueriedNamespace = q.includes(`FROM <${existingGenericGraph}>`);
+				const bindings =
+					fixture.existingGenericIri && matchesQueriedNamespace
+						? [{ p: { type: 'uri', value: fixture.existingGenericIri } }]
+						: [];
 				return new Response(JSON.stringify({ head: { vars: ['p'] }, results: { bindings } }), {
 					status: 200
 				});
@@ -642,6 +752,38 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(updates[0]).toContain(`sh:class <${tool}>`);
 	});
 
+	it('reuses an existing generic relation declared in a *different* namespace than the drawing source class, instead of minting a duplicate under the source\'s own namespace', async () => {
+		const coreBase = 'http://example.org/core';
+		const backstageBase = 'http://example.org/backstage';
+		const coreGraphs = namespaceGraphs(coreBase);
+		const component = classIri('Component'); // lives in `backstageBase`, per `classGraph` below
+		const application = classIri('Application');
+		const existingIri = genericPropertyIri('represents', coreGraphs.schema);
+		const { fn, updates } = mockGenericFetch({
+			namespaces: [DEFAULT_NAMESPACE_BASE_IRI, coreBase, backstageBase],
+			existingGenericIri: existingIri,
+			existingGenericNamespaceBaseIri: coreBase,
+			currentTargets: [],
+			shapeExists: true,
+			classGraph: { [component]: namespaceGraphs(backstageBase).schema }
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(component, application, 'represents', false, true, {
+			kind: 'generic'
+		});
+
+		// Reused `core:represents` by IRI — no new `owl:ObjectProperty`/`rdfs:label` declared under
+		// `backstage`'s own namespace, just a new `sh:property` entry on the source class's shape.
+		expect(result.iri).toBe(existingIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain('owl:ObjectProperty');
+		expect(updates[0]).not.toContain('rdfs:label');
+		expect(updates[0]).toContain(`sh:path <${existingIri}>`);
+		expect(updates[0]).toContain(`sh:class <${application}>`);
+	});
+
 	it('rejects reusing a generic relation with the same name *and* target from the same source class (an exact duplicate edge)', async () => {
 		const project = classIri('Project');
 		const ingredient = classIri('Ingredient');
@@ -722,7 +864,7 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(readQuery).toContain('?propShape sh:class ?class');
 	});
 
-	it('updateObjectProperty on a generic relation retargets only sh:class, leaving the shared property untouched', async () => {
+	it('updateObjectProperty on a generic relation retargets sh:class and keeps rdfs:domain/rdfs:range absent, never re-declaring them', async () => {
 		const project = classIri('Project');
 		const propIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
 		const newTarget = classIri('Ingredient');
@@ -740,7 +882,6 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).not.toContain('rdfs:domain');
 		expect(updates[0]).not.toContain('rdfs:range');
-		expect(updates[0]).not.toContain('rdfs:label');
 		expect(updates[0]).toContain(`sh:class <${newTarget}>`);
 	});
 
@@ -774,10 +915,66 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		expect(insertSection.split(`<${shapeIri}> sh:property [`).length - 1).toBe(2);
 	});
 
-	it('listGenericObjectProperties returns label+iri pairs for properties with no rdfs:domain', async () => {
+	it('updateObjectProperty on a generic relation renames the shared owl:ObjectProperty\'s own rdfs:label — a rename is global, since the property is shared', async () => {
+		const project = classIri('Project');
+		const propIri = genericPropertyIri('testLal', DEFAULT_GRAPHS.schema);
+		const target = classIri('Ingredient');
+		const { fn, updates } = mockGenericFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateObjectProperty(
+			project,
+			propIri,
+			{ name: 'represents', targetClassIri: target, required: false, repeatable: true },
+			{ kind: 'generic' }
+		);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.schema}>`);
+		expect(updates[0]).toContain(`DELETE { <${propIri}> rdfs:label ?oldLabel }`);
+		expect(updates[0]).toContain(`INSERT { <${propIri}> rdfs:label "represents" }`);
+		expect(updates[0]).not.toContain('rdfs:domain');
+		expect(updates[0]).not.toContain('rdfs:range');
+	});
+
+	it('updateObjectProperty on a multi-target generic relation also renames the shared rdfs:label, not just the retargeted sh:property block', async () => {
+		const project = classIri('Project');
+		const propIri = genericPropertyIri('testLal', DEFAULT_GRAPHS.schema);
+		const tool = classIri('Tool');
+		const ingredient = classIri('Ingredient');
+		const recipe = classIri('Recipe');
+		const { fn, updates } = mockGenericFetch({ currentTargets: [tool, ingredient], currentName: 'testLal' });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateObjectProperty(
+			project,
+			propIri,
+			{ name: 'represents', targetClassIri: recipe, required: false, repeatable: true },
+			{ kind: 'generic', oldTargetClassIri: ingredient }
+		);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`DELETE { <${propIri}> rdfs:label ?oldLabel }`);
+		expect(updates[0]).toContain(`INSERT { <${propIri}> rdfs:label "represents" }`);
+		expect(updates[0]).toContain('sh:name "represents"');
+	});
+
+	it('listGenericObjectProperties returns label+iri+namespaceBaseIri triples for properties with no rdfs:domain', async () => {
 		const usesIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
 		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
 			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns'] },
+						results: { bindings: [{ ns: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI } }] }
+					}),
+					{ status: 200 }
+				);
+			}
 			return new Response(
 				JSON.stringify({
 					head: { vars: ['p', 'label'] },
@@ -795,22 +992,118 @@ describe('SparqlConnector — generic relations (STORY-052)', () => {
 		const connector = new SparqlConnector('/api/sparql');
 		const result = await connector.listGenericObjectProperties();
 
-		expect(result).toEqual([{ iri: usesIri, label: 'uses' }]);
+		expect(result).toEqual([{ iri: usesIri, label: 'uses', namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }]);
 	});
 
-	it('listGenericObjectProperties queries with ORDER BY LCASE(?label) (Sprint 6 Story 018)', async () => {
+	it('listGenericObjectProperties merges every registered namespace and sorts the combined list by label, case-insensitively', async () => {
+		const coreBase = 'http://example.org/core';
+		const coreGraphs = namespaceGraphs(coreBase);
+		const usesIri = genericPropertyIri('uses', DEFAULT_GRAPHS.schema);
+		const representsIri = genericPropertyIri('Represents', coreGraphs.schema);
 		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
 			const body = JSON.parse(opts.body);
-			expect(body.query).toContain('ORDER BY LCASE(?label)');
-			return new Response(JSON.stringify({ head: { vars: ['p', 'label'] }, results: { bindings: [] } }), {
+			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns'] },
+						results: {
+							bindings: [
+								{ ns: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI } },
+								{ ns: { type: 'uri', value: coreBase } }
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			// One `owl:ObjectProperty` per namespace's own `/schema` graph — the default namespace's
+			// "uses" sorts after `core`'s "Represents" only once case is ignored.
+			const isCoreGraph = q.includes(`FROM <${coreGraphs.schema}>`);
+			const bindings = isCoreGraph
+				? [{ p: { type: 'uri', value: representsIri }, label: { type: 'literal', value: 'Represents' } }]
+				: [{ p: { type: 'uri', value: usesIri }, label: { type: 'literal', value: 'uses' } }];
+			return new Response(JSON.stringify({ head: { vars: ['p', 'label'] }, results: { bindings } }), {
 				status: 200
 			});
 		});
 		vi.stubGlobal('fetch', fn);
 
 		const connector = new SparqlConnector('/api/sparql');
-		await connector.listGenericObjectProperties();
-		expect(fn).toHaveBeenCalled();
+		const result = await connector.listGenericObjectProperties();
+
+		expect(result).toEqual([
+			{ iri: representsIri, label: 'Represents', namespaceBaseIri: coreBase },
+			{ iri: usesIri, label: 'uses', namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+		]);
+	});
+
+	it('fetchAllDeclaredObjectProperties returns a declared owl:ObjectProperty with no rdfs:domain/range and no sh:property usage — invisible to both fetchAllObjectProperties and fetchGenericObjectPropertyEdges', async () => {
+		const representsIri = genericPropertyIri('represents', DEFAULT_GRAPHS.schema);
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns'] },
+						results: { bindings: [{ ns: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['p', 'label'] },
+					results: {
+						bindings: [
+							{ p: { type: 'uri', value: representsIri }, label: { type: 'literal', value: 'represents' } }
+						]
+					}
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAllDeclaredObjectProperties();
+
+		expect(result).toEqual([
+			{ iri: representsIri, label: 'represents', namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+		]);
+	});
+
+	it('fetchAllDeclaredObjectProperties falls back to the IRI local name when rdfs:label is missing', async () => {
+		const noLabelIri = genericPropertyIri('noLabel', DEFAULT_GRAPHS.schema);
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns'] },
+						results: { bindings: [{ ns: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['p'] },
+					results: { bindings: [{ p: { type: 'uri', value: noLabelIri } }] }
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAllDeclaredObjectProperties();
+
+		expect(result).toEqual([
+			{ iri: noLabelIri, label: 'noLabel', namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI }
+		]);
 	});
 
 	it('specific-relation insertObjectProperty is unchanged when no kind option is passed', async () => {
@@ -1051,6 +1344,64 @@ describe('SparqlConnector — configurable catalog marker class setting (Sprint 
 	});
 });
 
+describe('SparqlConnector — configurable represents-predicate setting (Backstage-sync STORY-103)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const settingsIri = `${SCHEMA_NAMESPACE}AppSettings`;
+	const settingPredicateIri = `${SCHEMA_NAMESPACE}representsPredicate`;
+
+	it('fetchRepresentsPredicateIri returns null when unset', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		expect(await connector.fetchRepresentsPredicateIri()).toBeNull();
+	});
+
+	it('setRepresentsPredicateIri writes the setting triple, then fetchRepresentsPredicateIri round-trips it', async () => {
+		const predIri = genericPropertyIri('represents');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setRepresentsPredicateIri(predIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`DELETE { <${settingsIri}> <${settingPredicateIri}> ?old }`);
+		expect(updates[0]).toContain(`INSERT { <${settingsIri}> <${settingPredicateIri}> <${predIri}> }`);
+
+		const { fn: fetchFn } = mockGraphFetch({ representsPredicateIri: predIri });
+		vi.stubGlobal('fetch', fetchFn);
+		expect(await connector.fetchRepresentsPredicateIri()).toBe(predIri);
+	});
+
+	it('setRepresentsPredicateIri overwrites a previously-configured predicate', async () => {
+		const newPredIri = genericPropertyIri('linksTo');
+		const { fn, updates } = mockGraphFetch({ representsPredicateIri: genericPropertyIri('represents') });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setRepresentsPredicateIri(newPredIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`INSERT { <${settingsIri}> <${settingPredicateIri}> <${newPredIri}> }`);
+	});
+
+	it('setRepresentsPredicateIri(null) clears the setting', async () => {
+		const { fn, updates } = mockGraphFetch({ representsPredicateIri: genericPropertyIri('represents') });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setRepresentsPredicateIri(null);
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${settingsIri}> <${settingPredicateIri}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+});
+
 describe('SparqlConnector — backstageKind annotation (Backstage-mapping Story 003/005)', () => {
 	afterEach(() => vi.unstubAllGlobals());
 
@@ -1152,6 +1503,336 @@ describe('SparqlConnector — backstageKind annotation (Backstage-mapping Story 
 		expect(
 			updates.some((u) => u.includes(`<${classIri('Application')}> <${BACKSTAGE_KIND_PREDICATE_IRI}> "Component"`))
 		).toBe(true);
+	});
+});
+
+describe('SparqlConnector — rse:namespace annotation (Backstage-sync STORY-099/100)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('updateClassNamespace round-trips: unset -> set -> overwrite -> clear', async () => {
+		const entityIri = classIri('Api');
+		const namespaceA = 'http://example.org/ns-a';
+		const namespaceB = 'http://example.org/ns-b';
+
+		// unset -> set
+		const setFixture = mockGraphFetch();
+		vi.stubGlobal('fetch', setFixture.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateClassNamespace(entityIri, namespaceA);
+		expect(setFixture.updates).toHaveLength(1);
+		expect(setFixture.updates[0]).toContain('DELETE');
+		expect(setFixture.updates[0]).toContain(`<${entityIri}> <${NAMESPACE_PREDICATE_IRI}> ?old`);
+		expect(setFixture.updates[0]).toContain(`INSERT { <${entityIri}> <${NAMESPACE_PREDICATE_IRI}> <${namespaceA}> }`);
+		vi.unstubAllGlobals();
+
+		// overwrite
+		const overwriteFixture = mockGraphFetch({ ownNamespace: { [entityIri]: namespaceA } });
+		vi.stubGlobal('fetch', overwriteFixture.fn);
+		await connector.updateClassNamespace(entityIri, namespaceB);
+		expect(overwriteFixture.updates[0]).toContain(
+			`INSERT { <${entityIri}> <${NAMESPACE_PREDICATE_IRI}> <${namespaceB}> }`
+		);
+		vi.unstubAllGlobals();
+
+		// clear
+		const clearFixture = mockGraphFetch({ ownNamespace: { [entityIri]: namespaceB } });
+		vi.stubGlobal('fetch', clearFixture.fn);
+		await connector.updateClassNamespace(entityIri, null);
+		expect(clearFixture.updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${entityIri}> <${NAMESPACE_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('updateClassNamespace validates both the class IRI and the namespace base IRI', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateClassNamespace('not-a-safe-iri>', 'http://example.org/ns')).rejects.toThrow();
+		await expect(connector.updateClassNamespace(classIri('Api'), 'not-a-safe-iri>')).rejects.toThrow();
+	});
+
+	it('resolveEffectiveClassNamespace returns the class\'s own declaration when present, without walking ancestry', async () => {
+		const entityIri = classIri('Api');
+		const namespaceA = 'http://example.org/ns-a';
+		const { fn } = mockGraphFetch({ ownNamespace: { [entityIri]: namespaceA } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.resolveEffectiveClassNamespace(entityIri)).resolves.toEqual({
+			baseIri: namespaceA,
+			own: true
+		});
+	});
+
+	it('resolveEffectiveClassNamespace falls back to the nearest ancestor\'s declaration', async () => {
+		const coreConcept = classIri('CoreConcept');
+		const shadowClass = classIri('Api');
+		const inherited = 'http://example.org/inherited';
+		const { fn } = mockGraphFetch({
+			superClasses: { [shadowClass]: [coreConcept] },
+			ownNamespace: { [coreConcept]: inherited }
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.resolveEffectiveClassNamespace(shadowClass)).resolves.toEqual({
+			baseIri: inherited,
+			own: false
+		});
+	});
+
+	it('resolveEffectiveClassNamespace returns null when no Namespace exists anywhere in the ancestry', async () => {
+		const coreConcept = classIri('CoreConcept');
+		const shadowClass = classIri('Api');
+		const { fn } = mockGraphFetch({ superClasses: { [shadowClass]: [coreConcept] } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.resolveEffectiveClassNamespace(shadowClass)).resolves.toBeNull();
+	});
+});
+
+describe('SparqlConnector — class-level attribute values (generalized "required for subclasses")', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('setClassAttributeValue replaces an existing value via DELETE-then-INSERT, typed per datatype', async () => {
+		const classIriValue = classIri('Application');
+		const attrIri = propertyIri(classIri('CoreConcept'), 'bAttr');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setClassAttributeValue(classIriValue, attrIri, 'string', 'https://ld.pla.com/');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.schema}>`);
+		expect(updates[0]).toContain(`DELETE { <${classIriValue}> <${attrIri}> ?old }`);
+		expect(updates[0]).toContain(`INSERT { <${classIriValue}> <${attrIri}> "https://ld.pla.com/"^^xsd:string }`);
+	});
+
+	it('setClassAttributeValue clears the value (DELETE-only) when value is null', async () => {
+		const classIriValue = classIri('Application');
+		const attrIri = propertyIri(classIri('CoreConcept'), 'bAttr');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setClassAttributeValue(classIriValue, attrIri, 'string', null);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`DELETE { <${classIriValue}> <${attrIri}> ?old }`);
+		expect(updates[0]).not.toContain('INSERT {');
+	});
+
+	it('fetchClassAttributeValues returns the class\'s own values keyed by attribute IRI', async () => {
+		const classIriValue = classIri('Application');
+		const attrIri = propertyIri(classIri('CoreConcept'), 'bAttr');
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('SELECT ?p ?value')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['p', 'value'] },
+						results: { bindings: [{ p: { type: 'uri', value: attrIri }, value: { type: 'literal', value: 'https://ld.pla.com/' } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchClassAttributeValues(classIriValue, [attrIri])).resolves.toEqual({
+			[attrIri]: 'https://ld.pla.com/'
+		});
+	});
+
+	it('fetchClassAttributeValues returns an empty object without making a request when given no attributes', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchClassAttributeValues(classIri('Application'), [])).resolves.toEqual({});
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — rse:sourceField annotation (Backstage-sync STORY-101/102)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('updateAttributeSourceField round-trips: unset -> set -> overwrite -> clear', async () => {
+		const applicationIri = classIri('Application');
+		const propIri = propertyIri(applicationIri, 'componentType');
+
+		// unset -> set
+		const setFixture = mockGraphFetch();
+		vi.stubGlobal('fetch', setFixture.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateAttributeSourceField(propIri, 'spec.type');
+		expect(setFixture.updates).toHaveLength(1);
+		expect(setFixture.updates[0]).toContain('DELETE');
+		expect(setFixture.updates[0]).toContain(`<${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old`);
+		expect(setFixture.updates[0]).toContain(`INSERT { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> "spec.type" }`);
+		vi.unstubAllGlobals();
+
+		// overwrite
+		const overwriteFixture = mockGraphFetch({ sourceField: 'spec.type' });
+		vi.stubGlobal('fetch', overwriteFixture.fn);
+		await connector.updateAttributeSourceField(propIri, 'metadata.labels.environment');
+		expect(overwriteFixture.updates[0]).toContain(
+			`INSERT { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> "metadata.labels.environment" }`
+		);
+		vi.unstubAllGlobals();
+
+		// clear
+		const clearFixture = mockGraphFetch({ sourceField: 'metadata.labels.environment' });
+		vi.stubGlobal('fetch', clearFixture.fn);
+		await connector.updateAttributeSourceField(propIri, null);
+		expect(clearFixture.updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('updateAttributeSourceField treats an empty/whitespace-only value the same as clearing', async () => {
+		const propIri = propertyIri(classIri('Application'), 'componentType');
+		const { fn, updates } = mockGraphFetch({ sourceField: 'spec.type' });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateAttributeSourceField(propIri, '   ');
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('updateAttributeSourceField escapes embedded newlines in a multi-line value', async () => {
+		const propIri = propertyIri(classIri('Application'), 'componentType');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateAttributeSourceField(propIri, 'line one\nline two\r\nline three');
+		expect(updates[0]).toContain(
+			`INSERT { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> "line one\\nline two\\r\\nline three" }`
+		);
+		// No raw newline byte reaches the request body — only the escaped `\n`/`\r` sequences.
+		expect(updates[0]).not.toMatch(/"line one\n/);
+	});
+
+	it('updateAttributeSourceField validates the property IRI', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateAttributeSourceField('not-a-safe-iri>', 'spec.type')).rejects.toThrow();
+	});
+
+	it('fetchAttributeSourceField returns the current mapping, or null when unset', async () => {
+		const propIri = propertyIri(classIri('Application'), 'componentType');
+
+		const unset = mockGraphFetch();
+		vi.stubGlobal('fetch', unset.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchAttributeSourceField(propIri)).resolves.toBeNull();
+		vi.unstubAllGlobals();
+
+		const set = mockGraphFetch({ sourceField: 'spec.type' });
+		vi.stubGlobal('fetch', set.fn);
+		await expect(connector.fetchAttributeSourceField(propIri)).resolves.toBe('spec.type');
+	});
+});
+
+describe('SparqlConnector — rse:sourceRelation annotation (Backstage-sync STORY-106/107)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('updateRelationSourceType round-trips: unset -> set -> overwrite -> clear', async () => {
+		const applicationIri = classIri('Application');
+		const propIri = propertyIri(applicationIri, 'ownedBy');
+
+		// unset -> set
+		const setFixture = mockGraphFetch();
+		vi.stubGlobal('fetch', setFixture.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateRelationSourceType(propIri, 'ownedBy');
+		expect(setFixture.updates).toHaveLength(1);
+		expect(setFixture.updates[0]).toContain('DELETE');
+		expect(setFixture.updates[0]).toContain(`<${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old`);
+		expect(setFixture.updates[0]).toContain(`INSERT { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> "ownedBy" }`);
+		vi.unstubAllGlobals();
+
+		// overwrite
+		const overwriteFixture = mockGraphFetch({ sourceType: 'ownedBy' });
+		vi.stubGlobal('fetch', overwriteFixture.fn);
+		await connector.updateRelationSourceType(propIri, 'partOf');
+		expect(overwriteFixture.updates[0]).toContain(`INSERT { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> "partOf" }`);
+		vi.unstubAllGlobals();
+
+		// clear
+		const clearFixture = mockGraphFetch({ sourceType: 'partOf' });
+		vi.stubGlobal('fetch', clearFixture.fn);
+		await connector.updateRelationSourceType(propIri, null);
+		expect(clearFixture.updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('updateRelationSourceType treats an empty/whitespace-only value the same as clearing', async () => {
+		const propIri = propertyIri(classIri('Application'), 'ownedBy');
+		const { fn, updates } = mockGraphFetch({ sourceType: 'ownedBy' });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateRelationSourceType(propIri, '   ');
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`
+			)
+		]);
+	});
+
+	it('updateRelationSourceType escapes an embedded newline', async () => {
+		const propIri = propertyIri(classIri('Application'), 'ownedBy');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateRelationSourceType(propIri, 'owned\nBy');
+		expect(updates[0]).toContain(`INSERT { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> "owned\\nBy" }`);
+		// No raw newline byte reaches the request body — only the escaped `\n` sequence.
+		expect(updates[0]).not.toMatch(/"owned\n/);
+	});
+
+	it('updateRelationSourceType validates the property IRI', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateRelationSourceType('not-a-safe-iri>', 'ownedBy')).rejects.toThrow();
+	});
+
+	it('fetchRelationSourceType returns the current mapping, or null when unset', async () => {
+		const propIri = propertyIri(classIri('Application'), 'ownedBy');
+
+		const unset = mockGraphFetch();
+		vi.stubGlobal('fetch', unset.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchRelationSourceType(propIri)).resolves.toBeNull();
+		vi.unstubAllGlobals();
+
+		const set = mockGraphFetch({ sourceType: 'ownedBy' });
+		vi.stubGlobal('fetch', set.fn);
+		await expect(connector.fetchRelationSourceType(propIri)).resolves.toBe('ownedBy');
 	});
 });
 
@@ -3193,7 +3874,11 @@ describe('SparqlConnector — partition-scoped save (STORY-017)', () => {
 });
 
 /** Mocks an `ASK { <iri> a <classIri> }` membership check plus recorded update bodies, for the
- *  individuals CRUD methods (STORY-019). */
+ *  individuals CRUD methods (STORY-019). Also answers `resolveEffectiveClassNamespace`'s own
+ *  `SELECT ?ns`/`SELECT ?super` cross-graph lookups (run by `insertIndividual`'s identifier path,
+ *  STORY-113's Concept-Namespace override) with empty bindings — i.e. "no Concept Namespace
+ *  declared anywhere in the ancestry" — the correct default for every test in this block that
+ *  doesn't itself exercise that override. */
 function mockIndividualFetch(fixture: { exists?: boolean } = {}) {
 	const updates: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
@@ -3202,7 +3887,10 @@ function mockIndividualFetch(fixture: { exists?: boolean } = {}) {
 			updates.push(body.update as string);
 			return new Response(JSON.stringify({ success: true }), { status: 200 });
 		}
-		return new Response(JSON.stringify({ head: {}, boolean: fixture.exists ?? false }), { status: 200 });
+		return new Response(
+			JSON.stringify({ head: {}, results: { bindings: [] }, boolean: fixture.exists ?? false }),
+			{ status: 200 }
+		);
 	});
 	return { fn, updates };
 }
@@ -3245,6 +3933,126 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 		expect(fn).not.toHaveBeenCalled();
 	});
 
+	// -- User-specified identifier (STORY-113) ---------------------------------------------------
+
+	it('insertIndividual mints <namespaceBaseIri>#<identifier> when an identifier is supplied, instead of the auto-derived IRI', async () => {
+		const { fn, updates } = mockIndividualFetch({ exists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', undefined, 'myCustomId');
+
+		expect(result.iri).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#myCustomId`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${result.iri}> a <${relationType}>`);
+	});
+
+	it('insertIndividual falls back to individualIri() derivation when the identifier is blank/whitespace', async () => {
+		const { fn } = mockIndividualFetch({ exists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', undefined, '   ');
+
+		expect(result.iri).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#relationTypeNutzt`);
+	});
+
+	it('insertIndividual rejects an identifier containing characters outside the allowed set, without making any request', async () => {
+		const { fn } = mockIndividualFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertIndividual(relationType, 'nutzt', undefined, 'my id!')).rejects.toThrow(
+			/Identifier must start with a letter/
+		);
+		await expect(connector.insertIndividual(relationType, 'nutzt', undefined, '-abc')).rejects.toThrow(
+			/Identifier must start with a letter/
+		);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('insertIndividual accepts a leading-digit identifier, since it only ever becomes an IRI fragment', async () => {
+		const { fn } = mockIndividualFetch({ exists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', undefined, '1abc');
+
+		expect(result.iri).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#1abc`);
+	});
+
+	it('insertIndividual rejects a supplied identifier that collides with an existing individual, same error as the auto-derived collision case', async () => {
+		const { fn } = mockIndividualFetch({ exists: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertIndividual(relationType, 'nutzt', undefined, 'myCustomId')).rejects.toThrow(
+			/already exists/
+		);
+	});
+
+	// -- Concept Namespace override for the identifier path (`rse:namespace`) -------------------
+
+	it('insertIndividual mints under the class\'s own effective Concept Namespace when one is declared, overriding namespaceBaseIri', async () => {
+		const conceptNamespace = 'https://ld.pageagent.com/application/';
+		const { fn, updates } = mockGraphFetch({ ownNamespace: { [relationType]: conceptNamespace } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', undefined, '871944');
+
+		const expectedBase = namespaceGraphs(conceptNamespace).instances;
+		expect(result.iri).toBe(`${expectedBase}#871944`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${expectedBase}>`);
+		expect(updates[0]).toContain(`<${result.iri}> a <${relationType}>`);
+	});
+
+	it('insertIndividual mints under an inherited Concept Namespace (nearest ancestor\'s declaration) when the class declares none of its own', async () => {
+		const conceptNamespace = 'https://ld.pageagent.com/core-concept/';
+		const parentClass = classIri('CoreConcept');
+		const { fn, updates } = mockGraphFetch({
+			superClasses: { [relationType]: [parentClass] },
+			ownNamespace: { [parentClass]: conceptNamespace }
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', undefined, '871944');
+
+		const expectedBase = namespaceGraphs(conceptNamespace).instances;
+		expect(result.iri).toBe(`${expectedBase}#871944`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${expectedBase}>`);
+	});
+
+	it('insertIndividual falls back to namespaceBaseIri for the identifier path when the class declares no Concept Namespace anywhere in its ancestry', async () => {
+		const chosenNamespace = 'https://ld.pageagent.com/core/';
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt', chosenNamespace, '871944');
+
+		const expectedBase = namespaceGraphs(chosenNamespace).instances;
+		expect(result.iri).toBe(`${expectedBase}#871944`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${expectedBase}>`);
+	});
+
+	it('insertIndividual ignores the Concept Namespace for a plain label-derived individual (no identifier) — override is scoped to the identifier path only', async () => {
+		const conceptNamespace = 'https://ld.pageagent.com/application/';
+		const { fn, updates } = mockGraphFetch({ ownNamespace: { [relationType]: conceptNamespace } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertIndividual(relationType, 'nutzt');
+
+		expect(result.iri).toBe(`${DEFAULT_NAMESPACE_BASE_IRI}#relationTypeNutzt`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.instances}>`);
+	});
+
 	it('deleteIndividual removes the member entirely via one DELETE WHERE', async () => {
 		const { fn, updates } = mockIndividualFetch();
 		vi.stubGlobal('fetch', fn);
@@ -3284,6 +4092,318 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 			{ iri: nutztIri, label: 'nutzt' },
 			{ iri: verbuchtIri, label: 'verbucht' }
 		]);
+	});
+
+	it('fetchAllIndividuals finds an individual minted under a Concept Namespace different from the one declaring its class — the class check spans every graph, not just this namespace\'s own /schema', async () => {
+		// Mirrors a hand-typed-identifier member (STORY-113) or a Backstage `represents` target: the
+		// class lives in "core"'s own /schema graph, but the individual was minted into "application",
+		// the class's separately-configured Concept Namespace (STORY-099/100).
+		const applicationBase = 'https://example.com/application';
+		const coreBase = 'https://example.com/core';
+		const applicationClassIri = classIri('Application', coreBase);
+		const individualIriValue = `${applicationBase}#871944`;
+
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('?i a ?type') && q.includes('GRAPH ?classGraph')) {
+				expect(q).toContain(`GRAPH <${applicationBase}>`);
+				// No `FROM` clause anywhere — mixing `FROM` with the unrestricted `GRAPH ?classGraph`
+				// below would collapse the query's named-graph set to empty per SPARQL 1.1 semantics,
+				// silently zeroing out every result (the actual bug this test guards against).
+				expect(q).not.toMatch(/\bFROM\b/);
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['i', 'type'] },
+						results: {
+							bindings: [{ i: { type: 'uri', value: individualIriValue }, type: { type: 'uri', value: applicationClassIri } }]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchAllIndividuals(applicationBase);
+
+		expect(result).toEqual([
+			{
+				iri: individualIriValue,
+				classIri: applicationClassIri,
+				label: '871944',
+				namespaceBaseIri: applicationBase,
+				syncSource: null,
+				syncStatus: null
+			}
+		]);
+	});
+});
+
+/** Mocks a `SELECT ?p ?value` query (`fetchIndividualAttributeValues`) returning `bindings`, plus
+ *  recorded update bodies for the write-side methods in the same describe block. */
+function mockAttributeValueFetch(bindings: Array<{ p: string; value: string }> = []) {
+	const updates: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		if (body.update !== undefined) {
+			updates.push(body.update as string);
+			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		return new Response(
+			JSON.stringify({
+				head: { vars: ['p', 'value'] },
+				results: {
+					bindings: bindings.map((b) => ({
+						p: { type: 'uri', value: b.p },
+						value: { type: 'literal', value: b.value }
+					}))
+				}
+			}),
+			{ status: 200 }
+		);
+	});
+	return { fn, updates };
+}
+
+describe('SparqlConnector — ABox literal attribute values on individuals (STORY-110)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const person = classIri('Person');
+	const employeeIri = individualIri(person, 'alice');
+	const birthDateIri = propertyIri(person, 'birthDate');
+	const nicknameIri = propertyIri(person, 'nickname');
+
+	it('fetchIndividualAttributeValues returns {} without a request when given no attributes', async () => {
+		const fn = vi.fn();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const values = await connector.fetchIndividualAttributeValues(employeeIri, []);
+		expect(values).toEqual({});
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('fetchIndividualAttributeValues returns a single string for a non-repeatable attribute', async () => {
+		const { fn } = mockAttributeValueFetch([{ p: birthDateIri, value: '1990-01-01' }]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const values = await connector.fetchIndividualAttributeValues(employeeIri, [
+			{ iri: birthDateIri, repeatable: false }
+		]);
+		expect(values).toEqual({ [birthDateIri]: '1990-01-01' });
+	});
+
+	it('fetchIndividualAttributeValues collects a repeatable attribute\'s values into an array', async () => {
+		const { fn } = mockAttributeValueFetch([
+			{ p: nicknameIri, value: 'Al' },
+			{ p: nicknameIri, value: 'Ally' }
+		]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const values = await connector.fetchIndividualAttributeValues(employeeIri, [
+			{ iri: nicknameIri, repeatable: true }
+		]);
+		expect(values).toEqual({ [nicknameIri]: ['Al', 'Ally'] });
+	});
+
+	it('setIndividualAttributeValue replaces an existing value via DELETE-then-INSERT, typed as xsd:date', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setIndividualAttributeValue(employeeIri, birthDateIri, 'date', '1990-01-01');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.instances}>`);
+		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old }`);
+		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date }`);
+		expect(updates[0]).toContain(`WHERE { OPTIONAL { <${employeeIri}> <${birthDateIri}> ?old } }`);
+	});
+
+	it('setIndividualAttributeValue clears the value (DELETE-only) when value is null', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.setIndividualAttributeValue(employeeIri, birthDateIri, 'date', null);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old }`);
+		expect(updates[0]).not.toContain('INSERT {');
+	});
+
+	it('addIndividualAttributeValue inserts one typed literal value for a repeatable attribute', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.addIndividualAttributeValue(employeeIri, nicknameIri, 'string', 'Al');
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				inGraph(`<${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`, DEFAULT_GRAPHS.instances)
+			)
+		]);
+	});
+
+	it('removeIndividualAttributeValue deletes exactly the given typed literal triple', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.removeIndividualAttributeValue(employeeIri, nicknameIri, 'string', 'Al');
+
+		expect(updates).toEqual([
+			expect.stringContaining(
+				`DELETE WHERE { ${inGraph(`<${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`, DEFAULT_GRAPHS.instances)} }`
+			)
+		]);
+	});
+});
+
+describe('SparqlConnector — applyAttributeSubmissions (STORY-111)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const person = classIri('Person');
+	const employeeIri = individualIri(person, 'alice');
+	const birthDateIri = propertyIri(person, 'birthDate');
+	const nicknameIri = propertyIri(person, 'nickname');
+
+	it('does nothing when given an empty submission list', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, []);
+		expect(updates).toEqual([]);
+	});
+
+	it('calls setIndividualAttributeValue (replace) for a single-valued submission with a value', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, [
+			{ attributeIri: birthDateIri, datatype: 'date', repeatable: false, value: '1990-01-01' }
+		]);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date }`);
+	});
+
+	it('calls setIndividualAttributeValue (clear) for a single-valued submission with value: null', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, [
+			{ attributeIri: birthDateIri, datatype: 'date', repeatable: false, value: null }
+		]);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain('INSERT {');
+	});
+
+	it('adds and removes each value of a repeatable submission, added before removed', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, [
+			{ attributeIri: nicknameIri, datatype: 'string', repeatable: true, added: ['Ally'], removed: ['Al'] }
+		]);
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(
+			inGraph(`<${employeeIri}> <${nicknameIri}> "Ally"^^xsd:string .`, DEFAULT_GRAPHS.instances)
+		);
+		expect(updates[1]).toContain(
+			`DELETE WHERE { ${inGraph(`<${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`, DEFAULT_GRAPHS.instances)} }`
+		);
+	});
+
+	it('processes multiple submissions in order', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, [
+			{ attributeIri: birthDateIri, datatype: 'date', repeatable: false, value: '2000-01-01' },
+			{ attributeIri: nicknameIri, datatype: 'string', repeatable: true, added: ['Ally'], removed: [] }
+		]);
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`<${birthDateIri}>`);
+		expect(updates[1]).toContain(`<${nicknameIri}>`);
+	});
+});
+
+describe('SparqlConnector — fetchLabelRequiredClasses (STORY-112)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const coreEntity = classIri('CoreEntity');
+	const other = classIri('Other');
+
+	function mockLabelShapeFetch(bindings: Array<{ class: string; minCount?: number }>) {
+		return vi.fn(async (_url: string, _opts: { body: string }) =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['class', 'minCount'] },
+					results: {
+						bindings: bindings.map((b) => ({
+							class: { type: 'uri', value: b.class },
+							...(b.minCount !== undefined ? { minCount: { type: 'literal', value: String(b.minCount) } } : {})
+						}))
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+	}
+
+	it('returns a class whose sh:NodeShape constrains rdfs:label with sh:minCount >= 1', async () => {
+		const fn = mockLabelShapeFetch([{ class: coreEntity, minCount: 1 }]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const classes = await connector.fetchLabelRequiredClasses();
+		expect(classes).toEqual([coreEntity]);
+	});
+
+	it('excludes a class whose sh:property has no sh:minCount at all', async () => {
+		const fn = mockLabelShapeFetch([{ class: other }]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const classes = await connector.fetchLabelRequiredClasses();
+		expect(classes).toEqual([]);
+	});
+
+	it('excludes a class whose sh:minCount is 0', async () => {
+		const fn = mockLabelShapeFetch([{ class: other, minCount: 0 }]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const classes = await connector.fetchLabelRequiredClasses();
+		expect(classes).toEqual([]);
+	});
+
+	it('queries the shapes graph and targets sh:path rdfs:label specifically', async () => {
+		const fn = mockLabelShapeFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchLabelRequiredClasses();
+		const body = JSON.parse(fn.mock.calls[0][1].body);
+		expect(body.query).toContain(`FROM <${DEFAULT_GRAPHS.shapes}>`);
+		expect(body.query).toContain('sh:path rdfs:label');
+		expect(body.query).toContain('sh:targetClass ?class');
+	});
+
+	it('fetchFullSchema surfaces it as labelRequiredClassIris', async () => {
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query ?? '';
+			if (q.includes('sh:path rdfs:label')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['class', 'minCount'] },
+						results: { bindings: [{ class: { type: 'uri', value: coreEntity }, minCount: { type: 'literal', value: '1' } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+		expect(schema.labelRequiredClassIris).toEqual([coreEntity]);
 	});
 });
 
@@ -6317,6 +7437,42 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 		});
 	});
 
+	it('the generic-edge query FROMs every registered namespace\'s own /schema graph, not just the namespace being fetched — a generic relation reused from a source class in a different namespace (STORY-051/053 cross-namespace reuse) has its owl:ObjectProperty declaration under the namespace that first minted it, not under the reusing source class\'s own namespace', async () => {
+		const coreBase = 'http://example.org/core';
+		const coreGraphs = namespaceGraphs(coreBase);
+		const backstageBase = 'http://example.org/backstage';
+		const backstageGraphs = namespaceGraphs(backstageBase);
+		let genericEdgeQuery = '';
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('SELECT ?ns ?prefix')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns'] },
+						results: {
+							bindings: [
+								{ ns: { type: 'uri', value: coreBase } },
+								{ ns: { type: 'uri', value: backstageBase } }
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('FILTER NOT EXISTS { ?p rdfs:domain ?anyDomain }')) genericEdgeQuery = q;
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchFullSchema(backstageBase);
+
+		expect(genericEdgeQuery).toContain(`FROM <${backstageGraphs.shapes}>`);
+		expect(genericEdgeQuery).toContain(`FROM <${coreGraphs.schema}>`);
+		expect(genericEdgeQuery).toContain(`FROM <${backstageGraphs.schema}>`);
+	});
+
 	it('emits one edge per source class for a generic relation reused from two different source classes, each with its own cardinality', async () => {
 		const project = classIri('Project');
 		const recipe = classIri('Recipe');
@@ -6368,6 +7524,22 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 		expect(genericEdges).toHaveLength(2);
 		expect(genericEdges.map((e) => e.range).sort()).toEqual([ingredient, tool].sort());
 		expect(genericEdges.every((e) => e.domain === project && e.iri === usesIri)).toBe(true);
+	});
+
+	it('requires ?p a owl:ObjectProperty in the generic-edge query, so a stale sh:property whose path was manually deleted from /schema does not ghost back into objectProperties', async () => {
+		let genericEdgeQuery = '';
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			if (q.includes('FILTER NOT EXISTS { ?p rdfs:domain ?anyDomain }')) genericEdgeQuery = q;
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchFullSchema();
+
+		expect(genericEdgeQuery).toContain('?p a owl:ObjectProperty .');
 	});
 
 	it('does not confuse a specific relation with a generic one drawn between the same two classes', async () => {

@@ -13,14 +13,16 @@ function entity(overrides: Partial<EntityNodeSpec> & Pick<EntityNodeSpec, 'iri' 
 		kind: 'entity',
 		description: '',
 		attributes: [],
+		relationFields: [],
 		members: [],
 		namespace: 'http://ns.example/ns',
+		labelRequired: false,
 		...overrides
 	};
 }
 
 function emptyModel(): CanvasModel {
-	return { nodes: [], edges: [], associationClassIris: new Set(), authoritativeEntityIris: new Set() };
+	return { nodes: [], edges: [], associationClassIris: new Set(), authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set() };
 }
 
 describe('canvasModelToLinkML — core structural mapping (STORY-068)', () => {
@@ -49,7 +51,7 @@ describe('canvasModelToLinkML — core structural mapping (STORY-068)', () => {
 				} satisfies RelationEdgeSpec
 			],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(
@@ -105,7 +107,7 @@ describe('canvasModelToLinkML — core structural mapping (STORY-068)', () => {
 			],
 			edges: [],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -134,7 +136,7 @@ describe('canvasModelToLinkML — core structural mapping (STORY-068)', () => {
 			],
 			edges: [],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -150,7 +152,7 @@ describe('canvasModelToLinkML — core structural mapping (STORY-068)', () => {
 				{ kind: 'inheritance', source: 'urn:Employee', target: 'urn:Person', namespace: 'http://ns.example/ns' } satisfies InheritanceEdgeSpec
 			],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -181,7 +183,7 @@ describe('canvasModelToLinkML — enums, generic relations, association classes 
 			],
 			edges: [],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -218,7 +220,7 @@ describe('canvasModelToLinkML — enums, generic relations, association classes 
 				} satisfies RelationEdgeSpec
 			],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -259,7 +261,7 @@ describe('canvasModelToLinkML — enums, generic relations, association classes 
 				} satisfies RelationEdgeSpec
 			],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -299,7 +301,7 @@ describe('canvasModelToLinkML — enums, generic relations, association classes 
 				} satisfies AttributedLinkEdgeSpec
 			],
 			associationClassIris: new Set(['urn:EmploymentAssignment']),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(model);
@@ -338,7 +340,7 @@ describe('canvasModelToLinkML — enums, generic relations, association classes 
 				} satisfies RelationEdgeSpec
 			],
 			associationClassIris: new Set(),
-			authoritativeEntityIris: new Set()
+			authoritativeEntityIris: new Set(), labelRequiredClassIris: new Set()
 		};
 
 		const yaml = canvasModelToLinkML(

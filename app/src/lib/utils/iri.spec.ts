@@ -4,6 +4,7 @@ import {
 	propertyIri,
 	genericPropertyIri,
 	individualIri,
+	isValidIdentifierLocalName,
 	nodeShapeIri,
 	workspaceIri,
 	workspaceMembershipIri,
@@ -212,6 +213,25 @@ describe('individualIri (STORY-019)', () => {
 		const coreIri = individualIri(relationType, 'nutzt', 'http://example.org/core/schema');
 		expect(govIri).toBe('http://example.org/gov/schema#relationTypeNutzt');
 		expect(govIri).not.toBe(coreIri);
+	});
+});
+
+describe('isValidIdentifierLocalName (STORY-113)', () => {
+	it('accepts a letter or digit followed by letters, digits, "_" or "-"', () => {
+		expect(isValidIdentifierLocalName('acmeCorp')).toBe(true);
+		expect(isValidIdentifierLocalName('a')).toBe(true);
+		expect(isValidIdentifierLocalName('Acme-Corp_123')).toBe(true);
+		expect(isValidIdentifierLocalName('1abc')).toBe(true);
+		expect(isValidIdentifierLocalName('123')).toBe(true);
+	});
+
+	it('rejects an empty string, whitespace, or IRI-unsafe characters', () => {
+		expect(isValidIdentifierLocalName('')).toBe(false);
+		expect(isValidIdentifierLocalName('my id')).toBe(false);
+		expect(isValidIdentifierLocalName('my/id')).toBe(false);
+		expect(isValidIdentifierLocalName('my<id>')).toBe(false);
+		expect(isValidIdentifierLocalName('-abc')).toBe(false);
+		expect(isValidIdentifierLocalName('_abc')).toBe(false);
 	});
 });
 

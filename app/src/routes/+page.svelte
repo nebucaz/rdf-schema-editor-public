@@ -17,7 +17,8 @@
 		type EntityAttributeVM,
 		type EntityMemberVM,
 		type EntityNodeData,
-		type EntityNodeType
+		type EntityNodeType,
+		type EntityRelationFieldVM
 	} from '$lib/components/EntityNode.svelte';
 	import ExternalClassNode, {
 		type ExternalClassNodeData,
@@ -52,12 +53,13 @@
 		type FetchedNote,
 		type NameableEntity,
 		type FetchedIndividualClassRelation,
-		type FetchedIndividualIndividualRelation
+		type FetchedIndividualIndividualRelation,
+		type FetchedSubClassOf
 	} from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import { settingsStore } from '$lib/stores/settings-store.svelte';
-	import { buildCanvasModel } from '$lib/services/canvas-model';
+	import { buildCanvasModel, type CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
 	import {
 		GraphDbLayoutStore,
 		KeyedDebouncer,
@@ -66,6 +68,8 @@
 		viewportCenteredGridPosition
 	} from '$lib/stores/layout-store';
 	import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
+	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
+	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
 	import { nodeColorStore } from '$lib/stores/node-color-store';
 	import { viewFrameStore } from '$lib/stores/view-frame-store';
 	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '$lib/stores/active-namespace-store';
@@ -342,6 +346,25 @@
 		};
 	}
 
+	/**
+	 * Applies a local mutation to `lastFetchedSchema.subClassOf` and immediately rebuilds `nodes`/
+	 * `edges` from it (bugfix following STORY-109/112's dynamic-attribute-form work) — an inheritance
+	 * edge create/delete changes which ancestors a class's `EntityNodeSpec.attributes`/`labelRequired`
+	 * (STORY-108/109/112's ancestor merge) are derived from, so a plain `edges = [...edges, ...]`/
+	 * `edges.filter(...)` local patch (the old behavior) leaves every affected node's already-computed
+	 * `attributes`/`labelRequired` stale until a full page reload re-fetches the schema — the dynamic
+	 * instance form then keeps showing pre-link data. Mirrors `handleViewModeChange`'s existing
+	 * local-rebuild-without-refetch pattern (`buildAndApplyCanvasModel` + `applyNoteNodesAndEdges`, the
+	 * two calls a full nodes/edges replacement needs to also keep the Notes overlay). A no-op before
+	 * the initial fetch completes, matching `updateIndividualRelationsInSchema`'s same guard.
+	 */
+	function updateSubClassOfAndRebuild(subClassOf: FetchedSubClassOf[]) {
+		if (!lastFetchedSchema) return;
+		lastFetchedSchema = { ...lastFetchedSchema, subClassOf };
+		buildAndApplyCanvasModel(lastFetchedSchema);
+		applyNoteNodesAndEdges();
+	}
+
 	function handleViewModeChange(mode: ViewMode) {
 		viewMode = mode;
 		viewModeStore.setViewMode(mode);
@@ -481,6 +504,27 @@
 	 *  the form until it resolves, avoiding a stale-then-overwritten `initialBackstageKind`. */
 	let editEntityBackstageKind = $state('');
 	let editEntityBackstageKindLoaded = $state(false);
+	/** STORY-100: the class's own `rse:namespace` value (empty if it has none directly) and its
+	 *  currently-*effective* Concept Namespace (own or inherited, `null` if neither exists) as of when
+	 *  the Edit Entity dialog opened — fetched alongside `editEntityBackstageKind`, gated by the same
+	 *  `editEntityBackstageKindLoaded` flag. */
+	let editEntityConceptNamespace = $state('');
+	let editEntityEffectiveConceptNamespace = $state<{ baseIri: string; own: boolean } | null | undefined>(
+		undefined
+	);
+	/** Whether the edited class is a direct `rdfs:subClassOf` the configured Catalog marker class
+	 *  (`settingsStore.authoritativeEntityClassIri`, same `isAuthoritativeEntity` check `makeNodeData`
+	 *  already computes — never a hardcoded class name). Drives `EntityForm`'s required-Concept-
+	 *  Namespace check; known synchronously from `lastAuthoritativeEntityIris`, unlike the other two
+	 *  fields above which need a fresh GraphDB round-trip. */
+	let editEntityRequireConceptNamespace = $state(false);
+	/** Attributes a direct superclass of the edited class marks "required for subclasses" (general
+	 *  mechanism, not Backstage-specific — see `REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`), known
+	 *  synchronously from `lastSubclassRequiredAttributesByClass` like `editEntityRequireConceptNamespace`
+	 *  above. `editEntitySubclassAttributeValues` holds this class's own current value per attribute
+	 *  IRI, fetched alongside `editEntityBackstageKind`/`editEntityConceptNamespace`. */
+	let editEntitySubclassRequiredAttributes = $state<CanvasClassLevelAttributeSpec[]>([]);
+	let editEntitySubclassAttributeValues = $state<Record<string, string>>({});
 	let deleteEntityId = $state<string | null>(null);
 	let deleteEntityWarning = $state<{ externalReferences: string[]; subClassReferences: string[] } | null>(
 		null
@@ -493,6 +537,12 @@
 		return namespaceStore.namespaces.find((ns) => ns.baseIri === namespaceBaseIri)?.color ?? undefined;
 	}
 
+	/** A namespace's short prefix, for disambiguating a cross-namespace picker entry — mirrors
+	 *  `SettingsView`'s own `prefixOf`. Falls back to the base IRI itself if somehow unregistered. */
+	function namespacePrefixFor(namespaceBaseIri: string): string {
+		return namespaceStore.namespaces.find((ns) => ns.baseIri === namespaceBaseIri)?.prefix ?? namespaceBaseIri;
+	}
+
 	function makeNodeData(
 		classIriValue: string,
 		name: string,
@@ -500,7 +550,8 @@
 		attributes: EntityAttributeVM[],
 		namespaceBaseIri: string | undefined,
 		color?: string,
-		members: EntityMemberVM[] = []
+		members: EntityMemberVM[] = [],
+		relationFields: EntityRelationFieldVM[] = []
 	): EntityNodeData {
 		const isAssociationClass = lastAssociationClassIris.has(classIriValue);
 		const isAuthoritativeEntity = lastAuthoritativeEntityIris.has(classIriValue);
@@ -511,6 +562,7 @@
 			color,
 			namespaceColor: namespaceColorFor(namespaceBaseIri),
 			attributes,
+			relationFields,
 			members,
 			isAssociationClass,
 			isAuthoritativeEntity,
@@ -521,9 +573,30 @@
 					editEntityId = classIriValue;
 					editEntityBackstageKindLoaded = false;
 					editEntityBackstageKind = '';
+					editEntityConceptNamespace = '';
+					editEntityEffectiveConceptNamespace = undefined;
+					// Reuses the already-computed Catalog marker class check (STORY-100 follow-up) — a
+					// class is a direct subclass of whatever class Settings' "Catalog marker class" points
+					// at (`isAuthoritativeEntity`, `settingsStore.authoritativeEntityClassIri`), never a
+					// hardcoded name — the same marker already used for DCAT catalog eligibility.
+					editEntityRequireConceptNamespace = isAuthoritativeEntity;
+					const subclassRequiredAttributes = lastSubclassRequiredAttributesByClass.get(classIriValue) ?? [];
+					editEntitySubclassRequiredAttributes = subclassRequiredAttributes;
+					editEntitySubclassAttributeValues = {};
 					const namespaceBaseIri = nodeNamespaces.get(classIriValue) ?? activeNamespaceBaseIri();
-					void sparqlConnector.fetchBackstageKind(classIriValue, namespaceBaseIri).then((kind) => {
+					void Promise.all([
+						sparqlConnector.fetchBackstageKind(classIriValue, namespaceBaseIri),
+						sparqlConnector.resolveEffectiveClassNamespace(classIriValue),
+						sparqlConnector.fetchClassAttributeValues(
+							classIriValue,
+							subclassRequiredAttributes.map((a) => a.iri),
+							namespaceBaseIri
+						)
+					]).then(([kind, effectiveNamespace, subclassAttributeValues]) => {
 						editEntityBackstageKind = kind ?? '';
+						editEntityConceptNamespace = effectiveNamespace?.own ? effectiveNamespace.baseIri : '';
+						editEntityEffectiveConceptNamespace = effectiveNamespace;
+						editEntitySubclassAttributeValues = subclassAttributeValues;
 						editEntityBackstageKindLoaded = true;
 					});
 				}
@@ -534,15 +607,30 @@
 			},
 			onAddAttribute: () => {
 				attributeModal = { classIri: classIriValue };
+				attributeSourceField = '';
+				attributeSourceFieldLoaded = true;
 			},
 			onEditAttribute: (attribute: EntityAttributeVM) => {
 				attributeModal = { classIri: classIriValue, attribute };
+				attributeSourceFieldLoaded = false;
+				attributeSourceField = '';
+				const namespaceBaseIri = nodeNamespaces.get(classIriValue) ?? activeNamespaceBaseIri();
+				void sparqlConnector.fetchAttributeSourceField(attribute.iri, namespaceBaseIri).then((sourceField) => {
+					attributeSourceField = sourceField ?? '';
+					attributeSourceFieldLoaded = true;
+				});
 			},
 			onDeleteAttribute: (attribute: EntityAttributeVM) => {
 				deleteAttributeTarget = { classIri: classIriValue, attribute };
 			},
 			onManageInstances: () => {
 				manageMembersClassIri = classIriValue;
+				manageMembersConceptNamespace = null;
+				manageMembersConceptNamespaceLoaded = false;
+				void sparqlConnector.resolveEffectiveClassNamespace(classIriValue).then((effectiveNamespace) => {
+					manageMembersConceptNamespace = effectiveNamespace?.baseIri ?? null;
+					manageMembersConceptNamespaceLoaded = true;
+				});
 			},
 			onViewTriples: () => {
 				triplesPanelWorkspaceScope = null;
@@ -576,11 +664,13 @@
 		description: string,
 		color: string | undefined,
 		namespaceBaseIri: string | undefined,
-		backstageKind: string
+		backstageKind: string,
+		conceptNamespace: string
 	) {
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
+		if (conceptNamespace) await sparqlConnector.updateClassNamespace(iri, conceptNamespace, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		// The Option/Alt+click-on-canvas context menu's "+ Add Entity" choice overrides the
@@ -632,13 +722,15 @@
 		description: string,
 		color: string | undefined,
 		namespaceBaseIri: string | undefined,
-		backstageKind: string
+		backstageKind: string,
+		conceptNamespace: string
 	) {
 		if (!pendingEntityFromConnection) return;
 		const { sourceNodeId, position } = pendingEntityFromConnection;
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
+		if (conceptNamespace) await sparqlConnector.updateClassNamespace(iri, conceptNamespace, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
@@ -652,7 +744,7 @@
 		nodes = [...nodes, newNode];
 		pendingEntityFromConnection = null;
 		pendingRelationCreate = { source: sourceNodeId, target: iri, sourceHandle: null, targetHandle: null };
-		void loadGenericRelationOptions(sourceNodeId);
+		void loadGenericRelationOptions();
 	}
 
 	async function handleEditEntitySubmit(
@@ -660,7 +752,9 @@
 		description: string,
 		color: string | undefined,
 		_namespaceBaseIri: string | undefined,
-		backstageKind: string
+		backstageKind: string,
+		conceptNamespace: string,
+		subclassAttributeValues: Record<string, string>
 	) {
 		if (!editEntityId) return;
 		const node = findEntityNode(editEntityId);
@@ -680,12 +774,36 @@
 				await sparqlConnector.clearBackstageKind(node.data.classIri, entityNamespaceBaseIri);
 			}
 		}
+		if (conceptNamespace !== editEntityConceptNamespace) {
+			await sparqlConnector.updateClassNamespace(
+				node.data.classIri,
+				conceptNamespace || null,
+				entityNamespaceBaseIri
+			);
+		}
+		for (const attr of editEntitySubclassRequiredAttributes) {
+			const value = subclassAttributeValues[attr.iri] ?? '';
+			if (value !== (editEntitySubclassAttributeValues[attr.iri] ?? '')) {
+				await sparqlConnector.setClassAttributeValue(
+					node.data.classIri,
+					attr.iri,
+					attr.datatype,
+					value || null,
+					entityNamespaceBaseIri
+				);
+			}
+		}
 		nodeColorStore.setColor(node.data.classIri, color);
 		updateNodeData(editEntityId, (d) =>
-			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members)
+			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members, d.relationFields)
 		);
 		editEntityId = null;
 		editEntityBackstageKind = '';
+		editEntityConceptNamespace = '';
+		editEntityEffectiveConceptNamespace = undefined;
+		editEntityRequireConceptNamespace = false;
+		editEntitySubclassRequiredAttributes = [];
+		editEntitySubclassAttributeValues = {};
 	}
 
 	async function handleDeleteEntityConfirm(force: boolean) {
@@ -727,6 +845,11 @@
 	// -- Attributes (STORY-005) -------------------------------------------------------------------
 
 	let attributeModal = $state<{ classIri: string; attribute?: EntityAttributeVM } | null>(null);
+	/** STORY-102: the attribute's `rse:sourceField` mapping as of when the Edit Attribute dialog
+	 *  opened — fetched asynchronously (`onEditAttribute` above), so `attributeSourceFieldLoaded`
+	 *  gates rendering the form until it resolves, mirroring `editEntityBackstageKindLoaded`. */
+	let attributeSourceField = $state('');
+	let attributeSourceFieldLoaded = $state(true);
 	let deleteAttributeTarget = $state<{ classIri: string; attribute: EntityAttributeVM } | null>(null);
 	let deleteAttributeBusy = $state(false);
 
@@ -734,13 +857,19 @@
 		name: string,
 		datatype: XsdDatatype,
 		required: boolean,
-		repeatable: boolean
+		repeatable: boolean,
+		sourceField: string,
+		requiredForSubclasses: boolean
 	) {
 		if (!attributeModal) return;
 		const node = findEntityNode(attributeModal.classIri);
 		if (!node) return;
 		const editingAttribute = attributeModal.attribute;
 		const attrNamespaceBaseIri = nodeNamespaces.get(node.data.classIri) ?? activeNamespaceBaseIri();
+		// requiredForSubclasses always wins over `required` for instance purposes — mirrors
+		// buildCanvasModel's own construction, so the locally-patched node data below never disagrees
+		// with what a full reload would compute.
+		const effectiveRequired = required && !requiredForSubclasses;
 
 		if (editingAttribute) {
 			await sparqlConnector.updateDatatypeProperty(
@@ -750,14 +879,18 @@
 					name,
 					datatype,
 					required,
-					repeatable
+					repeatable,
+					requiredForSubclasses
 				},
 				attrNamespaceBaseIri
 			);
+			await sparqlConnector.updateAttributeSourceField(editingAttribute.iri, sourceField || null, attrNamespaceBaseIri);
 			updateNodeData(node.id, (d) => ({
 				...d,
 				attributes: d.attributes.map((a: EntityAttributeVM) =>
-					a.iri === editingAttribute.iri ? { ...a, name, datatype, required, repeatable } : a
+					a.iri === editingAttribute.iri
+						? { ...a, name, datatype, required: effectiveRequired, repeatable, requiredForSubclasses }
+						: a
 				)
 			}));
 		} else {
@@ -767,11 +900,16 @@
 				datatype,
 				required,
 				repeatable,
-				attrNamespaceBaseIri
+				attrNamespaceBaseIri,
+				requiredForSubclasses
 			);
+			if (sourceField) await sparqlConnector.updateAttributeSourceField(iri, sourceField, attrNamespaceBaseIri);
 			updateNodeData(node.id, (d) => ({
 				...d,
-				attributes: [...d.attributes, { iri, name, datatype, required, repeatable }]
+				attributes: [
+					...d.attributes,
+					{ iri, name, datatype, required: effectiveRequired, repeatable, requiredForSubclasses }
+				]
 			}));
 		}
 		attributeModal = null;
@@ -806,24 +944,62 @@
 	 *  `isAssociationClass`, STORY-020's marker), so this is only ever set for a plain entity. */
 	let manageMembersClassIri = $state<string | null>(null);
 	const manageMembersNode = $derived(findEntityNode(manageMembersClassIri));
+	/** `manageMembersClassIri`'s effective Concept Namespace (own or inherited `rse:namespace`),
+	 *  fetched when the modal opens (`onManageInstances` below) — pre-selects "Add member"'s own
+	 *  "Namespace" field so a hand-typed identifier visibly lands where `insertIndividual`'s
+	 *  identifier path actually mints it (STORY-113's Concept-Namespace override), instead of
+	 *  defaulting to whatever namespace happens to be active and silently diverging from it. `null`
+	 *  when the class declares none (own or inherited) — the form then falls back to
+	 *  `activeNamespaceBaseIri()` as before. `manageMembersConceptNamespaceLoaded` gates the modal's
+	 *  render (mirroring `onEdit`'s own `editEntityBackstageKindLoaded` gate below) since
+	 *  `ManageMembersModal`/`MemberForm` only capture `initialNamespaceBaseIri` once at mount — an
+	 *  ungated render risks the "Add member" form mounting (and capturing `null`'s fallback) before
+	 *  this fetch resolves. */
+	let manageMembersConceptNamespace = $state<string | null>(null);
+	let manageMembersConceptNamespaceLoaded = $state(false);
 
-	async function handleAddMember(label: string, namespaceBaseIri?: string) {
+	async function handleAddMember(
+		label: string,
+		namespaceBaseIri?: string,
+		attributeSubmissions: AttributeValueSubmission[] = [],
+		identifier?: string,
+		relationSubmissions: RelationValueSubmission[] = []
+	) {
 		if (!manageMembersClassIri) return;
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertIndividual(
 			manageMembersClassIri,
 			label,
-			namespaceBaseIri ?? activeNamespaceBaseIri()
+			resolvedNamespaceBaseIri,
+			identifier
 		);
+		if (attributeSubmissions.length > 0) {
+			await sparqlConnector.applyAttributeSubmissions(iri, attributeSubmissions, resolvedNamespaceBaseIri);
+		}
+		if (relationSubmissions.length > 0) {
+			await applyRelationSubmissions(iri, relationSubmissions);
+		}
 		const position = nextPosition();
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
 		workspaceMembers = new Set([...workspaceMembers, iri]);
 		updateNodeData(manageMembersClassIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
 	}
 
-	async function handleEditMember(member: EntityMemberVM, label: string) {
+	async function handleEditMember(
+		member: EntityMemberVM,
+		label: string,
+		attributeSubmissions: AttributeValueSubmission[] = [],
+		relationSubmissions: RelationValueSubmission[] = []
+	) {
 		if (!manageMembersClassIri) return;
 		const namespaceBaseIri = nodeNamespaces.get(manageMembersClassIri) ?? activeNamespaceBaseIri();
 		await sparqlConnector.renameIndividual(member.iri, label, namespaceBaseIri);
+		if (attributeSubmissions.length > 0) {
+			await sparqlConnector.applyAttributeSubmissions(member.iri, attributeSubmissions, namespaceBaseIri);
+		}
+		if (relationSubmissions.length > 0) {
+			await applyRelationSubmissions(member.iri, relationSubmissions);
+		}
 		updateNodeData(manageMembersClassIri, (d) => ({
 			...d,
 			members: d.members.map((m) => (m.iri === member.iri ? { ...m, label } : m))
@@ -948,6 +1124,25 @@
 		removeAssertionEdgeIfVisible(individualIri, predicateIri, objectIri);
 	}
 
+	/**
+	 * Applies a `MemberForm` relation-field diff (STORY-114) by reusing the exact same
+	 * `insertAssertion`/`deleteAssertion` triple mechanism the generic Assertions section already
+	 * writes through (the confirmed "no new triple shape" decision) — sequentially, matching
+	 * `applyAttributeSubmissions`'s own "don't race writes to the same individual" rationale. Runs
+	 * through `handleAddAssertion`/`handleDeleteAssertion` rather than the connector directly so the
+	 * canvas edge these draw stays in sync exactly as it would for a hand-added assertion.
+	 */
+	async function applyRelationSubmissions(individualIri: string, submissions: RelationValueSubmission[]) {
+		for (const s of submissions) {
+			for (const objectIri of s.added) {
+				await handleAddAssertion(individualIri, s.predicateLabel, objectIri);
+			}
+			for (const objectIri of s.removed) {
+				await handleDeleteAssertion(individualIri, s.predicateIri, objectIri);
+			}
+		}
+	}
+
 	/** Which standalone individual (an `IndividualNode` on canvas, not an entity-owned enumerated
 	 *  member) is currently open for editing — drives the "Edit Individual" modal below, a thin
 	 *  wrapper around `MemberForm` (Story 019), not a reuse of `ManageMembersModal`, which stays
@@ -964,23 +1159,111 @@
 		editIndividualAssertions = await sparqlConnector.fetchAssertionsForIndividual(editIndividualId);
 	}
 
+	/** The individual's owning class's own+inherited attribute list (STORY-111) — already merged by
+	 *  `buildCanvasModel`/`mergeAncestorAttributes`, read straight off that class's own `EntityNodeType`
+	 *  rather than re-computing the merge here. */
+	const editIndividualAttributes = $derived.by(() => {
+		const n = editIndividualNode;
+		return n ? (findEntityNode(n.data.classIri)?.data.attributes ?? []) : [];
+	});
+	let editIndividualAttributeValues = $state<Record<string, string | string[]>>({});
+
+	async function reloadEditIndividualAttributeValues() {
+		if (!editIndividualId || editIndividualAttributes.length === 0) {
+			editIndividualAttributeValues = {};
+			return;
+		}
+		const namespaceBaseIri = nodeNamespaces.get(editIndividualId) ?? activeNamespaceBaseIri();
+		editIndividualAttributeValues = await sparqlConnector.fetchIndividualAttributeValues(
+			editIndividualId,
+			editIndividualAttributes,
+			namespaceBaseIri
+		);
+	}
+
+	/** See `editIndividualAttributes` above — same "read straight off the class's own EntityNodeType"
+	 *  rationale, for STORY-114's relation fields instead of attributes. */
+	const editIndividualRelationFields = $derived.by(() => {
+		const n = editIndividualNode;
+		return n ? (findEntityNode(n.data.classIri)?.data.relationFields ?? []) : [];
+	});
+
+	/**
+	 * Candidate target individuals for each relation field's typeahead (STORY-114), keyed by relation
+	 * IRI — one `fetchIndividualsOfClass` call per field, scoped to that field's own `targetClassIri`
+	 * and its own namespace (read off the already-built canvas model via `nodeNamespaces`, rather than
+	 * a second connector lookup). Shared by both `MemberForm` entry points below.
+	 */
+	async function loadRelationTargetOptions(
+		relationFields: EntityRelationFieldVM[]
+	): Promise<Record<string, RelationTargetOption[]>> {
+		const entries = await Promise.all(
+			relationFields.map(async (rel) => {
+				const namespaceBaseIri = nodeNamespaces.get(rel.targetClassIri) ?? activeNamespaceBaseIri();
+				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri, namespaceBaseIri);
+				return [rel.iri, options] as const;
+			})
+		);
+		return Object.fromEntries(entries);
+	}
+
+	let editIndividualRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
+
+	async function reloadEditIndividualRelationTargetOptions() {
+		if (editIndividualRelationFields.length === 0) {
+			editIndividualRelationTargetOptions = {};
+			return;
+		}
+		editIndividualRelationTargetOptions = await loadRelationTargetOptions(editIndividualRelationFields);
+	}
+
 	$effect(() => {
 		if (editIndividualId) {
 			void ensureAssertionOptionsLoaded();
 			void reloadEditIndividualAssertions();
+			void reloadEditIndividualAttributeValues();
+			void reloadEditIndividualRelationTargetOptions();
 		} else {
 			editIndividualAssertions = [];
+			editIndividualAttributeValues = {};
+			editIndividualRelationTargetOptions = {};
 		}
 	});
 
+	let manageMembersRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
+
 	$effect(() => {
-		if (manageMembersClassIri) void ensureAssertionOptionsLoaded();
+		if (manageMembersClassIri) {
+			void ensureAssertionOptionsLoaded();
+			const relationFields = manageMembersNode?.data.relationFields ?? [];
+			if (relationFields.length === 0) {
+				manageMembersRelationTargetOptions = {};
+			} else {
+				void loadRelationTargetOptions(relationFields).then((options) => {
+					manageMembersRelationTargetOptions = options;
+				});
+			}
+		} else {
+			manageMembersRelationTargetOptions = {};
+		}
 	});
 
-	async function handleRenameIndividualNode(label: string) {
+	async function handleRenameIndividualNode(
+		label: string,
+		_namespaceBaseIri?: string,
+		attributeSubmissions: AttributeValueSubmission[] = [],
+		_identifier?: string,
+		relationSubmissions: RelationValueSubmission[] = []
+	) {
 		if (!editIndividualId) return;
 		const namespaceBaseIri = nodeNamespaces.get(editIndividualId) ?? activeNamespaceBaseIri();
 		await sparqlConnector.renameIndividual(editIndividualId, label, namespaceBaseIri);
+		if (attributeSubmissions.length > 0) {
+			await sparqlConnector.applyAttributeSubmissions(editIndividualId, attributeSubmissions, namespaceBaseIri);
+		}
+		if (relationSubmissions.length > 0) {
+			await applyRelationSubmissions(editIndividualId, relationSubmissions);
+		}
 		const iri = editIndividualId;
 		nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
 	}
@@ -1007,6 +1290,13 @@
 		objectIri: string;
 	}
 	let editRelationTarget = $state<EditingClassRelationTarget | EditingIndividualRelationTarget | null>(null);
+
+	/** STORY-107: the class→class relation's current `rse:sourceRelation` mapping as of when the
+	 *  Edit Relation dialog opened — fetched asynchronously (`makeRelationEdgeData`'s `onEdit`
+	 *  below), mirroring `attributeSourceField`/`attributeSourceFieldLoaded`. Always loaded (no fetch
+	 *  needed) for an individual-involving relation, which has no `owl:ObjectProperty` to map. */
+	let editRelationSourceType = $state('');
+	let editRelationSourceTypeLoaded = $state(true);
 
 	/** The assertion subject IRI for the relation currently open for editing — a class→class
 	 *  relation's own property IRI (already a real resource, so assertions attach to it directly, no
@@ -1110,7 +1400,8 @@
 		targetIri: string,
 		required: boolean,
 		repeatable: boolean,
-		kind: 'specific' | 'generic'
+		kind: 'specific' | 'generic',
+		sourceRelation: string
 	) {
 		const target = editRelationTarget;
 		if (!target) return;
@@ -1119,12 +1410,14 @@
 			if (!edge) return;
 			const propIri = edge.data.propIri;
 			const oldTargetClassIri = edge.target;
+			const namespaceBaseIri = nodeNamespaces.get(edge.source) ?? activeNamespaceBaseIri();
 			await sparqlConnector.updateObjectProperty(
 				edge.source,
 				propIri,
 				{ name, targetClassIri: targetIri, required, repeatable },
 				{ kind, oldTargetClassIri }
 			);
+			await sparqlConnector.updateRelationSourceType(propIri, sourceRelation || null, namespaceBaseIri);
 			const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
 			edges = edges.map((e) =>
 				e.id === target.edgeId
@@ -1214,6 +1507,16 @@
 	 *  pattern as `lastAssociationClassIris`. */
 	let lastAuthoritativeEntityIris = $state<Set<string>>(new Set());
 
+	/** Classes for which `rdfs:label` is shape-required (STORY-112, own class or ancestor) — same
+	 *  pattern as `lastAssociationClassIris`, consumed by `MemberForm`'s `labelRequired` prop. */
+	let lastLabelRequiredClassIris = $state<Set<string>>(new Set());
+
+	/** Per-class attributes a *direct* superclass marks "required for subclasses" — read directly
+	 *  off each `EntityNodeSpec.subclassRequiredAttributes` (`buildCanvasModel`'s output), same
+	 *  `last*`-snapshot pattern as `lastAssociationClassIris` above, keyed by class IRI so `onEdit`
+	 *  can look a class's own list up synchronously. */
+	let lastSubclassRequiredAttributesByClass = $state<Map<string, CanvasClassLevelAttributeSpec[]>>(new Map());
+
 	// -- Relations (STORY-006) + edge-kind choice on connect -------------------------------------
 
 	let pendingConnectionChoice = $state<Connection | null>(null);
@@ -1250,20 +1553,27 @@
 	let deleteLinkEdgeId = $state<string | null>(null);
 	let deleteLinkBusy = $state(false);
 
-	/** Existing generic relations (STORY-051/053) in the source class's namespace, refreshed
-	 *  whenever the "Add/Edit Relation" dialog opens — feeds `RelationForm`'s "reuse an existing
-	 *  generic relation" autocomplete. */
-	let genericRelationOptions = $state<{ iri: string; label: string }[]>([]);
+	/** Existing generic relations (STORY-051/053) across *every* namespace, refreshed whenever the
+	 *  "Add/Edit Relation" dialog opens — feeds `RelationForm`'s "reuse an existing generic relation"
+	 *  autocomplete. Widened from the drawing entity's own namespace to every namespace so a relation
+	 *  like `core:represents` shows up (and gets reused, via `findGenericObjectProperty`'s matching
+	 *  global-by-label lookup) when drawing from a `backstage:`-namespaced entity too — `displayLabel`
+	 *  prefixes each option with its owning namespace to disambiguate, mirroring `SettingsView`'s
+	 *  "Represents predicate" picker. */
+	let genericRelationOptions = $state<{ iri: string; label: string; displayLabel: string }[]>([]);
 
-	async function loadGenericRelationOptions(sourceClassIri: string) {
-		const namespaceBaseIri = nodeNamespaces.get(sourceClassIri) ?? activeNamespaceBaseIri();
+	async function loadGenericRelationOptions() {
 		try {
-			genericRelationOptions = await sparqlConnector.listGenericObjectProperties(namespaceBaseIri);
+			const options = await sparqlConnector.listGenericObjectProperties();
+			genericRelationOptions = options.map((option) => ({
+				...option,
+				displayLabel: `[${namespacePrefixFor(option.namespaceBaseIri)}] ${option.label}`
+			}));
 		} catch (err) {
 			// Every call site fires this with `void` (fire-and-forget, so the dialog can open without
 			// waiting on the network round-trip) — without a catch here, a failed fetch would silently
 			// leave `genericRelationOptions` at its last value with no user-visible sign anything went
-			// wrong, indistinguishable from "this namespace genuinely has no generic relations yet".
+			// wrong, indistinguishable from "there are genuinely no generic relations yet".
 			genericRelationOptions = [];
 			errorMessage =
 				err instanceof Error ? `Failed to load existing generic relations: ${err.message}` : 'Failed to load existing generic relations';
@@ -1304,7 +1614,14 @@
 			propIri,
 			onEdit: () => {
 				editRelationTarget = { edgeKind: 'class', edgeId };
-				void loadGenericRelationOptions(sourceClassIri);
+				void loadGenericRelationOptions();
+				editRelationSourceTypeLoaded = false;
+				editRelationSourceType = '';
+				const namespaceBaseIri = nodeNamespaces.get(sourceClassIri) ?? activeNamespaceBaseIri();
+				void sparqlConnector.fetchRelationSourceType(propIri, namespaceBaseIri).then((sourceType) => {
+					editRelationSourceType = sourceType ?? '';
+					editRelationSourceTypeLoaded = true;
+				});
 			},
 			onDelete: () => {
 				deleteRelationEdgeId = edgeId;
@@ -1391,6 +1708,8 @@
 					predicateIri,
 					objectIri: targetIri
 				};
+				editRelationSourceType = '';
+				editRelationSourceTypeLoaded = true;
 			},
 			onDelete: () => {
 				deleteIndividualRelationTarget = { edgeId, individualIri, predicateIri, targetIri };
@@ -1595,7 +1914,7 @@
 		if (!pendingConnectionChoice?.source) return;
 		pendingRelationCreate = pendingConnectionChoice;
 		pendingConnectionChoice = null;
-		void loadGenericRelationOptions(pendingRelationCreate.source);
+		void loadGenericRelationOptions();
 	}
 
 	function chooseAttributedLink() {
@@ -1620,21 +1939,10 @@
 				errorMessage = 'That would create a cycle among local classes — inheritance edge rejected.';
 				return;
 			}
-			const edgeId = `subclassof-${source}-${target}`;
-			edges = [
-				...edges,
-				{
-					id: edgeId,
-					source,
-					target,
-					type: 'inheritance',
-					data: {
-						onDelete: () => {
-							deleteInheritanceEdgeId = edgeId;
-						}
-					} satisfies InheritanceEdgeData
-				}
-			];
+			updateSubClassOfAndRebuild([
+				...(lastFetchedSchema?.subClassOf ?? []),
+				{ sub: source, super: target, namespaceBaseIri }
+			]);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to create inheritance edge';
 		}
@@ -1645,13 +1953,18 @@
 		targetIri: string,
 		required: boolean,
 		repeatable: boolean,
-		kind: 'specific' | 'generic'
+		kind: 'specific' | 'generic',
+		sourceRelation: string
 	) {
 		if (!pendingRelationCreate?.source || !pendingRelationCreate?.target) return;
 		const { source, target } = pendingRelationCreate;
 		const { iri } = await sparqlConnector.insertObjectProperty(source, target, name, required, repeatable, {
 			kind
 		});
+		if (sourceRelation) {
+			const namespaceBaseIri = nodeNamespaces.get(source) ?? activeNamespaceBaseIri();
+			await sparqlConnector.updateRelationSourceType(iri, sourceRelation, namespaceBaseIri);
+		}
 		const edgeId = relationEdgeId(iri, source, target);
 		edges = [
 			...edges,
@@ -1692,7 +2005,11 @@
 		try {
 			const namespaceBaseIri = nodeNamespaces.get(edge.source) ?? activeNamespaceBaseIri();
 			await sparqlConnector.deleteSubClassOf(edge.source, edge.target, namespaceBaseIri);
-			edges = edges.filter((e) => e.id !== deleteInheritanceEdgeId);
+			updateSubClassOfAndRebuild(
+				(lastFetchedSchema?.subClassOf ?? []).filter(
+					(r) => !(r.sub === edge.source && r.super === edge.target)
+				)
+			);
 			deleteInheritanceEdgeId = null;
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to delete inheritance edge';
@@ -1864,7 +2181,7 @@
 			...resultingEdges
 		];
 		updateNodeData(classIriValue, (d) =>
-			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members)
+			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members, d.relationFields)
 		);
 		editAssociationId = null;
 	}
@@ -1993,6 +2310,12 @@
 		});
 		lastAssociationClassIris = model.associationClassIris;
 		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
+		lastLabelRequiredClassIris = model.labelRequiredClassIris;
+		lastSubclassRequiredAttributesByClass = new Map(
+			model.nodes
+				.filter((n) => n.kind === 'entity')
+				.map((n) => [n.iri, n.subclassRequiredAttributes ?? []])
+		);
 
 		const positions = resolvePositions(
 			model.nodes.map((n) => n.iri),
@@ -2028,7 +2351,8 @@
 						spec.attributes,
 						spec.namespace,
 						nodeColorStore.getColor(spec.iri),
-						spec.members
+						spec.members,
+						spec.relationFields
 					)
 				} satisfies EntityNodeType;
 			}
@@ -2762,6 +3086,12 @@
 			initialDescription={editingNode.data.description}
 			initialColor={editingNode.data.color}
 			initialBackstageKind={editEntityBackstageKind}
+			initialConceptNamespace={editEntityConceptNamespace}
+			namespaceOptions={namespaceStore.namespaces}
+			effectiveConceptNamespace={editEntityEffectiveConceptNamespace}
+			requireConceptNamespace={editEntityRequireConceptNamespace}
+			subclassRequiredAttributes={editEntitySubclassRequiredAttributes}
+			subclassAttributeValues={editEntitySubclassAttributeValues}
 			submitLabel="Save"
 			onCancel={() => (editEntityId = null)}
 			onSubmit={handleEditEntitySubmit}
@@ -2839,12 +3169,14 @@
 	title={attributeModal?.attribute ? 'Edit Attribute' : 'Add Attribute'}
 	onClose={() => (attributeModal = null)}
 >
-	{#if attributeModal}
+	{#if attributeModal && attributeSourceFieldLoaded}
 		<AttributeForm
 			initialName={attributeModal.attribute?.name}
 			initialDatatype={attributeModal.attribute?.datatype}
 			initialRequired={attributeModal.attribute?.required}
 			initialRepeatable={attributeModal.attribute?.repeatable}
+			initialRequiredForSubclasses={attributeModal.attribute?.requiredForSubclasses}
+			initialSourceField={attributeSourceField}
 			submitLabel={attributeModal.attribute ? 'Save' : 'Add'}
 			onCancel={() => (attributeModal = null)}
 			onSubmit={handleAttributeSubmit}
@@ -2869,11 +3201,13 @@
 	title="Manage Instances"
 	onClose={() => (manageMembersClassIri = null)}
 >
-	{#if manageMembersNode}
+	{#if manageMembersNode && manageMembersConceptNamespaceLoaded}
 		<ManageMembersModal
 			members={manageMembersNode.data.members}
 			namespaceOptions={namespaceStore.namespaces}
-			initialNamespaceBaseIri={activeNamespaceBaseIri()}
+			initialNamespaceBaseIri={manageMembersConceptNamespace ?? activeNamespaceBaseIri()}
+			attributes={manageMembersNode.data.attributes}
+			labelRequired={lastLabelRequiredClassIris.has(manageMembersNode.data.classIri)}
 			onAdd={handleAddMember}
 			onEdit={handleEditMember}
 			onDelete={handleDeleteMember}
@@ -2882,6 +3216,14 @@
 			onLoadAssertions={(iri) => sparqlConnector.fetchAssertionsForIndividual(iri)}
 			onAddAssertion={handleAddAssertion}
 			onDeleteAssertion={handleDeleteAssertion}
+			onLoadAttributeValues={(iri) =>
+				sparqlConnector.fetchIndividualAttributeValues(
+					iri,
+					manageMembersNode.data.attributes,
+					nodeNamespaces.get(manageMembersNode.data.classIri) ?? activeNamespaceBaseIri()
+				)}
+			relationFields={manageMembersNode.data.relationFields}
+			relationTargetOptions={manageMembersRelationTargetOptions}
 		/>
 	{/if}
 </Modal>
@@ -2898,6 +3240,11 @@
 			assertions={editIndividualAssertions}
 			predicateOptions={assertionPredicateOptions}
 			objectOptions={assertionObjectOptions}
+			attributes={editIndividualAttributes}
+			attributeValues={editIndividualAttributeValues}
+			labelRequired={lastLabelRequiredClassIris.has(editIndividualNode.data.classIri)}
+			relationFields={editIndividualRelationFields}
+			relationTargetOptions={editIndividualRelationTargetOptions}
 			onAddAssertion={async (predicateLabel, objectIri) => {
 				if (!editIndividualId) return;
 				await handleAddAssertion(editIndividualId, predicateLabel, objectIri);
@@ -2935,6 +3282,7 @@
 			allowGeneric={true}
 			{genericRelationOptions}
 			initialKind="generic"
+			allowSourceRelation={true}
 			onCancel={() => (pendingRelationCreate = null)}
 			onSubmit={handleCreateRelationSubmit}
 		/>
@@ -2942,7 +3290,7 @@
 </Modal>
 
 <Modal isOpen={editRelationTarget !== null} title="Edit Relation" onClose={() => (editRelationTarget = null)}>
-	{#if editingRelationView}
+	{#if editingRelationView && editRelationSourceTypeLoaded}
 		<RelationForm
 			initialName={editingRelationView.name}
 			initialRequired={editingRelationView.required}
@@ -2955,6 +3303,8 @@
 			{genericRelationOptions}
 			initialKind={editingRelationView.kind}
 			showConstraints={editingRelationView.showConstraints}
+			allowSourceRelation={editingRelationView.edgeKind === 'class'}
+			initialSourceRelation={editRelationSourceType}
 			onCancel={() => (editRelationTarget = null)}
 			onSubmit={handleEditRelationFormSubmit}
 		/>

@@ -187,6 +187,24 @@ func TestConfig_DerivedVocabularyIRIs(t *testing.T) {
 	if got, want := cfg.NamespacePrefixPredicateIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#prefix"; got != want {
 		t.Errorf("NamespacePrefixPredicateIRI() = %q, want %q", got, want)
 	}
+	if got, want := cfg.NamespacePredicateIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#namespace"; got != want {
+		t.Errorf("NamespacePredicateIRI() = %q, want %q", got, want)
+	}
+	if got, want := cfg.SourceFieldPredicateIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#sourceField"; got != want {
+		t.Errorf("SourceFieldPredicateIRI() = %q, want %q", got, want)
+	}
+	if got, want := cfg.AppSettingsIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#AppSettings"; got != want {
+		t.Errorf("AppSettingsIRI() = %q, want %q", got, want)
+	}
+	if got, want := cfg.RepresentsPredicateSettingIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#representsPredicate"; got != want {
+		t.Errorf("RepresentsPredicateSettingIRI() = %q, want %q", got, want)
+	}
+	if got, want := cfg.SourceRelationPredicateIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#sourceRelation"; got != want {
+		t.Errorf("SourceRelationPredicateIRI() = %q, want %q", got, want)
+	}
+	if got, want := cfg.SyncSourceRefPredicateIRI(), "http://ld.pageagent.com/rdf-schema-editor/schema#syncSourceRef"; got != want {
+		t.Errorf("SyncSourceRefPredicateIRI() = %q, want %q", got, want)
+	}
 	if got, want := cfg.DefaultNamespaceBaseIRI(), "http://ld.pageagent.com/rdf-schema-editor"; got != want {
 		t.Errorf("DefaultNamespaceBaseIRI() = %q, want %q", got, want)
 	}

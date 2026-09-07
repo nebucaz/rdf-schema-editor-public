@@ -21,11 +21,16 @@ type discoverResponse struct {
 }
 
 type syncResponse struct {
-	Source        string            `json:"source"`
-	DryRun        bool              `json:"dryRun"`
-	SyncedPerKind map[string]int    `json:"syncedPerKind"`
-	Mapping       map[string]string `json:"mapping"`
-	SkippedKinds  []string          `json:"skippedKinds"`
+	Source             string            `json:"source"`
+	DryRun             bool              `json:"dryRun"`
+	SyncedPerKind      map[string]int    `json:"syncedPerKind"`
+	Mapping            map[string]string `json:"mapping"`
+	SkippedKinds       []string          `json:"skippedKinds"`
+	MappingFailures    []string          `json:"mappingFailures"`
+	RepresentsFailures []string          `json:"representsFailures"`
+	SkippedRelations   []string          `json:"skippedRelations"`
+	RepresentsSynced   int               `json:"representsSynced"`
+	RelationsSynced    int               `json:"relationsSynced"`
 }
 
 // apiError is returned for any non-2xx backend response — callers print its Error() to stderr and

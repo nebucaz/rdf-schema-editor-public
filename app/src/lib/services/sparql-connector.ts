@@ -3,6 +3,7 @@ import {
 	propertyIri,
 	genericPropertyIri,
 	individualIri,
+	isValidIdentifierLocalName,
 	nodeShapeIri,
 	xsdIri,
 	extractLocalName,
@@ -10,7 +11,12 @@ import {
 	ATTRIBUTED_RELATIONSHIP_IRI,
 	APP_SETTINGS_IRI,
 	AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI,
+	REPRESENTS_PREDICATE_SETTING_IRI,
 	BACKSTAGE_KIND_PREDICATE_IRI,
+	NAMESPACE_PREDICATE_IRI,
+	REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI,
+	SOURCE_FIELD_PREDICATE_IRI,
+	SOURCE_RELATION_PREDICATE_IRI,
 	SYNC_SOURCE_PREDICATE_IRI,
 	SYNC_STATUS_PREDICATE_IRI,
 	NAMESPACE_CLASS_IRI,
@@ -131,6 +137,9 @@ export interface DatatypePropertyUpdate {
 	datatype: XsdDatatype;
 	required: boolean;
 	repeatable: boolean;
+	/** See `REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI` (`utils/iri.ts`) — required on direct subclasses
+	 *  of this attribute's owning class, as a class-level value, independent of `required`. */
+	requiredForSubclasses?: boolean;
 }
 
 export interface ObjectPropertyUpdate {
@@ -228,6 +237,12 @@ export interface FetchedPropertyBase {
 export interface FetchedProperty extends FetchedPropertyBase {
 	required: boolean;
 	repeatable: boolean;
+	/** Whether this attribute is required on direct subclasses of `domain` as a class-level value
+	 *  (`REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`), independent of `required`'s "required on
+	 *  instances" meaning — see that predicate's own doc comment in `utils/iri.ts`. Optional (like
+	 *  `FetchedSchema.labelRequiredClassIris`) so existing hand-built fixtures elsewhere don't all
+	 *  need updating; treat a missing value as `false`. */
+	requiredForSubclasses?: boolean;
 }
 
 /**
@@ -245,6 +260,7 @@ export interface FetchedShapeConstraint {
 	path: string;
 	minCount?: number;
 	maxCount?: number;
+	requiredForSubclasses?: boolean;
 }
 
 export interface FetchedSubClassOf {
@@ -369,6 +385,11 @@ export interface FetchedSchema {
 	individuals: FetchedIndividual[];
 	individualClassRelations: FetchedIndividualClassRelation[];
 	individualIndividualRelations: FetchedIndividualIndividualRelation[];
+	/** Class IRIs with their own `sh:property [sh:path rdfs:label; sh:minCount >= 1]` shape
+	 *  (STORY-112) — optional so hand-built `FetchedSchema` fixtures elsewhere (tests) don't all need
+	 *  updating; `buildCanvasModel` treats a missing field as an empty list. Always populated by
+	 *  `fetchFullSchema`. */
+	labelRequiredClassIris?: string[];
 }
 
 // -- Namespace management (STORY-027) -----------------------------------------------------------
@@ -913,19 +934,53 @@ export class SparqlConnector {
 	 * Adds an enumerated member to `classIriValue` (e.g. `core:RelationType`'s `nutzt`): a bare
 	 * `<iri> a <classIriValue> ; rdfs:label "..."` pair, no `sh:*` triples — always available per
 	 * class, no separate "is this an enumeration" flag (Decision 3, `plan.md`). The IRI is derived
-	 * from the owning class + label (`individualIri`) and is stable thereafter. Stored in the
-	 * namespace's plain instance graph (`<base>`, no suffix — Decision 1).
+	 * from the owning class + label (`individualIri`) and is stable thereafter, unless the caller
+	 * supplies `identifier` (STORY-113), in which case the IRI mints as `<base>#<identifier>` instead
+	 * — validated against `isValidIdentifierLocalName` on top of the usual `assertSafeSparqlIri`
+	 * guard, since a hand-typed identifier has no automatic sanitization. That `<base>` is
+	 * `classIriValue`'s *effective Concept Namespace* (`resolveEffectiveClassNamespace`, own or
+	 * inherited `rse:namespace` — STORY-099/100) when one is declared: a hand-typed identifier is
+	 * exactly the kind of externally-authoritative UID a Concept Namespace exists to prefix, the
+	 * contract this method must honor unconditionally once an identifier is given — falling back to
+	 * `namespaceBaseIri`'s own instance graph only when the class declares no Concept Namespace
+	 * anywhere in its ancestry. A plain label-derived individual (no `identifier`) always uses
+	 * `namespaceBaseIri` as-is — the override is scoped to the hand-typed-identifier path only.
+	 *
+	 * This override was briefly removed in favor of always honoring the caller's `namespaceBaseIri`,
+	 * on the theory that a Concept Namespace nobody registered was silently orphaning data (nothing
+	 * ever queried an unregistered namespace's graph again, even though the triples were written
+	 * correctly). That's now handled at its actual source instead — `EntityForm`'s "Concept
+	 * namespace" field is a `<select>` constrained to registered namespaces, so
+	 * `resolveEffectiveClassNamespace` can no longer resolve to anything unregistered — restoring
+	 * this override to its original STORY-113 contract.
 	 */
 	async insertIndividual(
 		classIriValue: string,
 		label: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI,
+		identifier?: string
 	): Promise<{ iri: string }> {
 		if (!label.trim()) throw new Error('Member name must not be empty');
 		this.assertSafeSparqlIri(classIriValue, 'class IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		let graphs = namespaceGraphs(namespaceBaseIri);
 
-		const iri = individualIri(classIriValue, label, graphs.instances);
+		let iri: string;
+		const trimmedIdentifier = identifier?.trim();
+		if (trimmedIdentifier) {
+			if (!isValidIdentifierLocalName(trimmedIdentifier)) {
+				throw new Error(
+					'Identifier must start with a letter or digit and contain only letters, digits, "_" or "-"'
+				);
+			}
+			const effectiveNamespace = await this.resolveEffectiveClassNamespace(classIriValue);
+			if (effectiveNamespace !== null) {
+				graphs = namespaceGraphs(effectiveNamespace.baseIri);
+			}
+			iri = `${graphs.instances}#${trimmedIdentifier}`;
+			this.assertSafeSparqlIri(iri, 'individual IRI');
+		} else {
+			iri = individualIri(classIriValue, label, graphs.instances);
+		}
 		const exists = await this.askQuery(
 			`${PREFIXES} ASK ${fromClause(graphs.instances)} { <${iri}> a <${classIriValue}> }`
 		);
@@ -989,6 +1044,156 @@ export class SparqlConnector {
 			iri: b.i.value,
 			label: b.label?.value ?? extractLocalName(b.i.value)
 		}));
+	}
+
+	/** `"value"^^xsd:datatype` — the typed-literal shape every write below needs (STORY-110), matching
+	 *  the `"${x}"^^xsd:decimal` pattern already used for note/workspace-membership coordinates. */
+	private formatTypedLiteral(datatype: XsdDatatype, value: string): string {
+		return `"${this.escapeString(value)}"^^xsd:${datatype}`;
+	}
+
+	// -- Literal attribute values on individuals (STORY-110) -------------------------------------
+	// Fills the ABox gap `insertIndividual` leaves open: it writes only `rdf:type`/`rdfs:label`, so
+	// nothing anywhere previously wrote a literal `owl:DatatypeProperty` value against an individual.
+	// Values live in the individual's own `graphs.instances`, alongside its `rdf:type`/`rdfs:label`.
+
+	/**
+	 * Current values of `attributes` on `individualIri`, keyed by attribute IRI — a single string for
+	 * a `repeatable: false` attribute, an array of strings for a `repeatable: true` one. `attributes`
+	 * is the same own+inherited attribute list STORY-109's `mergeAncestorAttributes` produces for the
+	 * individual's class (only `iri`/`repeatable` are needed here).
+	 */
+	async fetchIndividualAttributeValues(
+		individualIri: string,
+		attributes: Array<{ iri: string; repeatable: boolean }>,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<Record<string, string | string[]>> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		for (const attr of attributes) this.assertSafeSparqlIri(attr.iri, 'attribute IRI');
+		if (attributes.length === 0) return {};
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const repeatableByIri = new Map(attributes.map((a) => [a.iri, a.repeatable]));
+
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?p ?value ${fromClause(graphs.instances)} WHERE {
+				<${individualIri}> ?p ?value .
+				VALUES ?p { ${attributes.map((a) => `<${a.iri}>`).join(' ')} }
+			}
+		`);
+
+		const out: Record<string, string | string[]> = {};
+		for (const b of results.results.bindings) {
+			const iri = b.p.value;
+			const value = b.value.value;
+			if (repeatableByIri.get(iri)) {
+				const existing = out[iri];
+				if (Array.isArray(existing)) existing.push(value);
+				else out[iri] = [value];
+			} else {
+				out[iri] = value;
+			}
+		}
+		return out;
+	}
+
+	/**
+	 * Sets (or, when `value` is `null`, clears) a single-valued (`repeatable: false`) attribute's
+	 * literal value on an individual — DELETE-then-INSERT to replace (or DELETE-only to clear),
+	 * mirroring `renameIndividual`'s shape exactly but for an arbitrary attribute predicate/datatype
+	 * instead of the fixed `rdfs:label` one.
+	 */
+	async setIndividualAttributeValue(
+		individualIri: string,
+		attributeIri: string,
+		datatype: XsdDatatype,
+		value: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const insertClause =
+			value === null
+				? ''
+				: `INSERT { <${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} }`;
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.instances)}
+			DELETE { <${individualIri}> <${attributeIri}> ?old }
+			${insertClause}
+			WHERE { OPTIONAL { <${individualIri}> <${attributeIri}> ?old } }
+		`);
+	}
+
+	/** Adds one value to a repeatable attribute on an individual — mirrors `insertAssertion`'s shape
+	 *  but with a typed literal object instead of an IRI object. */
+	async addIndividualAttributeValue(
+		individualIri: string,
+		attributeIri: string,
+		datatype: XsdDatatype,
+		value: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
+		);
+	}
+
+	/** Removes one value from a repeatable attribute on an individual — mirrors `deleteAssertion`'s
+	 *  shape but with a typed literal object instead of an IRI object. */
+	async removeIndividualAttributeValue(
+		individualIri: string,
+		attributeIri: string,
+		datatype: XsdDatatype,
+		value: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(individualIri, 'individual IRI');
+		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
+		);
+	}
+
+	/**
+	 * Applies a batch of attribute-value changes to one individual (STORY-111) — each submission is a
+	 * single-valued replace/clear (`setIndividualAttributeValue`) or a repeatable add/remove diff
+	 * (`addIndividualAttributeValue`/`removeIndividualAttributeValue` per value). `submissions` mirrors
+	 * `reconcileAttributeValues`'s (`utils/attribute-values.ts`) return shape structurally — that
+	 * module stays GraphDB-free, so the type isn't imported here, just matched. Runs sequentially
+	 * (not `Promise.all`'d): a repeatable attribute's own add/remove pair must not race a
+	 * single-valued attribute's DELETE-then-INSERT touching the same individual.
+	 */
+	async applyAttributeSubmissions(
+		individualIri: string,
+		submissions: Array<{
+			attributeIri: string;
+			datatype: XsdDatatype;
+			repeatable: boolean;
+			value?: string | null;
+			added?: string[];
+			removed?: string[];
+		}>,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		for (const s of submissions) {
+			if (s.repeatable) {
+				for (const v of s.added ?? []) {
+					await this.addIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, namespaceBaseIri);
+				}
+				for (const v of s.removed ?? []) {
+					await this.removeIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, namespaceBaseIri);
+				}
+			} else {
+				await this.setIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, s.value ?? null, namespaceBaseIri);
+			}
+		}
 	}
 
 	/**
@@ -1084,42 +1289,112 @@ export class SparqlConnector {
 
 	/**
 	 * Looks up an existing *generic* relation (STORY-051, `spec/modelling-restrictions/plan.md`) by
-	 * label — an `owl:ObjectProperty` with the given `rdfs:label` and **no** `rdfs:domain` triple at
-	 * all. A specific relation that happens to share the same label never matches (it always has an
-	 * `rdfs:domain`). Used by the relation edit dialog to offer "reuse existing" vs "create new"
-	 * (STORY-053), and by `insertObjectProperty`'s generic mode (STORY-052) to decide whether to
-	 * declare a new property or just add another `sh:property` entry to a new source class.
+	 * label, across **every** registered namespace — an `owl:ObjectProperty` with the given
+	 * `rdfs:label` and **no** `rdfs:domain` triple at all, in any namespace's own `/schema` graph. A
+	 * specific relation that happens to share the same label never matches (it always has an
+	 * `rdfs:domain`). A generic relation's label is therefore effectively a *global* reuse key, not
+	 * scoped per namespace: drawing a relation named "represents" from a `backstage:`-namespaced
+	 * entity reuses `core:represents` if that's where it already lives, rather than minting a
+	 * duplicate `backstage:represents` — a generic relation exists precisely to be reused across
+	 * source classes, and there's no principled reason that stops at a namespace boundary. Checks
+	 * namespaces one at a time (in `fetchNamespaces()`'s own order) and returns on the first match, so
+	 * two namespaces that happen to declare the exact same label resolve to an arbitrary, undocumented
+	 * one of the two — an edge case the caller-facing picker (`listGenericObjectProperties`) surfaces
+	 * with a namespace prefix so a human can tell them apart before it matters. Used by the relation
+	 * edit dialog to offer "reuse existing" vs "create new" (STORY-053), and by
+	 * `insertObjectProperty`'s generic mode (STORY-052) to decide whether to declare a new property or
+	 * just add another `sh:property` entry to a new source class.
 	 */
-	async findGenericObjectProperty(
-		name: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<string | undefined> {
-		const graphs = namespaceGraphs(namespaceBaseIri);
+	async findGenericObjectProperty(name: string): Promise<string | undefined> {
+		const namespaces = await this.fetchNamespaces();
 		const escapedName = this.escapeString(name);
-		const results = await this.selectQuery(`
-			${PREFIXES} SELECT ?p ${fromClause(graphs.schema)} WHERE {
-				?p a owl:ObjectProperty ; rdfs:label "${escapedName}" .
-				FILTER NOT EXISTS { ?p rdfs:domain ?d }
-			}
-			LIMIT 1
-		`);
-		return results.results.bindings[0]?.p?.value;
+		for (const ns of namespaces) {
+			const graphs = namespaceGraphs(ns.baseIri);
+			const results = await this.selectQuery(`
+				${PREFIXES} SELECT ?p ${fromClause(graphs.schema)} WHERE {
+					?p a owl:ObjectProperty ; rdfs:label "${escapedName}" .
+					FILTER NOT EXISTS { ?p rdfs:domain ?d }
+				}
+				LIMIT 1
+			`);
+			const iri = results.results.bindings[0]?.p?.value;
+			if (iri) return iri;
+		}
+		return undefined;
 	}
 
-	/** Lists every existing generic relation (STORY-051/053) in a namespace — `owl:ObjectProperty`
-	 *  with an `rdfs:label` and no `rdfs:domain` triple — for the relation edit dialog's "reuse an
-	 *  existing generic relation" autocomplete. */
-	async listGenericObjectProperties(
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<{ iri: string; label: string }[]> {
-		const graphs = namespaceGraphs(namespaceBaseIri);
-		const results = await this.selectQuery(`
-			${PREFIXES} SELECT ?p ?label ${fromClause(graphs.schema)} WHERE {
-				?p a owl:ObjectProperty ; rdfs:label ?label .
-				FILTER NOT EXISTS { ?p rdfs:domain ?d }
-			} ORDER BY LCASE(?label)
-		`);
-		return results.results.bindings.map((b) => ({ iri: b.p.value, label: b.label.value }));
+	/** Lists every existing generic relation across **every** registered namespace (STORY-051/053,
+	 *  widened for cross-namespace reuse — see `findGenericObjectProperty`'s own doc comment) —
+	 *  `owl:ObjectProperty` with an `rdfs:label` and no `rdfs:domain` triple, from each namespace's own
+	 *  `/schema` graph. For the relation edit dialog's "reuse an existing generic relation"
+	 *  autocomplete: restricting this list to the drawing entity's own namespace hid an
+	 *  already-declared relation like `core:represents` from a `backstage:`-namespaced entity for no
+	 *  principled reason. Each result carries its own `namespaceBaseIri` so the caller can prefix the
+	 *  display label to disambiguate (mirroring `SettingsView`'s "Represents predicate" picker) —
+	 *  sorted by label, case-insensitively, across the merged set (a per-namespace `ORDER BY` can't
+	 *  produce a single ordering once results from several independent queries are merged). */
+	async listGenericObjectProperties(): Promise<
+		{ iri: string; label: string; namespaceBaseIri: string }[]
+	> {
+		const namespaces = await this.fetchNamespaces();
+		const perNamespace = await Promise.all(
+			namespaces.map(async (ns) => {
+				const graphs = namespaceGraphs(ns.baseIri);
+				const results = await this.selectQuery(`
+					${PREFIXES} SELECT ?p ?label ${fromClause(graphs.schema)} WHERE {
+						?p a owl:ObjectProperty ; rdfs:label ?label .
+						FILTER NOT EXISTS { ?p rdfs:domain ?d }
+					}
+				`);
+				return results.results.bindings.map((b) => ({
+					iri: b.p.value,
+					label: b.label.value,
+					namespaceBaseIri: ns.baseIri
+				}));
+			})
+		);
+		return perNamespace
+			.flat()
+			.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+	}
+
+	/**
+	 * Every `owl:ObjectProperty` declared anywhere, across every registered namespace's own
+	 * `/schema` graph — unfiltered by whether it has `rdfs:domain`/`rdfs:range` (unlike
+	 * `fetchAllObjectProperties`, which requires both) or by whether any `sh:property` shape
+	 * currently references it (unlike `fetchGenericObjectPropertyEdges`, which requires a live
+	 * shape reference and feeds `FetchedSchema.objectProperties` — the canvas's own "what's actually
+	 * wired into a diagram" view, not a registry of every declared property).
+	 *
+	 * For Settings' "Represents predicate" picker (STORY-104): the predicate configured there need
+	 * not be attached to any entity yet — it's picked once, then only ever *written* by the sync
+	 * engine — so a property that's declared but currently unused (or a generic relation with no
+	 * live `sh:property` reference) must still be selectable, or the picker can permanently lose
+	 * track of the very property it's meant to point at.
+	 */
+	async fetchAllDeclaredObjectProperties(): Promise<
+		{ iri: string; label: string; namespaceBaseIri: string }[]
+	> {
+		const namespaces = await this.fetchNamespaces();
+		const perNamespace = await Promise.all(
+			namespaces.map(async (ns) => {
+				const graphs = namespaceGraphs(ns.baseIri);
+				const results = await this.selectQuery(`
+					${PREFIXES} SELECT ?p ?label ${fromClause(graphs.schema)} WHERE {
+						?p a owl:ObjectProperty .
+						OPTIONAL { ?p rdfs:label ?label }
+					}
+				`);
+				return results.results.bindings.map((b) => ({
+					iri: b.p.value,
+					label: b.label?.value ?? extractLocalName(b.p.value),
+					namespaceBaseIri: ns.baseIri
+				}));
+			})
+		);
+		return perNamespace
+			.flat()
+			.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
 	}
 
 	/**
@@ -1169,7 +1444,8 @@ export class SparqlConnector {
 	 * data predating this fix — forward-fix only, no migration story) rather than trying to edit it
 	 * in place: blank-node identity is never relied on elsewhere in this codebase (every lookup
 	 * re-traverses `sh:property`/`sh:path`), so a full replace is simpler and safer than patching a
-	 * variable-length structure.
+	 * variable-length structure. Also renames the shared property's own `rdfs:label` to `name` — see
+	 * `updateObjectProperty`'s own doc comment on why a generic relation's rename is a global rename.
 	 */
 	private async rewriteGenericPropertyShapeTargets(
 		shapeIri: string,
@@ -1198,6 +1474,10 @@ export class SparqlConnector {
 
 		await this.executeUpdate(`
 			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${propIri}> rdfs:label ?oldLabel }
+			INSERT { <${propIri}> rdfs:label "${escapedName}" }
+			WHERE { OPTIONAL { <${propIri}> rdfs:label ?oldLabel } } ;
 			${withGraph(graphs.shapes)}
 			DELETE {
 				<${shapeIri}> sh:property ?propShape .
@@ -1256,7 +1536,8 @@ export class SparqlConnector {
 		datatype: XsdDatatype,
 		required: boolean,
 		repeatable: boolean,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI,
+		requiredForSubclasses: boolean = false
 	): Promise<{ iri: string }> {
 		if (!name.trim()) throw new Error('Attribute name must not be empty');
 		this.assertSafeSparqlIri(classIriValue, 'class IRI');
@@ -1270,7 +1551,11 @@ export class SparqlConnector {
 		const shapeIri = await this.ensureNodeShape(classIriValue, namespaceBaseIri);
 		const escapedName = this.escapeString(name);
 		const datatypeIri = xsdIri(datatype);
-		const constraints = [required ? 'sh:minCount 1' : null, !repeatable ? 'sh:maxCount 1' : null]
+		const constraints = [
+			required ? 'sh:minCount 1' : null,
+			!repeatable ? 'sh:maxCount 1' : null,
+			requiredForSubclasses ? `<${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> true` : null
+		]
 			.filter((c): c is string => c !== null)
 			.map((c) => ` ; ${c}`)
 			.join('');
@@ -1319,6 +1604,9 @@ export class SparqlConnector {
 		const datatypeIri = xsdIri(update.datatype);
 		const minCountInsert = update.required ? '?propShape sh:minCount 1 .' : '';
 		const maxCountInsert = !update.repeatable ? '?propShape sh:maxCount 1 .' : '';
+		const requiredForSubclassesInsert = update.requiredForSubclasses
+			? `?propShape <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> true .`
+			: '';
 
 		await this.executeUpdate(`
 			${PREFIXES}
@@ -1334,12 +1622,14 @@ export class SparqlConnector {
 				?propShape sh:datatype ?oldDatatype ;
 					sh:name ?oldName ;
 					sh:minCount ?oldMinCount ;
-					sh:maxCount ?oldMaxCount .
+					sh:maxCount ?oldMaxCount ;
+					<${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?oldRequiredForSubclasses .
 			}
 			INSERT {
 				?propShape sh:datatype <${datatypeIri}> ; sh:name "${escapedName}" .
 				${minCountInsert}
 				${maxCountInsert}
+				${requiredForSubclassesInsert}
 			}
 			WHERE {
 				<${shapeIri}> sh:property ?propShape .
@@ -1348,6 +1638,7 @@ export class SparqlConnector {
 				OPTIONAL { ?propShape sh:name ?oldName }
 				OPTIONAL { ?propShape sh:minCount ?oldMinCount }
 				OPTIONAL { ?propShape sh:maxCount ?oldMaxCount }
+				OPTIONAL { ?propShape <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?oldRequiredForSubclasses }
 			}
 		`);
 	}
@@ -1417,10 +1708,12 @@ export class SparqlConnector {
 	 * class belongs to a different namespace.
 	 *
 	 * `options.kind` (STORY-052, `spec/modelling-restrictions/plan.md`) defaults to `'specific'`
-	 * (this unchanged behavior). `'generic'` mints/reuses a namespace-scoped, owner-class-independent
-	 * property (`genericPropertyIri`) that carries **no** `rdfs:domain`/`rdfs:range` at all — SHACL's
-	 * `sh:property`/`sh:class` on each source class's own `NodeShape` is the only per-class-pair type
-	 * constraint. Drawing a second generic edge with the same name from a *different* source class
+	 * (this unchanged behavior). `'generic'` mints (under `sourceClassIri`'s own namespace, same as
+	 * ever) or reuses an owner-class-independent property that carries **no** `rdfs:domain`/
+	 * `rdfs:range` at all — SHACL's `sh:property`/`sh:class` on each source class's own `NodeShape` is
+	 * the only per-class-pair type constraint. The reuse lookup (`findGenericObjectProperty`) now
+	 * checks *every* namespace by label, not just `sourceClassIri`'s own, so drawing a second generic
+	 * edge with the same name from a *different* source class — even one in a different namespace —
 	 * reuses the existing property IRI and only adds a new `sh:property` entry, without re-declaring
 	 * `owl:ObjectProperty`/`rdfs:label`. Drawing it again from the *same* source class to the *same*
 	 * target is still rejected as a duplicate, matching the existing `propertyExists` semantics; to
@@ -1451,7 +1744,7 @@ export class SparqlConnector {
 
 		if (options?.kind === 'generic') {
 			const shapeIri = await this.ensureNodeShape(sourceClassIri, namespaceBaseIri);
-			const existingIri = await this.findGenericObjectProperty(name, namespaceBaseIri);
+			const existingIri = await this.findGenericObjectProperty(name);
 
 			if (existingIri) {
 				const { targets: currentTargets } = await this.fetchGenericPropertyShapeDetails(
@@ -1552,11 +1845,15 @@ export class SparqlConnector {
 	 * automatically (Decision 8) — retargeting to a class in a different namespace does not move
 	 * the relation triple itself.
 	 *
-	 * `options.kind: 'generic'` (STORY-052) updates only this edge's `sh:property` blank node
-	 * (`sh:class` retarget + cardinality) — the shared `owl:ObjectProperty` declaration (`rdfs:label`,
-	 * and its deliberate absence of `rdfs:domain`/`rdfs:range`) is untouched, since other source
-	 * classes' `NodeShape`s may still be relying on it unchanged. Renaming a generic relation's own
-	 * name is not supported through this path.
+	 * `options.kind: 'generic'` (STORY-052) updates this edge's `sh:property` blank node (`sh:class`
+	 * retarget + cardinality) *and* the shared `owl:ObjectProperty`'s own `rdfs:label` — unlike
+	 * `sh:class`/cardinality (per-class-pair, only this edge's own blank node), a rename is a rename
+	 * of the *relation*, and the property IRI is the one thing every source class reusing this
+	 * generic relation shares; leaving the old `rdfs:label` in place after a rename left it as the
+	 * sole thing `findGenericObjectProperty`/`listGenericObjectProperties` (and the canvas edge label
+	 * itself, via `fetchGenericObjectPropertyEdges`) ever read, so a rename attempted through this
+	 * path used to silently not take anywhere a human could see it. `rdfs:domain`/`rdfs:range` stay
+	 * deliberately absent, unchanged from before.
 	 *
 	 * When this source class's property shape has more than one target (an `sh:or` union — the
 	 * same generic relation drawn to several targets from this one class), `options.kind: 'generic'`
@@ -1579,6 +1876,7 @@ export class SparqlConnector {
 		const shapeIri = nodeShapeIri(sourceClassIri, graphs.shapes);
 		const minCountInsert = update.required ? '?propShape sh:minCount 1 .' : '';
 		const maxCountInsert = !update.repeatable ? '?propShape sh:maxCount 1 .' : '';
+		const escapedName = this.escapeString(update.name);
 
 		if (options?.kind === 'generic') {
 			const details = await this.fetchGenericPropertyShapeDetails(shapeIri, propIri, graphs);
@@ -1592,7 +1890,7 @@ export class SparqlConnector {
 					shapeIri,
 					propIri,
 					newTargets,
-					details.name ?? update.name,
+					update.name,
 					update.required,
 					update.repeatable,
 					graphs
@@ -1601,6 +1899,10 @@ export class SparqlConnector {
 			}
 			await this.executeUpdate(`
 				${PREFIXES}
+				${withGraph(graphs.schema)}
+				DELETE { <${propIri}> rdfs:label ?oldLabel }
+				INSERT { <${propIri}> rdfs:label "${escapedName}" }
+				WHERE { OPTIONAL { <${propIri}> rdfs:label ?oldLabel } } ;
 				${withGraph(graphs.shapes)}
 				DELETE {
 					?propShape sh:class ?oldClass ;
@@ -1622,8 +1924,6 @@ export class SparqlConnector {
 			`);
 			return;
 		}
-
-		const escapedName = this.escapeString(update.name);
 
 		await this.executeUpdate(`
 			${PREFIXES}
@@ -1896,6 +2196,47 @@ export class SparqlConnector {
 		`);
 	}
 
+	// -- Configurable represents-predicate setting (Backstage-sync STORY-103) -------------------
+	// Mirrors the catalog-marker-class setting above exactly, except the configured value is an
+	// `owl:ObjectProperty` IRI a synced shadow individual's `represents` link is written with
+	// (STORY-105), not a class. Unlike that setting, this one is also read Go-side (the sync engine
+	// itself resolves it at sync time) — see `config.Config.RepresentsPredicateSettingIRI()`.
+
+	/** Returns the currently-configured `represents` predicate's IRI, or `null` if unset — `SELECT`
+	 *  against the single well-known `<APP_SETTINGS_IRI> <REPRESENTS_PREDICATE_SETTING_IRI> ?predIri`
+	 *  triple, always in the default namespace's own `/schema` graph. */
+	async fetchRepresentsPredicateIri(): Promise<string | null> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?predIri ${fromClause(graphs.schema)} WHERE {
+				<${APP_SETTINGS_IRI}> <${REPRESENTS_PREDICATE_SETTING_IRI}> ?predIri
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.predIri?.value ?? null;
+	}
+
+	/** Sets, replaces, or (passing `null`) clears the configured `represents` predicate — mirrors
+	 *  `setAuthoritativeEntityClassIri`'s DELETE/INSERT/WHERE-with-OPTIONAL shape exactly. Does
+	 *  **not** validate that `predicateIri` refers to an existing `owl:ObjectProperty` — existence is
+	 *  enforced by Story 104's picker, not by this write path. */
+	async setRepresentsPredicateIri(predicateIri: string | null): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		if (predicateIri === null) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${APP_SETTINGS_IRI}> <${REPRESENTS_PREDICATE_SETTING_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		this.assertSafeSparqlIri(predicateIri, 'represents predicate IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${APP_SETTINGS_IRI}> <${REPRESENTS_PREDICATE_SETTING_IRI}> ?old }
+			INSERT { <${APP_SETTINGS_IRI}> <${REPRESENTS_PREDICATE_SETTING_IRI}> <${predicateIri}> }
+			WHERE { OPTIONAL { <${APP_SETTINGS_IRI}> <${REPRESENTS_PREDICATE_SETTING_IRI}> ?old } }
+		`);
+	}
+
 	// -- backstageKind annotation (Backstage-mapping Story 003/005) -----------------------------
 
 	/** Idempotently ensures `<BACKSTAGE_KIND_PREDICATE_IRI> a owl:AnnotationProperty` exists,
@@ -1980,6 +2321,264 @@ export class SparqlConnector {
 		const { iri } = await this.insertClass(name, undefined, namespaceBaseIri);
 		await this.setBackstageKind(iri, kind, namespaceBaseIri);
 		return { iri };
+	}
+
+	// -- rse:namespace annotation (Backstage-sync STORY-099/100) --------------------------------
+	// A shadow concept class's own or inherited-from-`backstage:CoreConcept` Namespace, which the
+	// sync engine resolves at sync time (`resolveConceptNamespace`, Go-side). This block is the
+	// TS-side mirror of that same resolution walk, used only for `EntityForm`'s "currently effective"
+	// display — the Go side is the sole source of truth for what a real sync run actually does.
+
+	/** Sets, replaces, or (passing `null`) clears `classIriValue`'s own `rse:namespace` declaration —
+	 *  mirrors `setBackstageKind`'s DELETE/INSERT/WHERE-with-OPTIONAL shape, except the object is a
+	 *  namespace base IRI, not a string literal. Written into the class's own namespace's `/schema`
+	 *  graph (the caller-supplied `namespaceBaseIri`), matching `setBackstageKind`'s convention.
+	 *  Clearing falls back to whatever STORY-099's ancestry walk resolves next (typically
+	 *  `backstage:CoreConcept`'s own declaration). */
+	async updateClassNamespace(
+		classIriValue: string,
+		namespaceValue: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		if (namespaceValue === null) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${classIriValue}> <${NAMESPACE_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		this.assertSafeSparqlIri(namespaceValue, 'namespace base IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${classIriValue}> <${NAMESPACE_PREDICATE_IRI}> ?old }
+			INSERT { <${classIriValue}> <${NAMESPACE_PREDICATE_IRI}> <${namespaceValue}> }
+			WHERE { OPTIONAL { <${classIriValue}> <${NAMESPACE_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Cross-graph lookup of `subjectIri`'s own `rse:namespace` value, if any — an unrestricted
+	 *  `GRAPH ?g {...}` pattern (mirrors `findNamespaceOfClass`), since `resolveEffectiveClassNamespace`'s
+	 *  ancestry walk visits classes that may live in a different namespace than the one originally
+	 *  asked about. */
+	private async fetchOwnNamespaceCrossGraph(subjectIri: string): Promise<string | null> {
+		const results = await this.selectQuery(
+			`${PREFIXES} SELECT ?ns WHERE { GRAPH ?g { <${subjectIri}> <${NAMESPACE_PREDICATE_IRI}> ?ns } } LIMIT 1`
+		);
+		return results.results.bindings[0]?.ns?.value ?? null;
+	}
+
+	/** Cross-graph lookup of `subjectIri`'s direct `rdfs:subClassOf` superclasses (not transitive) —
+	 *  the single-step primitive `resolveEffectiveClassNamespace`'s breadth-first walk repeats. */
+	private async fetchDirectSuperclassesCrossGraph(subjectIri: string): Promise<string[]> {
+		const results = await this.selectQuery(
+			`${PREFIXES} SELECT ?super WHERE { GRAPH ?g { <${subjectIri}> rdfs:subClassOf ?super } }`
+		);
+		return results.results.bindings.map((b) => b.super.value);
+	}
+
+	/** Resolves `classIriValue`'s *effective* Namespace (STORY-099/100): its own `rse:namespace` if
+	 *  declared, else the nearest ancestor's (own is always checked before that node's own
+	 *  superclasses are fetched, so an override can never lose to an inherited value) — the exact
+	 *  same breadth-first, cycle-safe walk `Engine.resolveConceptNamespace` runs Go-side, so the
+	 *  form's "own vs inherited" indicator never disagrees with what an actual sync run would resolve.
+	 *  Returns `null` when neither `classIriValue` nor any ancestor declares one. */
+	async resolveEffectiveClassNamespace(
+		classIriValue: string
+	): Promise<{ baseIri: string; own: boolean } | null> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		const visited = new Set<string>();
+		const queue: string[] = [classIriValue];
+		while (queue.length > 0) {
+			const current = queue.shift()!;
+			if (visited.has(current)) continue;
+			visited.add(current);
+
+			const ns = await this.fetchOwnNamespaceCrossGraph(current);
+			if (ns !== null) {
+				return { baseIri: ns, own: current === classIriValue };
+			}
+
+			const supers = await this.fetchDirectSuperclassesCrossGraph(current);
+			for (const s of supers) {
+				if (!visited.has(s)) queue.push(s);
+			}
+		}
+		return null;
+	}
+
+	// -- Class-level attribute values (`REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`) ------------------
+	// An attribute an ancestor class marks "required for subclasses" stores its value directly on
+	// the *class* resource, in that class's own `/schema` graph — mirrors `updateClassNamespace`'s
+	// shape (a class-level annotation) rather than `setIndividualAttributeValue`'s (an ABox value
+	// in `/instances`), since this is deliberately never an instance-level value.
+
+	/** Sets (or, when `value` is `null`, clears) a class-level attribute value — DELETE-then-INSERT,
+	 *  mirroring `setIndividualAttributeValue`'s shape exactly but targeting the class's own
+	 *  `/schema` graph instead of `/instances`. */
+	async setClassAttributeValue(
+		classIriValue: string,
+		attributeIri: string,
+		datatype: XsdDatatype,
+		value: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const insertClause =
+			value === null
+				? ''
+				: `INSERT { <${classIriValue}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} }`;
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${classIriValue}> <${attributeIri}> ?old }
+			${insertClause}
+			WHERE { OPTIONAL { <${classIriValue}> <${attributeIri}> ?old } }
+		`);
+	}
+
+	/** Current class-level values of `attributeIris` on `classIriValue`, keyed by attribute IRI —
+	 *  mirrors `fetchIndividualAttributeValues` but single-valued only (a class-level "required for
+	 *  subclasses" attribute has no repeatable concept) and scoped to the class's own `/schema`
+	 *  graph instead of `/instances`. */
+	async fetchClassAttributeValues(
+		classIriValue: string,
+		attributeIris: string[],
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<Record<string, string>> {
+		this.assertSafeSparqlIri(classIriValue, 'class IRI');
+		for (const iri of attributeIris) this.assertSafeSparqlIri(iri, 'attribute IRI');
+		if (attributeIris.length === 0) return {};
+		const graphs = namespaceGraphs(namespaceBaseIri);
+
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?p ?value ${fromClause(graphs.schema)} WHERE {
+				<${classIriValue}> ?p ?value .
+				VALUES ?p { ${attributeIris.map((iri) => `<${iri}>`).join(' ')} }
+			}
+		`);
+
+		const out: Record<string, string> = {};
+		for (const b of results.results.bindings) out[b.p.value] = b.value.value;
+		return out;
+	}
+
+	// -- rse:sourceField annotation (Backstage-sync STORY-101/102) ------------------------------
+	// Maps an already-modeled `owl:DatatypeProperty` onto free-form mapping information (a field
+	// path, a JSON pointer, a query, ...) the sync engine (`Engine.resolveSourceFieldMapping`,
+	// Go-side) reads at sync time — source-agnostic: Backstage is the first ingestor to consult it,
+	// and interprets its own syntax; a future ingestor is free to interpret the same predicate's
+	// value however its own source data demands. TS-side authoring only — the Go side's own
+	// `sh:property`-attached "must already exist" check (STORY-101) is the sole source of truth for
+	// whether a mapping is actually honored on a given sync run.
+
+	/** Sets, replaces, or (passing `null`) clears `propIri`'s `rse:sourceField` mapping information —
+	 *  mirrors `updateClassNamespace`'s DELETE/INSERT/WHERE-with-OPTIONAL shape, except the object is
+	 *  a plain (possibly multi-line) string literal, not an IRI. Written into the property's own
+	 *  namespace's `/schema` graph (the caller-supplied `namespaceBaseIri`). */
+	async updateAttributeSourceField(
+		propIri: string,
+		sourceField: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const trimmed = sourceField?.trim();
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		// A single-quoted SPARQL string literal's grammar excludes raw newline/carriage-return bytes
+		// (STRING_LITERAL_QUOTE) — this field is a multi-line textarea, so those must be escaped as
+		// the two-character `\n`/`\r` sequences (valid ECHARs), not passed through verbatim.
+		const escapedPath = this.escapeString(trimmed).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old }
+			INSERT { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> "${escapedPath}" }
+			WHERE { OPTIONAL { <${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Returns `propIri`'s current `rse:sourceField` mapping, or `null` if unset. */
+	async fetchAttributeSourceField(
+		propIri: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<string | null> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?path ${fromClause(graphs.schema)} WHERE {
+				<${propIri}> <${SOURCE_FIELD_PREDICATE_IRI}> ?path
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.path?.value ?? null;
+	}
+
+	// -- rse:sourceRelation annotation (Backstage-sync STORY-106/107) --------------------------
+	// Maps an already-modeled `owl:ObjectProperty` onto free-form relation-type mapping information
+	// (an upstream relation `type` string, a query, a role name, ...) the sync engine reads at sync
+	// time (`Engine.resolveSourceRelationMapping`, Go-side) and interprets however its own ingestion
+	// source's relation graph demands. Not source-specific: Backstage is the first ingestor to read
+	// it (its own `relations[].type`, e.g. `ownedBy`/`partOf`/`dependsOn`), same neutrality as
+	// `rse:sourceField` above. Distinct from `rse:sourceField` (a property-value mapping, not a
+	// relation-type mapping) and from `REPRESENTS_PREDICATE_SETTING_IRI` (a single
+	// settings-configured predicate, not a per-property mapping). TS-side authoring only — the Go
+	// side's own `sh:property`-attached "must already exist" check (STORY-106) is the sole source of
+	// truth for whether a mapping is actually honored on a given sync run.
+
+	/** Sets, replaces, or (passing `null`) clears `propIri`'s `rse:sourceRelation` mapping
+	 *  information — mirrors `updateAttributeSourceField`'s DELETE/INSERT/WHERE-with-OPTIONAL shape.
+	 *  Written into the property's own namespace's `/schema` graph (the caller-supplied
+	 *  `namespaceBaseIri`). */
+	async updateRelationSourceType(
+		propIri: string,
+		sourceType: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const trimmed = sourceType?.trim();
+		if (!trimmed) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		// A single-quoted SPARQL string literal's grammar excludes raw newline/carriage-return bytes
+		// (STRING_LITERAL_QUOTE) — mirrors `updateAttributeSourceField`'s own escaping, since a pasted
+		// value can still carry one even into a single-line input.
+		const escapedType = this.escapeString(trimmed).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old }
+			INSERT { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> "${escapedType}" }
+			WHERE { OPTIONAL { <${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Returns `propIri`'s current `rse:sourceRelation` mapping, or `null` if unset. */
+	async fetchRelationSourceType(
+		propIri: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<string | null> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?type ${fromClause(graphs.schema)} WHERE {
+				<${propIri}> <${SOURCE_RELATION_PREDICATE_IRI}> ?type
+			} LIMIT 1
+		`);
+		return results.results.bindings[0]?.type?.value ?? null;
 	}
 
 	/**
@@ -4294,18 +4893,43 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?path ?minCount ?maxCount ${fromClause(graphs.shapes)} WHERE {
+			SELECT ?path ?minCount ?maxCount ?requiredForSubclasses ${fromClause(graphs.shapes)} WHERE {
 				?shape a sh:NodeShape ; sh:property ?ps .
 				?ps sh:path ?path .
 				OPTIONAL { ?ps sh:minCount ?minCount }
 				OPTIONAL { ?ps sh:maxCount ?maxCount }
+				OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			path: b.path.value,
 			minCount: b.minCount ? parseInt(b.minCount.value, 10) : undefined,
-			maxCount: b.maxCount ? parseInt(b.maxCount.value, 10) : undefined
+			maxCount: b.maxCount ? parseInt(b.maxCount.value, 10) : undefined,
+			requiredForSubclasses: b.requiredForSubclasses?.value === 'true'
 		}));
+	}
+
+	/**
+	 * Class IRIs whose own `sh:NodeShape` constrains `sh:path rdfs:label` with `sh:minCount >= 1`
+	 * (STORY-112). `rdfs:label` is never declared `a owl:DatatypeProperty`, so this constraint is
+	 * invisible to `fetchAllShapesAndProperties`'s path-keyed join (joined back to a *datatype
+	 * property* by `sh:path`, which `rdfs:label` never is) — this query keeps the `sh:targetClass`
+	 * link instead, since `buildCanvasModel`'s ancestor walk needs to know *which* class(es) declare
+	 * it, not just that some shape somewhere does.
+	 */
+	async fetchLabelRequiredClasses(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<string[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?class ?minCount ${fromClause(graphs.shapes)} WHERE {
+				?shape a sh:NodeShape ; sh:targetClass ?class ; sh:property ?ps .
+				?ps sh:path rdfs:label .
+				OPTIONAL { ?ps sh:minCount ?minCount }
+			}
+		`);
+		return results.results.bindings
+			.filter((b) => b.minCount !== undefined && parseInt(b.minCount.value, 10) >= 1)
+			.map((b) => b.class.value);
 	}
 
 	async fetchAllSubClassOf(
@@ -4331,9 +4955,30 @@ export class SparqlConnector {
 	 * itself a declared local `owl:Class` — the `?type a owl:Class` join is what excludes classes
 	 * (typed `owl:Class`), properties (typed `owl:DatatypeProperty`/`owl:ObjectProperty`), and
 	 * shapes (typed `sh:NodeShape`) from this result, since none of those meta-types are themselves
-	 * asserted `a owl:Class` anywhere in this app's data. An individual's own `?i a ?type` triple
-	 * lives in the namespace's instance graph, but `?type a owl:Class` lives in its `/schema`
-	 * graph, so both are merged into this one query via two `FROM` clauses.
+	 * asserted `a owl:Class` anywhere in this app's data. An individual's own `?i a ?type` triple is
+	 * scoped to the namespace's own instance graph via an explicit `GRAPH <graphs.instances> {...}`
+	 * block, but `?type a owl:Class` is checked via an unrestricted `GRAPH ?classGraph {...}` across
+	 * every graph in the repository, not just this namespace's own `/schema` — the same
+	 * cross-namespace posture `fetchAllIndividualClassRelations` already uses (STORY-099's Concept
+	 * Namespace can mint an individual under a namespace different from the one that declares its
+	 * class, e.g. a hand-typed-identifier member or a Backstage-synced individual whose `represents`
+	 * target lives in `core`'s own namespace) — scoping the class check to only `graphs.schema` would
+	 * silently drop any such individual from this result even though its triples are all still present.
+	 *
+	 * Deliberately **no `FROM` clause anywhere in this query** — mixing `FROM <g>` with an unrestricted
+	 * `GRAPH ?var {...}` doesn't do what it looks like it does: per SPARQL 1.1 dataset semantics, any
+	 * `FROM` clause (with no matching `FROM NAMED`) collapses the query's *named*-graph set to empty,
+	 * so `GRAPH ?classGraph {...}` would then match nothing at all — silently, no error, just zero
+	 * rows. `fetchAllIndividualClassRelations`'s pattern (every triple pattern inside an explicit
+	 * `GRAPH <uri>`/`GRAPH ?var` block, never a bare pattern or a `FROM`) is the one that actually
+	 * works, relying on GraphDB's own default dataset (every graph is both default and named when the
+	 * query has no `FROM`/`FROM NAMED` at all) — this query now follows that same shape.
+	 *
+	 * `NOTE_CLASS_IRI`/`WORKSPACE_CLASS_IRI` are also self-declared `a owl:Class` (see
+	 * `ensureNoteClassDeclared`/`ensureWorkspaceClassDeclared`), so without excluding them here every
+	 * Note/Workspace individual would otherwise match this join too — surfacing in Instances view as
+	 * a duplicate `IndividualNodeSpec` alongside the `'note'`-typed canvas node
+	 * `applyNoteNodesAndEdges` already renders for the same IRI (Svelte's `each_key_duplicate`).
 	 */
 	async fetchAllIndividuals(
 		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
@@ -4341,13 +4986,16 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?i ?type ?label ?syncSource ?syncStatus ${fromClause(graphs.instances, graphs.schema)} WHERE {
-				?i a ?type .
-				?type a owl:Class .
+			SELECT ?i ?type ?label ?syncSource ?syncStatus WHERE {
+				GRAPH <${graphs.instances}> {
+					?i a ?type .
+					OPTIONAL { ?i rdfs:label ?label }
+					OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
+					OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
+				}
+				GRAPH ?classGraph { ?type a owl:Class }
+				FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
 				${VOCAB_FILTER('?i')}
-				OPTIONAL { ?i rdfs:label ?label }
-				OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
-				OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
@@ -4377,7 +5025,8 @@ export class SparqlConnector {
 			individuals,
 			genericObjectProperties,
 			individualClassRelations,
-			individualIndividualRelations
+			individualIndividualRelations,
+			labelRequiredClassIris
 		] = await Promise.all([
 			this.fetchAllClasses(namespaceBaseIri),
 			this.fetchAllDatatypeProperties(namespaceBaseIri),
@@ -4387,7 +5036,8 @@ export class SparqlConnector {
 			this.fetchAllIndividuals(namespaceBaseIri),
 			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
 			this.fetchAllIndividualClassRelations(namespaceBaseIri),
-			this.fetchAllIndividualIndividualRelations(namespaceBaseIri)
+			this.fetchAllIndividualIndividualRelations(namespaceBaseIri),
+			this.fetchLabelRequiredClasses(namespaceBaseIri)
 		]);
 
 		const constraintByPath = new Map(constraints.map((c) => [c.path, c]));
@@ -4397,7 +5047,8 @@ export class SparqlConnector {
 				return {
 					...p,
 					required: (constraint?.minCount ?? 0) >= 1,
-					repeatable: constraint?.maxCount === undefined
+					repeatable: constraint?.maxCount === undefined,
+					requiredForSubclasses: constraint?.requiredForSubclasses ?? false
 				};
 			});
 
@@ -4411,7 +5062,8 @@ export class SparqlConnector {
 			subClassOf,
 			individuals,
 			individualClassRelations,
-			individualIndividualRelations
+			individualIndividualRelations,
+			labelRequiredClassIris
 		};
 	}
 
@@ -4431,7 +5083,8 @@ export class SparqlConnector {
 			subClassOf: schemas.flatMap((s) => s.subClassOf),
 			individuals: schemas.flatMap((s) => s.individuals),
 			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
-			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations)
+			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
+			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? [])
 		};
 	}
 
@@ -5370,16 +6023,39 @@ export class SparqlConnector {
 	 * different source classes yields two rows here, each with its own cardinality straight from
 	 * that class's own `sh:property` blank node (not merged via the shared `constraintByPath` map in
 	 * `fetchFullSchema`, which is keyed by `sh:path` alone and would collide for a shared property).
+	 *
+	 * Requires `?p a owl:ObjectProperty` explicitly (matching `findGenericObjectProperty`/
+	 * `listGenericObjectProperties`'s own pattern) rather than inferring existence purely from a
+	 * surviving `sh:property`/`sh:path` reference: a property manually deleted from `/schema` (or
+	 * removed by some other path) while an `sh:property` blank node elsewhere still points at its IRI
+	 * would otherwise "ghost" back into `objectProperties` — surfacing in pickers like Settings'
+	 * "Represents predicate" with a fallback `extractLocalName` label, even though nothing declares
+	 * it as a property anymore.
+	 *
+	 * That existence check spans *every* registered namespace's own `/schema` graph, not just
+	 * `namespaceBaseIri`'s own — a generic relation's `owl:ObjectProperty` declaration lives under
+	 * whichever namespace first minted it (`insertObjectProperty`'s generic path, keyed off the
+	 * *first* source class it was drawn from), while `sh:property`/`sh:path` entries reusing it from
+	 * a source class in a *different* namespace live in that other namespace's own `/shapes` graph
+	 * (`findGenericObjectProperty`'s cross-namespace reuse, STORY-051/053's `spec/modelling-restrictions
+	 * /plan.md`). Scoping the `?p a owl:ObjectProperty` check to only `namespaceBaseIri`'s own
+	 * `/schema` graph would make every such cross-namespace reuse (e.g. `core:represents` drawn from a
+	 * `backstage:`-namespaced entity) invisible to this query — silently vanishing from the canvas
+	 * even though `insertObjectProperty` successfully wrote it (and a retry then reports it as an
+	 * already-existing duplicate).
 	 */
 	private async fetchGenericObjectPropertyEdges(
 		namespaceBaseIri: string
 	): Promise<FetchedObjectProperty[]> {
 		const graphs = namespaceGraphs(namespaceBaseIri);
+		const namespaces = await this.fetchNamespaces();
+		const allSchemaGraphs = namespaces.map((ns) => namespaceGraphs(ns.baseIri).schema);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?p ?label ?domain ?range ?minCount ?maxCount ${fromClause(graphs.schema, graphs.shapes)} WHERE {
+			SELECT ?p ?label ?domain ?range ?minCount ?maxCount ${fromClause(graphs.shapes, ...allSchemaGraphs)} WHERE {
 				?shape sh:targetClass ?domain ; sh:property ?ps .
 				?ps sh:path ?p .
+				?p a owl:ObjectProperty .
 				{ ?ps sh:class ?range }
 				UNION
 				{ ?ps sh:or/rdf:rest*/rdf:first/sh:class ?range }

@@ -1,5 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import { buildCanvasModel, isAuthoritativeEntity } from './canvas-model';
+import {
+	buildCanvasModel,
+	isAuthoritativeEntity,
+	mergeAncestorAttributes,
+	mergeAncestorRelations,
+	isLabelRequiredForClass,
+	directSuperclassRequiredAttributes
+} from './canvas-model';
 import type {
 	FetchedSchema,
 	FetchedClass,
@@ -148,6 +155,91 @@ describe('buildCanvasModel', () => {
 				namespace: NS
 			}
 		]);
+	});
+
+	it('attaches a relationFields entry for an object property, resolving the target class name (STORY-114)', () => {
+		const application = classIri('Application');
+		const businessProcess = classIri('BusinessProcess');
+		const schema = emptySchema({
+			classes: [fetchedClass(application, 'Application'), fetchedClass(businessProcess, 'BusinessProcess')],
+			objectProperties: [objectProp(application, businessProcess, 'supports', { required: false, repeatable: true })]
+		});
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.iri === application);
+		expect(node?.kind).toBe('entity');
+		if (node?.kind === 'entity') {
+			expect(node.relationFields).toEqual([
+				{
+					iri: propertyIri(application, 'supports'),
+					name: 'supports',
+					targetClassIri: businessProcess,
+					targetClassName: 'BusinessProcess',
+					required: false,
+					repeatable: true
+				}
+			]);
+		}
+	});
+
+	it('excludes an object property whose domain is an association class from relationFields (STORY-114)', () => {
+		const assoc = classIri('EmploymentAssignment');
+		const person = classIri('Person');
+		const company = classIri('Company');
+		const schema = emptySchema({
+			classes: [fetchedClass(assoc, 'EmploymentAssignment'), fetchedClass(person, 'Person'), fetchedClass(company, 'Company')],
+			objectProperties: [
+				objectProp(assoc, person, 'employee', { required: true, repeatable: false }),
+				objectProp(assoc, company, 'employer', { required: true, repeatable: false })
+			],
+			subClassOf: [subClassOf(assoc, ATTRIBUTED_RELATIONSHIP_IRI)]
+		});
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.iri === assoc);
+		expect(node?.kind).toBe('entity');
+		if (node?.kind === 'entity') expect(node.relationFields).toEqual([]);
+	});
+
+	it('dedupes a generic relation reused from the same domain against two range classes into one relationField (STORY-114 regression)', () => {
+		const application = classIri('Application');
+		const businessProcess = classIri('BusinessProcess');
+		const otherTarget = classIri('OtherTarget');
+		const supportsIri = `${NS}supports`;
+		const schema = emptySchema({
+			classes: [
+				fetchedClass(application, 'Application'),
+				fetchedClass(businessProcess, 'BusinessProcess'),
+				fetchedClass(otherTarget, 'OtherTarget')
+			],
+			objectProperties: [
+				{
+					iri: supportsIri,
+					label: 'supports',
+					domain: application,
+					range: businessProcess,
+					required: false,
+					repeatable: true,
+					namespaceBaseIri: NS,
+					relationKind: 'generic'
+				},
+				{
+					iri: supportsIri,
+					label: 'supports',
+					domain: application,
+					range: otherTarget,
+					required: false,
+					repeatable: true,
+					namespaceBaseIri: NS,
+					relationKind: 'generic'
+				}
+			]
+		});
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.iri === application);
+		expect(node?.kind).toBe('entity');
+		if (node?.kind === 'entity') {
+			expect(node.relationFields).toHaveLength(1);
+			expect(node.relationFields[0].iri).toBe(supportsIri);
+		}
 	});
 
 	it('renders a relation edge for a generic relation reconstructed from the shapes graph (STORY-054), tagged relationKind: generic', () => {
@@ -321,6 +413,126 @@ describe('buildCanvasModel', () => {
 		expect(model.nodes.filter((n) => n.kind === 'external')).toHaveLength(2);
 	});
 
+	describe('inherited attributes (STORY-108)', () => {
+		it('merges an ancestor\'s own attributes into a subclass, tagged with inheritedFrom', () => {
+			const person = classIri('Person');
+			const employee = classIri('Employee');
+			const schema = emptySchema({
+				classes: [fetchedClass(person, 'Person'), fetchedClass(employee, 'Employee')],
+				subClassOf: [subClassOf(employee, person)],
+				datatypeProperties: [
+					datatypeProp(person, 'birthDate', 'date'),
+					datatypeProp(employee, 'salary', 'decimal')
+				]
+			});
+			const model = buildCanvasModel(schema);
+			const employeeNode = model.nodes.find((n) => n.iri === employee);
+			expect(employeeNode?.kind).toBe('entity');
+			if (employeeNode?.kind !== 'entity') return;
+			expect(employeeNode.attributes).toEqual([
+				{ iri: propertyIri(employee, 'salary'), name: 'salary', datatype: 'decimal', required: false, repeatable: false },
+				{
+					iri: propertyIri(person, 'birthDate'),
+					name: 'birthDate',
+					datatype: 'date',
+					required: false,
+					repeatable: false,
+					inheritedFrom: { classIri: person, className: 'Person' }
+				}
+			]);
+
+			const personNode = model.nodes.find((n) => n.iri === person);
+			expect(personNode?.kind).toBe('entity');
+			if (personNode?.kind !== 'entity') return;
+			expect(personNode.attributes).toEqual([
+				{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date', required: false, repeatable: false }
+			]);
+		});
+
+		it('orders a three-level hierarchy\'s inherited attributes nearest-ancestor-first', () => {
+			const livingThing = classIri('LivingThing');
+			const person = classIri('Person');
+			const employee = classIri('Employee');
+			const schema = emptySchema({
+				classes: [
+					fetchedClass(livingThing, 'LivingThing'),
+					fetchedClass(person, 'Person'),
+					fetchedClass(employee, 'Employee')
+				],
+				subClassOf: [subClassOf(employee, person), subClassOf(person, livingThing)],
+				datatypeProperties: [
+					datatypeProp(livingThing, 'weight', 'decimal'),
+					datatypeProp(person, 'birthDate', 'date')
+				]
+			});
+			const model = buildCanvasModel(schema);
+			const employeeNode = model.nodes.find((n) => n.iri === employee);
+			expect(employeeNode?.kind).toBe('entity');
+			if (employeeNode?.kind !== 'entity') return;
+			expect(employeeNode.attributes.map((a) => a.inheritedFrom?.className)).toEqual(['Person', 'LivingThing']);
+		});
+
+		it('shadows an inherited attribute by name, not by sh:path IRI (propertyIri scopes IRIs per owning class, so they never actually match)', () => {
+			const person = classIri('Person');
+			const employee = classIri('Employee');
+			const schema = emptySchema({
+				classes: [fetchedClass(person, 'Person'), fetchedClass(employee, 'Employee')],
+				subClassOf: [subClassOf(employee, person)],
+				datatypeProperties: [
+					datatypeProp(person, 'birthDate', 'date', { required: false }),
+					// Employee redeclares "birthDate" with its own, differently-scoped IRI and different
+					// constraints — this must shadow Person's copy, not sit alongside it.
+					datatypeProp(employee, 'birthDate', 'dateTime', { required: true })
+				]
+			});
+			const model = buildCanvasModel(schema);
+			const employeeNode = model.nodes.find((n) => n.iri === employee);
+			expect(employeeNode?.kind).toBe('entity');
+			if (employeeNode?.kind !== 'entity') return;
+			expect(employeeNode.attributes).toEqual([
+				{
+					iri: propertyIri(employee, 'birthDate'),
+					name: 'birthDate',
+					datatype: 'dateTime',
+					required: true,
+					repeatable: false
+				}
+			]);
+		});
+
+		it('when two ancestors both declare the same attribute name, only the nearest one\'s copy is inherited', () => {
+			const livingThing = classIri('LivingThing');
+			const person = classIri('Person');
+			const employee = classIri('Employee');
+			const schema = emptySchema({
+				classes: [
+					fetchedClass(livingThing, 'LivingThing'),
+					fetchedClass(person, 'Person'),
+					fetchedClass(employee, 'Employee')
+				],
+				subClassOf: [subClassOf(employee, person), subClassOf(person, livingThing)],
+				datatypeProperties: [
+					datatypeProp(livingThing, 'name', 'string'),
+					datatypeProp(person, 'name', 'string')
+				]
+			});
+			const model = buildCanvasModel(schema);
+			const employeeNode = model.nodes.find((n) => n.iri === employee);
+			expect(employeeNode?.kind).toBe('entity');
+			if (employeeNode?.kind !== 'entity') return;
+			expect(employeeNode.attributes).toEqual([
+				{
+					iri: propertyIri(person, 'name'),
+					name: 'name',
+					datatype: 'string',
+					required: false,
+					repeatable: false,
+					inheritedFrom: { classIri: person, className: 'Person' }
+				}
+			]);
+		});
+	});
+
 	it('renders a class\'s enumerated individuals as its members list (STORY-019)', () => {
 		const relationType = classIri('RelationType');
 		const nutztIri = `${NS}relationTypeNutzt`;
@@ -439,6 +651,299 @@ describe('buildCanvasModel', () => {
 	});
 });
 
+describe('mergeAncestorAttributes (STORY-109 — extracted from buildCanvasModel, exercised directly)', () => {
+	it('returns only own attributes for a class with no ancestors', () => {
+		const person = classIri('Person');
+		const attributesByClass = new Map([
+			[
+				person,
+				[{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date' as XsdDatatype, required: false, repeatable: false }]
+			]
+		]);
+		const result = mergeAncestorAttributes(person, attributesByClass, [], new Map([[person, 'Person']]));
+		expect(result).toEqual([
+			{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date', required: false, repeatable: false }
+		]);
+	});
+
+	it('merges an ancestor\'s own attributes in, tagged with inheritedFrom', () => {
+		const person = classIri('Person');
+		const employee = classIri('Employee');
+		const attributesByClass = new Map([
+			[person, [{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date' as XsdDatatype, required: false, repeatable: false }]],
+			[employee, [{ iri: propertyIri(employee, 'salary'), name: 'salary', datatype: 'decimal' as XsdDatatype, required: false, repeatable: false }]]
+		]);
+		const classLabelByIri = new Map([[person, 'Person'], [employee, 'Employee']]);
+		const result = mergeAncestorAttributes(employee, attributesByClass, [subClassOf(employee, person)], classLabelByIri);
+		expect(result).toEqual([
+			{ iri: propertyIri(employee, 'salary'), name: 'salary', datatype: 'decimal', required: false, repeatable: false },
+			{
+				iri: propertyIri(person, 'birthDate'),
+				name: 'birthDate',
+				datatype: 'date',
+				required: false,
+				repeatable: false,
+				inheritedFrom: { classIri: person, className: 'Person' }
+			}
+		]);
+	});
+
+	it('orders a three-level hierarchy nearest-ancestor-first', () => {
+		const livingThing = classIri('LivingThing');
+		const person = classIri('Person');
+		const employee = classIri('Employee');
+		const attributesByClass = new Map([
+			[livingThing, [{ iri: propertyIri(livingThing, 'weight'), name: 'weight', datatype: 'decimal' as XsdDatatype, required: false, repeatable: false }]],
+			[person, [{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date' as XsdDatatype, required: false, repeatable: false }]]
+		]);
+		const classLabelByIri = new Map([[livingThing, 'LivingThing'], [person, 'Person'], [employee, 'Employee']]);
+		const result = mergeAncestorAttributes(
+			employee,
+			attributesByClass,
+			[subClassOf(employee, person), subClassOf(person, livingThing)],
+			classLabelByIri
+		);
+		expect(result.map((a) => a.inheritedFrom?.className)).toEqual(['Person', 'LivingThing']);
+	});
+
+	it('shadows by attribute name: a nearer declaration wins over a farther one', () => {
+		const livingThing = classIri('LivingThing');
+		const person = classIri('Person');
+		const employee = classIri('Employee');
+		const attributesByClass = new Map([
+			[livingThing, [{ iri: propertyIri(livingThing, 'name'), name: 'name', datatype: 'string' as XsdDatatype, required: false, repeatable: false }]],
+			[person, [{ iri: propertyIri(person, 'name'), name: 'name', datatype: 'string' as XsdDatatype, required: false, repeatable: false }]]
+		]);
+		const classLabelByIri = new Map([[livingThing, 'LivingThing'], [person, 'Person'], [employee, 'Employee']]);
+		const result = mergeAncestorAttributes(
+			employee,
+			attributesByClass,
+			[subClassOf(employee, person), subClassOf(person, livingThing)],
+			classLabelByIri
+		);
+		expect(result).toEqual([
+			{
+				iri: propertyIri(person, 'name'),
+				name: 'name',
+				datatype: 'string',
+				required: false,
+				repeatable: false,
+				inheritedFrom: { classIri: person, className: 'Person' }
+			}
+		]);
+	});
+
+	it('an own attribute shadows a same-named ancestor attribute', () => {
+		const person = classIri('Person');
+		const employee = classIri('Employee');
+		const attributesByClass = new Map([
+			[person, [{ iri: propertyIri(person, 'birthDate'), name: 'birthDate', datatype: 'date' as XsdDatatype, required: false, repeatable: false }]],
+			[employee, [{ iri: propertyIri(employee, 'birthDate'), name: 'birthDate', datatype: 'dateTime' as XsdDatatype, required: true, repeatable: false }]]
+		]);
+		const classLabelByIri = new Map([[person, 'Person'], [employee, 'Employee']]);
+		const result = mergeAncestorAttributes(employee, attributesByClass, [subClassOf(employee, person)], classLabelByIri);
+		expect(result).toEqual([
+			{ iri: propertyIri(employee, 'birthDate'), name: 'birthDate', datatype: 'dateTime', required: true, repeatable: false }
+		]);
+	});
+});
+
+describe('mergeAncestorRelations (STORY-114 — sibling of mergeAncestorAttributes)', () => {
+	it('returns only own relation fields for a class with no ancestors', () => {
+		const application = classIri('Application');
+		const businessProcess = classIri('BusinessProcess');
+		const relationsByClass = new Map([
+			[
+				application,
+				[
+					{
+						iri: propertyIri(application, 'supports'),
+						name: 'supports',
+						targetClassIri: businessProcess,
+						targetClassName: 'BusinessProcess',
+						required: false,
+						repeatable: true
+					}
+				]
+			]
+		]);
+		const result = mergeAncestorRelations(application, relationsByClass, [], new Map([[application, 'Application']]));
+		expect(result).toEqual([
+			{
+				iri: propertyIri(application, 'supports'),
+				name: 'supports',
+				targetClassIri: businessProcess,
+				targetClassName: 'BusinessProcess',
+				required: false,
+				repeatable: true
+			}
+		]);
+	});
+
+	it("merges an ancestor's own relation fields in, tagged with inheritedFrom", () => {
+		const coreEntity = classIri('CoreEntity');
+		const application = classIri('Application');
+		const businessProcess = classIri('BusinessProcess');
+		const relationsByClass = new Map([
+			[
+				coreEntity,
+				[
+					{
+						iri: propertyIri(coreEntity, 'ownedBy'),
+						name: 'ownedBy',
+						targetClassIri: classIri('Team'),
+						targetClassName: 'Team',
+						required: false,
+						repeatable: false
+					}
+				]
+			],
+			[
+				application,
+				[
+					{
+						iri: propertyIri(application, 'supports'),
+						name: 'supports',
+						targetClassIri: businessProcess,
+						targetClassName: 'BusinessProcess',
+						required: false,
+						repeatable: true
+					}
+				]
+			]
+		]);
+		const classLabelByIri = new Map([[coreEntity, 'CoreEntity'], [application, 'Application']]);
+		const result = mergeAncestorRelations(application, relationsByClass, [subClassOf(application, coreEntity)], classLabelByIri);
+		expect(result).toEqual([
+			{
+				iri: propertyIri(application, 'supports'),
+				name: 'supports',
+				targetClassIri: businessProcess,
+				targetClassName: 'BusinessProcess',
+				required: false,
+				repeatable: true
+			},
+			{
+				iri: propertyIri(coreEntity, 'ownedBy'),
+				name: 'ownedBy',
+				targetClassIri: classIri('Team'),
+				targetClassName: 'Team',
+				required: false,
+				repeatable: false,
+				inheritedFrom: { classIri: coreEntity, className: 'CoreEntity' }
+			}
+		]);
+	});
+
+	it('shadows by relation name: an own relation shadows a same-named ancestor relation', () => {
+		const coreEntity = classIri('CoreEntity');
+		const application = classIri('Application');
+		const relationsByClass = new Map([
+			[
+				coreEntity,
+				[
+					{
+						iri: propertyIri(coreEntity, 'ownedBy'),
+						name: 'ownedBy',
+						targetClassIri: classIri('Team'),
+						targetClassName: 'Team',
+						required: false,
+						repeatable: false
+					}
+				]
+			],
+			[
+				application,
+				[
+					{
+						iri: propertyIri(application, 'ownedBy'),
+						name: 'ownedBy',
+						targetClassIri: classIri('Person'),
+						targetClassName: 'Person',
+						required: true,
+						repeatable: false
+					}
+				]
+			]
+		]);
+		const classLabelByIri = new Map([[coreEntity, 'CoreEntity'], [application, 'Application']]);
+		const result = mergeAncestorRelations(application, relationsByClass, [subClassOf(application, coreEntity)], classLabelByIri);
+		expect(result).toEqual([
+			{
+				iri: propertyIri(application, 'ownedBy'),
+				name: 'ownedBy',
+				targetClassIri: classIri('Person'),
+				targetClassName: 'Person',
+				required: true,
+				repeatable: false
+			}
+		]);
+	});
+});
+
+describe('isLabelRequiredForClass (STORY-112)', () => {
+	it('returns true when the class itself is in labelRequiredClassIris', () => {
+		const person = classIri('Person');
+		expect(isLabelRequiredForClass(person, new Set([person]), [])).toBe(true);
+	});
+
+	it('returns true when an ancestor is in labelRequiredClassIris', () => {
+		const coreEntity = classIri('CoreEntity');
+		const application = classIri('Application');
+		expect(isLabelRequiredForClass(application, new Set([coreEntity]), [subClassOf(application, coreEntity)])).toBe(true);
+	});
+
+	it('returns true through a multi-level ancestor chain', () => {
+		const coreEntity = classIri('CoreEntity');
+		const app = classIri('Application');
+		const webApp = classIri('WebApplication');
+		const subClassOfEdges = [subClassOf(webApp, app), subClassOf(app, coreEntity)];
+		expect(isLabelRequiredForClass(webApp, new Set([coreEntity]), subClassOfEdges)).toBe(true);
+	});
+
+	it('returns false when neither the class nor any ancestor is shape-required', () => {
+		const person = classIri('Person');
+		const employee = classIri('Employee');
+		expect(isLabelRequiredForClass(employee, new Set(), [subClassOf(employee, person)])).toBe(false);
+	});
+});
+
+describe('buildCanvasModel — labelRequired (STORY-112)', () => {
+	it('marks an entity node labelRequired when its own class is in schema.labelRequiredClassIris', () => {
+		const coreEntity = classIri('CoreEntity');
+		const schema = emptySchema({
+			classes: [fetchedClass(coreEntity, 'CoreEntity')],
+			labelRequiredClassIris: [coreEntity]
+		});
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.kind === 'entity' && n.iri === coreEntity);
+		expect(node).toMatchObject({ labelRequired: true });
+		expect(model.labelRequiredClassIris.has(coreEntity)).toBe(true);
+	});
+
+	it('marks a subclass labelRequired when only its ancestor is in schema.labelRequiredClassIris', () => {
+		const coreEntity = classIri('CoreEntity');
+		const application = classIri('Application');
+		const schema = emptySchema({
+			classes: [fetchedClass(coreEntity, 'CoreEntity'), fetchedClass(application, 'Application')],
+			subClassOf: [subClassOf(application, coreEntity)],
+			labelRequiredClassIris: [coreEntity]
+		});
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.kind === 'entity' && n.iri === application);
+		expect(node).toMatchObject({ labelRequired: true });
+	});
+
+	it('leaves labelRequired false for a class with no shape constraint on rdfs:label', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({ classes: [fetchedClass(person, 'Person')] });
+		const model = buildCanvasModel(schema);
+		const node = model.nodes.find((n) => n.kind === 'entity' && n.iri === person);
+		expect(node).toMatchObject({ labelRequired: false });
+		expect(model.labelRequiredClassIris.size).toBe(0);
+	});
+});
+
 describe('isAuthoritativeEntity (data-catalog Story 003, Sprint 5 Story 014)', () => {
 	it('returns true when classIri is directly subClassOf the configured marker class', () => {
 		const person = classIri('Person');
@@ -458,6 +963,61 @@ describe('isAuthoritativeEntity (data-catalog Story 003, Sprint 5 Story 014)', (
 		const person = classIri('Person');
 		const marker = classIri('GovCatalogMarker');
 		expect(isAuthoritativeEntity(person, [subClassOf(person, marker)], null)).toBe(false);
+	});
+});
+
+describe('directSuperclassRequiredAttributes (generalized "required for subclasses" mechanism)', () => {
+	it('returns an attribute a direct superclass marks requiredForSubclasses', () => {
+		const coreConcept = classIri('CoreConcept');
+		const application = classIri('Application');
+		const bAttr = datatypeProp(coreConcept, 'bAttr', 'string', { requiredForSubclasses: true });
+		const classLabelByIri = new Map([[coreConcept, 'CoreConcept']]);
+
+		expect(
+			directSuperclassRequiredAttributes(application, [subClassOf(application, coreConcept)], [bAttr], classLabelByIri)
+		).toEqual([
+			{
+				iri: bAttr.iri,
+				name: 'bAttr',
+				datatype: 'string',
+				ownerClassIri: coreConcept,
+				ownerClassName: 'CoreConcept'
+			}
+		]);
+	});
+
+	it('excludes an attribute that is not marked requiredForSubclasses', () => {
+		const coreConcept = classIri('CoreConcept');
+		const application = classIri('Application');
+		const plain = datatypeProp(coreConcept, 'plainAttr', 'string');
+
+		expect(
+			directSuperclassRequiredAttributes(application, [subClassOf(application, coreConcept)], [plain], new Map())
+		).toEqual([]);
+	});
+
+	it('excludes an attribute declared on a non-direct (transitive) ancestor', () => {
+		const coreConcept = classIri('CoreConcept');
+		const api = classIri('Api');
+		const restApi = classIri('RestApi');
+		const bAttr = datatypeProp(coreConcept, 'bAttr', 'string', { requiredForSubclasses: true });
+		const subClassOfEdges = [subClassOf(restApi, api), subClassOf(api, coreConcept)];
+
+		expect(directSuperclassRequiredAttributes(restApi, subClassOfEdges, [bAttr], new Map())).toEqual([]);
+	});
+
+	it('falls back to the owner class IRI as the display name when no label is known', () => {
+		const coreConcept = classIri('CoreConcept');
+		const application = classIri('Application');
+		const bAttr = datatypeProp(coreConcept, 'bAttr', 'string', { requiredForSubclasses: true });
+
+		const result = directSuperclassRequiredAttributes(
+			application,
+			[subClassOf(application, coreConcept)],
+			[bAttr],
+			new Map()
+		);
+		expect(result[0].ownerClassName).toBe(coreConcept);
 	});
 });
 

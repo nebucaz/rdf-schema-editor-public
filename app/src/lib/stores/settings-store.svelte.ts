@@ -1,15 +1,19 @@
 /**
- * Shared app-settings value (Sprint 5 Story 015) — currently just the configured catalog marker
- * class IRI, mirroring `namespace-store.svelte.ts`'s shape exactly. Not `localStorage`-backed: the
- * setting lives in GraphDB (`sparqlConnector.fetchAuthoritativeEntityClassIri`/
- * `setAuthoritativeEntityClassIri`, Story 014), not the browser, so this is a `.svelte.ts` reactive
- * singleton fetched once and cached, the same "fetch-once-then-cache, refresh on mutation" shape
- * `namespaceStore`/`workspaceStore` already use.
+ * Shared app-settings values (Sprint 5 Story 015; Backstage-sync STORY-104) — the configured catalog
+ * marker class IRI and represents-predicate IRI, mirroring `namespace-store.svelte.ts`'s shape
+ * exactly. Not `localStorage`-backed: both settings live in GraphDB
+ * (`sparqlConnector.fetchAuthoritativeEntityClassIri`/`setAuthoritativeEntityClassIri`, Story 014;
+ * `fetchRepresentsPredicateIri`/`setRepresentsPredicateIri`, STORY-103), not the browser, so this is a
+ * `.svelte.ts` reactive singleton fetched once and cached, the same "fetch-once-then-cache, refresh on
+ * mutation" shape `namespaceStore`/`workspaceStore` already use.
  */
 import { sparqlConnector } from '$lib/services/sparql-connector';
 
 function createSettingsStore() {
 	let authoritativeEntityClassIri = $state<string | null>(null);
+	// representsPredicateIri (Backstage-sync STORY-104) — the configured `rse:representsPredicate`
+	// setting, loaded/cached the exact same fetch-once-then-cache way as authoritativeEntityClassIri.
+	let representsPredicateIri = $state<string | null>(null);
 	let loading = $state(false);
 	let initialized = false;
 	let pending: Promise<void> | null = null;
@@ -17,7 +21,10 @@ function createSettingsStore() {
 	async function refresh(): Promise<void> {
 		loading = true;
 		try {
-			authoritativeEntityClassIri = await sparqlConnector.fetchAuthoritativeEntityClassIri();
+			[authoritativeEntityClassIri, representsPredicateIri] = await Promise.all([
+				sparqlConnector.fetchAuthoritativeEntityClassIri(),
+				sparqlConnector.fetchRepresentsPredicateIri()
+			]);
 		} finally {
 			loading = false;
 		}
@@ -36,6 +43,9 @@ function createSettingsStore() {
 	return {
 		get authoritativeEntityClassIri() {
 			return authoritativeEntityClassIri;
+		},
+		get representsPredicateIri() {
+			return representsPredicateIri;
 		},
 		get loading() {
 			return loading;

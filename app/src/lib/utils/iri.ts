@@ -43,6 +43,17 @@ export const APP_SETTINGS_IRI = `${SCHEMA_NAMESPACE}AppSettings`;
 export const AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI = `${SCHEMA_NAMESPACE}authoritativeEntityClass`;
 
 /**
+ * `rse:representsPredicate` (STORY-103, `spec/backstage-sync/plan.md`): a second `APP_SETTINGS_IRI`
+ * setting, same shape as `AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI` — holds the user-configured
+ * `owl:ObjectProperty` IRI a synced shadow individual's `represents` link is written with (STORY-105),
+ * never a fixed/app-reserved predicate name. Unlike `AUTHORITATIVE_ENTITY_CLASS_SETTING_IRI` (a purely
+ * frontend concern), this setting is also read Go-side, by the sync engine itself at sync time — must
+ * match the Go side's `config.Config.RepresentsPredicateSettingIRI()` exactly, same shared-namespace-
+ * value convention as `NAMESPACE_PREDICATE_IRI`/`SOURCE_FIELD_PREDICATE_IRI` above.
+ */
+export const REPRESENTS_PREDICATE_SETTING_IRI = `${SCHEMA_NAMESPACE}representsPredicate`;
+
+/**
  * Annotation predicate declaring which Backstage `kind` a local class corresponds to (`spec/report/
  * plan.md`, Story 003) — `<classIri> rse:backstageKind "Component"`. Lives in the graph itself, not
  * a Go-side config file, so adding a mapping needs no redeploy (same self-describing-vocabulary
@@ -70,6 +81,59 @@ export const SYNC_SOURCE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}syncSource`;
  * side's `config.Config.SyncStatusPredicateIRI()`.
  */
 export const SYNC_STATUS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}syncStatus`;
+
+/**
+ * `rse:namespace` (STORY-099/100, `spec/backstage-sync/plan.md`): declared on a shadow concept class
+ * — `<classIri> rse:namespace <namespaceBaseIri>` — pointing at the `Namespace` base IRI its synced
+ * individuals mint under. Declared on `backstage:CoreConcept` itself, every subclass inherits the
+ * value via `rdfs:subClassOf*` unless it declares its own, which wins. Must match the Go side's
+ * `config.Config.NamespacePredicateIRI()` exactly, same shared-namespace-value convention as
+ * `SYNC_SOURCE_PREDICATE_IRI`/`SYNC_STATUS_PREDICATE_IRI` above.
+ */
+export const NAMESPACE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}namespace`;
+
+/**
+ * Marks an attribute's `sh:property` shape entry as required on *direct subclasses of the
+ * attribute's own owning class* (as a class-level value, `<subclass> <propIri> "value"`), instead
+ * of (or as well as) `sh:minCount`'s existing "required on instances" meaning — e.g. a class
+ * `CoreConcept` declaring `bAttr`, where every class directly `rdfs:subClassOf CoreConcept` must
+ * set its own `bAttr` value, but individuals of those subclasses never see `bAttr` as an instance
+ * field. General-purpose — unrelated to Backstage sync, unlike `NAMESPACE_PREDICATE_IRI` above,
+ * which this otherwise parallels (a class-level, `rdfs:subClassOf`-scoped value). Stored on the
+ * same `sh:property` blank node `sh:minCount`/`sh:maxCount` already live on, since neither OWL nor
+ * SHACL has a built-in way to express "required on subclasses, not on instances" — see
+ * `spec/backstage-sync` for that research. Direct (one-hop) only, mirroring the Catalog marker
+ * class's own `isAuthoritativeEntity` check — a deeper descendant inherits nothing from this flag.
+ */
+export const REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI = `${SCHEMA_NAMESPACE}requiredForSubclasses`;
+
+/**
+ * `rse:sourceField` (STORY-101/102, `spec/backstage-sync/plan.md`): declared on an already-existing
+ * `owl:DatatypeProperty` — `<propIri> rse:sourceField "spec.type"` — mapping it onto free-form
+ * mapping information (a field path, a JSON pointer, a query, ...) the sync engine reads at sync
+ * time (`Engine.resolveSourceFieldMapping`, Go-side) and interprets however its own ingestion
+ * source's data demands. Not source-specific: Backstage is the first ingestor to read it, but the
+ * predicate carries no assumption about which source (ServiceNow, AdoIT, Adonis, Oracle, a Postgres
+ * schema, ...) produced the field or what syntax its mapping information uses. Must match the Go
+ * side's `config.Config.SourceFieldPredicateIRI()` exactly, same shared-namespace-value convention
+ * as `NAMESPACE_PREDICATE_IRI` above.
+ */
+export const SOURCE_FIELD_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sourceField`;
+
+/**
+ * `rse:sourceRelation` (STORY-106/107, `spec/backstage-sync/plan.md`): declared on an already-existing
+ * `owl:ObjectProperty` — `<propIri> rse:sourceRelation "ownedBy"` — mapping it onto free-form
+ * relation-type mapping information (an upstream relation `type` string, a query, a role name, ...)
+ * the sync engine reads at sync time (`Engine.resolveSourceRelationMapping`, Go-side) and interprets
+ * however its own ingestion source's relation graph demands. Not source-specific: Backstage is the
+ * first ingestor to read it (its own `relations[].type`, e.g. `ownedBy`/`partOf`/`dependsOn`), but the
+ * predicate carries no assumption about which source produced the value or what syntax it uses — same
+ * neutrality as `SOURCE_FIELD_PREDICATE_IRI` above, which this mirrors. A distinct mechanism from
+ * `REPRESENTS_PREDICATE_SETTING_IRI` — this maps relation-type mapping information onto a *property*,
+ * never a per-entity annotation. Must match the Go side's `config.Config.SourceRelationPredicateIRI()`
+ * exactly, same shared-namespace-value convention as `SOURCE_FIELD_PREDICATE_IRI`.
+ */
+export const SOURCE_RELATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sourceRelation`;
 
 /**
  * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
@@ -343,6 +407,21 @@ export function individualIri(
 	const ownerLocal = extractLocalName(ownerClassIri);
 	const local = camelCase(ownerLocal) + capitalize(camelCase(label));
 	return `${namespaceBaseIri}#${local}`;
+}
+
+/**
+ * Allowed characters for a user-supplied instance identifier (STORY-113) — deliberately stricter
+ * than the general `assertSafeSparqlIri` IRIREF guard `sparql-connector.ts` applies elsewhere, since
+ * a hand-typed identifier has no automatic sanitization the way `individualIri()`'s
+ * `camelCase`/`capitalize` derivation does. Exported so `MemberForm` can run the identical check
+ * client-side before submit, not just server-side in `insertIndividual`. No leading-letter
+ * requirement: the identifier only ever becomes an IRI fragment (`<namespaceBaseIri>#<identifier>`),
+ * and RFC 3987 fragments may start with a digit — a leading letter was never a real IRI constraint.
+ */
+const IDENTIFIER_LOCAL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+
+export function isValidIdentifierLocalName(value: string): boolean {
+	return IDENTIFIER_LOCAL_NAME_PATTERN.test(value);
 }
 
 /**

@@ -7,6 +7,13 @@
 	interface GenericRelationOption {
 		iri: string;
 		label: string;
+		/** `[prefix] label` — the option's owning-namespace-prefixed display text, shown as the
+		 *  datalist suggestion's hint so relations from other namespaces (e.g. `core:represents`,
+		 *  offered while drawing from a `backstage:`-namespaced entity) are distinguishable from one
+		 *  another before picking. Selecting a suggestion still fills the input with the plain
+		 *  `label` (not this prefixed form) — reuse is resolved by label alone, across every
+		 *  namespace, so the plain label is what actually needs to reach `onSubmit`. */
+		displayLabel: string;
 	}
 
 	type RelationKind = 'specific' | 'generic';
@@ -22,9 +29,9 @@
 		/** STORY-053: offer the specific/generic choice at all — false for attributed-relationship
 		 *  links, which always stay specific `owl:ObjectProperty`s per association-class link. */
 		allowGeneric?: boolean;
-		/** Existing generic relations in the current namespace, for the "reuse an existing one"
-		 *  autocomplete (STORY-051's `listGenericObjectProperties`). Ignored when `allowGeneric` is
-		 *  false. */
+		/** Existing generic relations across every namespace, for the "reuse an existing one"
+		 *  autocomplete (STORY-051's `listGenericObjectProperties`, widened cross-namespace). Ignored
+		 *  when `allowGeneric` is false. */
 		genericRelationOptions?: GenericRelationOption[];
 		/** The relation's current kind when editing — fixed (not user-editable) once created, since
 		 *  switching kinds isn't supported. Defaults to 'specific' when creating. */
@@ -36,12 +43,22 @@
 		 *  (`false`/`false`) when hidden — callers that don't use them for that relation kind simply
 		 *  ignore the values. */
 		showConstraints?: boolean;
+		/** Shows the relation-mapping-information field (STORY-107) — opt-in and independent of
+		 *  `showConstraints`, since only the plain class→class "Relation" flow (not the
+		 *  attributed-link/association-class flow, which also has `showConstraints` true) currently
+		 *  wires its save handler to actually persist `rse:sourceRelation`. Defaults to false so a
+		 *  caller that doesn't pass it never renders a field its own onSubmit silently drops. */
+		allowSourceRelation?: boolean;
+		/** The relation's current `rse:sourceRelation` mapping information (STORY-107), empty when
+		 *  unset. Ignored when `allowSourceRelation` is false. */
+		initialSourceRelation?: string;
 		onSubmit: (
 			name: string,
 			targetIri: string,
 			required: boolean,
 			repeatable: boolean,
-			kind: RelationKind
+			kind: RelationKind,
+			sourceRelation: string
 		) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -58,6 +75,8 @@
 		genericRelationOptions = [],
 		initialKind = 'specific',
 		showConstraints = true,
+		allowSourceRelation = false,
+		initialSourceRelation = '',
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -66,6 +85,7 @@
 	let selectedTarget = $state(targetIri);
 	let required = $state(initialRequired);
 	let repeatable = $state(initialRepeatable);
+	let sourceRelation = $state(initialSourceRelation);
 	let kind = $state<RelationKind>(initialKind);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
@@ -86,7 +106,7 @@
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(name.trim(), selectedTarget, required, repeatable, kind);
+			await onSubmit(name.trim(), selectedTarget, required, repeatable, kind, sourceRelation.trim());
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -129,7 +149,7 @@
 		{#if kind === 'generic'}
 			<datalist id="generic-relation-names">
 				{#each genericRelationOptions as option (option.iri)}
-					<option value={option.label}></option>
+					<option value={option.label} label={option.displayLabel}></option>
 				{/each}
 			</datalist>
 		{/if}
@@ -154,6 +174,17 @@
 		<label class="checkbox">
 			<input type="checkbox" bind:checked={repeatable} />
 			Repeatable (allows multiple values)
+		</label>
+	{/if}
+	{#if allowSourceRelation}
+		<label>
+			Mapping information
+			<input type="text" bind:value={sourceRelation} placeholder="e.g. ownedBy" />
+			<span class="hint">
+				Tells the ingestion source configured for this class which of its own relation types this
+				property represents. The exact value — a relation-type string, a role name, or something
+				else — is up to that source to interpret. Leave empty to leave this relation unmapped.
+			</span>
 		</label>
 	{/if}
 	{#if error}

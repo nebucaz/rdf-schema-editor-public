@@ -42,12 +42,18 @@ func main() {
 	sourceRegistry.Register(backstageSource)
 
 	syncEngine := sync.NewEngine(gdbClient, sync.Vocabulary{
-		DefaultNamespaceBaseIRI:   cfg.DefaultNamespaceBaseIRI(),
-		BackstageKindPredicateIRI: cfg.BackstageKindPredicateIRI(),
-		SyncSourcePredicateIRI:    cfg.SyncSourcePredicateIRI(),
-		SyncStatusPredicateIRI:    cfg.SyncStatusPredicateIRI(),
-		NamespaceClassIRI:         cfg.NamespaceClassIRI(),
-		NamespacePrefixIRI:        cfg.NamespacePrefixPredicateIRI(),
+		DefaultNamespaceBaseIRI:       cfg.DefaultNamespaceBaseIRI(),
+		BackstageKindPredicateIRI:     cfg.BackstageKindPredicateIRI(),
+		SyncSourcePredicateIRI:        cfg.SyncSourcePredicateIRI(),
+		SyncStatusPredicateIRI:        cfg.SyncStatusPredicateIRI(),
+		NamespaceClassIRI:             cfg.NamespaceClassIRI(),
+		NamespacePrefixIRI:            cfg.NamespacePrefixPredicateIRI(),
+		NamespacePredicateIRI:         cfg.NamespacePredicateIRI(),
+		SourceFieldPredicateIRI:       cfg.SourceFieldPredicateIRI(),
+		AppSettingsIRI:                cfg.AppSettingsIRI(),
+		RepresentsPredicateSettingIRI: cfg.RepresentsPredicateSettingIRI(),
+		SourceRelationPredicateIRI:    cfg.SourceRelationPredicateIRI(),
+		SyncSourceRefPredicateIRI:     cfg.SyncSourceRefPredicateIRI(),
 	})
 	sourceHandler := handler.NewSourceHandler(sourceRegistry, gdbClient, cfg.BackstageKindPredicateIRI(), syncEngine)
 

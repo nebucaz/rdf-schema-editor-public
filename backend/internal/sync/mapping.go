@@ -37,3 +37,27 @@ func FetchKindMapping(ctx context.Context, gdb *graphdb.Client, backstageKindPre
 	}
 	return mapping, nil
 }
+
+// FetchRepresentsPredicateIri resolves the configured `rse:representsPredicate` setting (STORY-103)
+// — `SELECT ?p WHERE { GRAPH ?g { <appSettingsIRI> <representsPredicateSettingIRI> ?p } } LIMIT 1`,
+// mirroring FetchKindMapping's "one SELECT, absence is not an error" shape. Returns "" (not an
+// error) when the setting is unset — `Engine.RunSync` reads this once per run to decide whether to
+// attempt the `represents` mechanism at all this run (STORY-105).
+func FetchRepresentsPredicateIri(ctx context.Context, gdb *graphdb.Client, appSettingsIRI, representsPredicateSettingIRI string) (string, error) {
+	query := fmt.Sprintf(
+		`SELECT ?p WHERE { GRAPH ?g { <%s> <%s> ?p } } LIMIT 1`,
+		appSettingsIRI, representsPredicateSettingIRI,
+	)
+	result, err := gdb.Select(ctx, query)
+	if err != nil {
+		return "", fmt.Errorf("fetch representsPredicate setting: %w", err)
+	}
+	if len(result.Results.Bindings) == 0 {
+		return "", nil
+	}
+	p, ok := result.Results.Bindings[0]["p"]
+	if !ok {
+		return "", nil
+	}
+	return p.Value, nil
+}

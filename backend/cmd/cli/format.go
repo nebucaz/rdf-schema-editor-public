@@ -57,8 +57,24 @@ func printSync(w io.Writer, source string, resp syncResponse) {
 
 	if len(skippedKinds) == 0 {
 		fmt.Fprintf(w, "%d kinds mapped, 0 kinds unmapped\n", len(mappedKinds))
-		return
+	} else {
+		fmt.Fprintf(w, "%d kinds mapped, %d kind(s) unmapped: %s\n", len(mappedKinds), len(skippedKinds), strings.Join(skippedKinds, ", "))
+		fmt.Fprintf(w, "Run 'importctl discover %s' for details on unmapped kinds.\n", source)
 	}
-	fmt.Fprintf(w, "%d kinds mapped, %d kind(s) unmapped: %s\n", len(mappedKinds), len(skippedKinds), strings.Join(skippedKinds, ", "))
-	fmt.Fprintf(w, "Run 'importctl discover %s' for details on unmapped kinds.\n", source)
+
+	fmt.Fprintln(w)
+	fmt.Fprintf(w, "Represents links: %d written, %d failed\n", resp.RepresentsSynced, len(resp.RepresentsFailures))
+	for _, f := range resp.RepresentsFailures {
+		fmt.Fprintf(w, "  - %s\n", f)
+	}
+	fmt.Fprintf(w, "Relation edges: %d written, %d skipped\n", resp.RelationsSynced, len(resp.SkippedRelations))
+	for _, s := range resp.SkippedRelations {
+		fmt.Fprintf(w, "  - %s\n", s)
+	}
+	if len(resp.MappingFailures) > 0 {
+		fmt.Fprintf(w, "Field-mapping failures: %d\n", len(resp.MappingFailures))
+		for _, f := range resp.MappingFailures {
+			fmt.Fprintf(w, "  - %s\n", f)
+		}
+	}
 }

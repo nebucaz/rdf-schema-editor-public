@@ -121,7 +121,16 @@ func (s *Store) handle(w http.ResponseWriter, r *http.Request) {
 
 var askPattern = regexp.MustCompile(`^ASK \{ GRAPH <([^>]+)> \{ <([^>]+)> <([^>]+)> (?:<([^>]+)>|"([^"]*)") \} \}$`)
 
+// askCrossGraphPattern (STORY-105) matches `askCrossGraphTripleExistsIRI`'s unrestricted-graph ASK
+// shape — used to check a `represents` annotation target's `rdf:type` without knowing in advance
+// which namespace/graph that (possibly hand-authored, possibly external) individual lives in.
+var askCrossGraphPattern = regexp.MustCompile(`^ASK \{ GRAPH \?g \{ <([^>]+)> <([^>]+)> <([^>]+)> \} \}$`)
+
 func (s *Store) evalAsk(query string) (bool, error) {
+	if m := askCrossGraphPattern.FindStringSubmatch(query); m != nil {
+		subject, predicate, object := m[1], m[2], m[3]
+		return s.hasAnyGraph(subject, predicate, object, true), nil
+	}
 	m := askPattern.FindStringSubmatch(query)
 	if m == nil {
 		return false, fmt.Errorf("graphdbtest: unrecognized ASK query: %s", query)
@@ -133,10 +142,46 @@ func (s *Store) evalAsk(query string) (bool, error) {
 	return s.Has(graph, subject, predicate, unescape(m[5]), false), nil
 }
 
+// hasAnyGraph reports whether a (subject, predicate, object) triple exists in *any* graph — the
+// cross-graph counterpart of Has, used by askCrossGraphPattern's evaluation.
+func (s *Store) hasAnyGraph(subject, predicate, object string, objectIsIRI bool) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.triples {
+		if t.S == subject && t.P == predicate && t.O == object && t.ObjectIsIRI == objectIsIRI {
+			return true
+		}
+	}
+	return false
+}
+
 var (
-	kindMappingPattern    = regexp.MustCompile(`^SELECT \?class \?kind WHERE \{ GRAPH \?g \{ \?class <([^>]+)> \?kind \} \}$`)
-	existingSyncedPattern = regexp.MustCompile(`^SELECT \?i WHERE \{ GRAPH <([^>]+)> \{ \?i <([^>]+)> <([^>]+)> ; <([^>]+)> "([^"]*)" \} \}$`)
-	isMasterForPattern    = regexp.MustCompile(`^SELECT \?p WHERE \{ GRAPH \?g \{ \?p <([^>]+)> <([^>]+)> ; <([^>]+)> "([^"]*)" \} \} LIMIT 1$`)
+	kindMappingPattern      = regexp.MustCompile(`^SELECT \?class \?kind WHERE \{ GRAPH \?g \{ \?class <([^>]+)> \?kind \} \}$`)
+	existingSyncedPattern   = regexp.MustCompile(`^SELECT \?i WHERE \{ GRAPH <([^>]+)> \{ \?i <([^>]+)> <([^>]+)> ; <([^>]+)> "([^"]*)" \} \}$`)
+	isMasterForPattern      = regexp.MustCompile(`^SELECT \?p WHERE \{ GRAPH \?g \{ \?p <([^>]+)> <([^>]+)> ; <([^>]+)> "([^"]*)" \} \} LIMIT 1$`)
+	crossGraphObjectPattern = regexp.MustCompile(`^SELECT \?o WHERE \{ GRAPH \?g \{ <([^>]+)> <([^>]+)> \?o \} \}$`)
+	// sourceFieldPredicatesPattern (STORY-101) mirrors kindMappingPattern's own unrestricted-scan
+	// shape, generalized to `?prop`/`?path` variable names for `Engine.resolveSourceFieldMapping`'s
+	// first query.
+	sourceFieldPredicatesPattern = regexp.MustCompile(`^SELECT \?prop \?path WHERE \{ GRAPH \?g \{ \?prop <([^>]+)> \?path \} \}$`)
+	// propertyShapeConstraintPattern (STORY-101/105) matches `Engine.fetchPropertyShapeConstraint`'s
+	// query: is propIRI (5th capture) `sh:property`'d (3rd capture predicate) onto a shape whose
+	// `sh:targetClass` (1st capture predicate) is classIRI (2nd capture), via a blank node whose
+	// `sh:path` (4th capture predicate) is propIRI — with an OPTIONAL `sh:maxCount` (6th capture
+	// predicate) and (STORY-105) an OPTIONAL `sh:class` (7th capture predicate).
+	propertyShapeConstraintPattern = regexp.MustCompile(`^SELECT \?maxCount \?class WHERE \{ GRAPH \?g \{ \?shape <([^>]+)> <([^>]+)> ; <([^>]+)> \?propShape \. \?propShape <([^>]+)> <([^>]+)> \. OPTIONAL \{ \?propShape <([^>]+)> \?maxCount \} OPTIONAL \{ \?propShape <([^>]+)> \?class \} \} \} LIMIT 1$`)
+	// representsPredicateSettingPattern (STORY-103) matches `FetchRepresentsPredicateIri`'s query: a
+	// fixed-subject, fixed-predicate lookup of the single `<APP_SETTINGS_IRI> <REPRESENTS_PREDICATE_
+	// SETTING_IRI> ?p` triple, returning at most one binding.
+	representsPredicateSettingPattern = regexp.MustCompile(`^SELECT \?p WHERE \{ GRAPH \?g \{ <([^>]+)> <([^>]+)> \?p \} \} LIMIT 1$`)
+	// sourceRelationPredicatesPattern (STORY-106) mirrors sourceFieldPredicatesPattern's own
+	// unrestricted-scan shape, generalized to `?prop`/`?type` variable names for
+	// `Engine.resolveSourceRelationMapping`'s first query.
+	sourceRelationPredicatesPattern = regexp.MustCompile(`^SELECT \?prop \?type WHERE \{ GRAPH \?g \{ \?prop <([^>]+)> \?type \} \}$`)
+	// syncSourceRefPattern (STORY-106) matches `Engine.resolveSyncSourceRefTarget`'s query: an
+	// unrestricted-graph search for whichever individual carries a fixed predicate/literal-object
+	// pair (the `rse:syncSourceRef` marker), returning at most one binding.
+	syncSourceRefPattern = regexp.MustCompile(`^SELECT \?i WHERE \{ GRAPH \?g \{ \?i <([^>]+)> "([^"]*)" \} \} LIMIT 1$`)
 )
 
 func (s *Store) evalSelect(query string) (string, error) {
@@ -183,6 +228,115 @@ func (s *Store) evalSelect(query string) (string, error) {
 				if s.hasLocked(t.Graph, t.S, labelPred, labelVal, false) {
 					return wrapBindings([]string{fmt.Sprintf(`{"p":{"type":"uri","value":%q}}`, t.S)}), nil
 				}
+			}
+		}
+		return wrapBindings(nil), nil
+
+	case crossGraphObjectPattern.MatchString(query):
+		// STORY-099: the shape `Engine.resolveConceptNamespace`'s ancestry walk emits — an
+		// unrestricted cross-graph lookup of every object of one (subject, predicate) pair, used both
+		// for a class's own `rse:namespace` (0 or 1 result expected) and its direct
+		// `rdfs:subClassOf` superclasses (0+ results).
+		m := crossGraphObjectPattern.FindStringSubmatch(query)
+		subject, predicate := m[1], m[2]
+		var rows []string
+		for _, t := range s.triples {
+			if t.S != subject || t.P != predicate {
+				continue
+			}
+			if t.ObjectIsIRI {
+				rows = append(rows, fmt.Sprintf(`{"o":{"type":"uri","value":%q}}`, t.O))
+			} else {
+				rows = append(rows, fmt.Sprintf(`{"o":{"type":"literal","value":%q}}`, unescape(t.O)))
+			}
+		}
+		return wrapBindings(rows), nil
+
+	case sourceFieldPredicatesPattern.MatchString(query):
+		m := sourceFieldPredicatesPattern.FindStringSubmatch(query)
+		predicate := m[1]
+		var rows []string
+		for _, t := range s.triples {
+			if t.P == predicate && !t.ObjectIsIRI {
+				rows = append(rows, fmt.Sprintf(
+					`{"prop":{"type":"uri","value":%q},"path":{"type":"literal","value":%q}}`,
+					t.S, unescape(t.O),
+				))
+			}
+		}
+		return wrapBindings(rows), nil
+
+	case propertyShapeConstraintPattern.MatchString(query):
+		m := propertyShapeConstraintPattern.FindStringSubmatch(query)
+		targetClassPred, classIRI, propertyPred, pathPred, propIRI, maxCountPred, shClassPred := m[1], m[2], m[3], m[4], m[5], m[6], m[7]
+
+		shapes := map[string]bool{}
+		for _, t := range s.triples {
+			if t.P == targetClassPred && t.ObjectIsIRI && t.O == classIRI {
+				shapes[t.S] = true
+			}
+		}
+		for _, t := range s.triples {
+			if !shapes[t.S] || t.P != propertyPred || !t.ObjectIsIRI {
+				continue
+			}
+			propShape := t.O
+			hasPath := false
+			for _, pt := range s.triples {
+				if pt.S == propShape && pt.P == pathPred && pt.ObjectIsIRI && pt.O == propIRI {
+					hasPath = true
+					break
+				}
+			}
+			if !hasPath {
+				continue
+			}
+			var fields []string
+			for _, mt := range s.triples {
+				if mt.S != propShape {
+					continue
+				}
+				if mt.P == maxCountPred {
+					fields = append(fields, fmt.Sprintf(`"maxCount":{"type":"literal","value":%q}`, mt.O))
+				}
+				if mt.P == shClassPred && mt.ObjectIsIRI {
+					fields = append(fields, fmt.Sprintf(`"class":{"type":"uri","value":%q}`, mt.O))
+				}
+			}
+			return wrapBindings([]string{fmt.Sprintf(`{%s}`, strings.Join(fields, ","))}), nil
+		}
+		return wrapBindings(nil), nil
+
+	case representsPredicateSettingPattern.MatchString(query):
+		m := representsPredicateSettingPattern.FindStringSubmatch(query)
+		subject, predicate := m[1], m[2]
+		for _, t := range s.triples {
+			if t.S == subject && t.P == predicate && t.ObjectIsIRI {
+				return wrapBindings([]string{fmt.Sprintf(`{"p":{"type":"uri","value":%q}}`, t.O)}), nil
+			}
+		}
+		return wrapBindings(nil), nil
+
+	case sourceRelationPredicatesPattern.MatchString(query):
+		m := sourceRelationPredicatesPattern.FindStringSubmatch(query)
+		predicate := m[1]
+		var rows []string
+		for _, t := range s.triples {
+			if t.P == predicate && !t.ObjectIsIRI {
+				rows = append(rows, fmt.Sprintf(
+					`{"prop":{"type":"uri","value":%q},"type":{"type":"literal","value":%q}}`,
+					t.S, unescape(t.O),
+				))
+			}
+		}
+		return wrapBindings(rows), nil
+
+	case syncSourceRefPattern.MatchString(query):
+		m := syncSourceRefPattern.FindStringSubmatch(query)
+		predicate, literal := m[1], unescape(m[2])
+		for _, t := range s.triples {
+			if t.P == predicate && !t.ObjectIsIRI && t.O == literal {
+				return wrapBindings([]string{fmt.Sprintf(`{"i":{"type":"uri","value":%q}}`, t.S)}), nil
 			}
 		}
 		return wrapBindings(nil), nil

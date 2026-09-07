@@ -6,12 +6,21 @@
 		initialDatatype?: XsdDatatype;
 		initialRequired?: boolean;
 		initialRepeatable?: boolean;
+		/** Whether this attribute is required as a class-level value on direct subclasses of its
+		 *  owning class, independent of `initialRequired`'s instance-level meaning — see
+		 *  `REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI` in `utils/iri.ts`. */
+		initialRequiredForSubclasses?: boolean;
+		/** The property's current `rse:sourceField` mapping information (STORY-102), empty when
+		 *  unset. */
+		initialSourceField?: string;
 		submitLabel: string;
 		onSubmit: (
 			name: string,
 			datatype: XsdDatatype,
 			required: boolean,
-			repeatable: boolean
+			repeatable: boolean,
+			sourceField: string,
+			requiredForSubclasses: boolean
 		) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -21,6 +30,8 @@
 		initialDatatype = 'string',
 		initialRequired = false,
 		initialRepeatable = false,
+		initialRequiredForSubclasses = false,
+		initialSourceField = '',
 		submitLabel,
 		onSubmit,
 		onCancel
@@ -30,6 +41,8 @@
 	let datatype = $state<XsdDatatype>(initialDatatype);
 	let required = $state(initialRequired);
 	let repeatable = $state(initialRepeatable);
+	let requiredForSubclasses = $state(initialRequiredForSubclasses);
+	let sourceField = $state(initialSourceField);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
@@ -42,7 +55,7 @@
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(name.trim(), datatype, required, repeatable);
+			await onSubmit(name.trim(), datatype, required, repeatable, sourceField.trim(), requiredForSubclasses);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -71,6 +84,28 @@
 	<label class="checkbox">
 		<input type="checkbox" bind:checked={repeatable} />
 		Repeatable (allows multiple values)
+	</label>
+	<label class="checkbox">
+		<input type="checkbox" bind:checked={requiredForSubclasses} />
+		Required for direct subclasses
+	</label>
+	<p class="hint">
+		When checked, every class directly declared <code>rdfs:subClassOf</code> this one must set its own
+		value for this attribute at the class level — instances are never asked for it, regardless of the
+		"Required" checkbox above.
+	</p>
+	<label>
+		Mapping information
+		<textarea
+			bind:value={sourceField}
+			rows="3"
+			placeholder="e.g. spec.type"
+		></textarea>
+		<span class="hint">
+			Tells the ingestion source configured for this class how to populate this property from its
+			own data. The exact syntax — a field path, a JSON pointer, a query, or something else — is
+			up to that source to interpret. Leave empty to leave this property unmapped.
+		</span>
 	</label>
 	{#if error}
 		<p class="error">{error}</p>
@@ -103,7 +138,8 @@
 	}
 
 	input[type='text'],
-	select {
+	select,
+	textarea {
 		font-size: 0.95rem;
 		color: var(--color-text);
 		background: var(--color-bg);
@@ -112,9 +148,20 @@
 		padding: 0.5rem 0.65rem;
 	}
 
+	textarea {
+		font-family: inherit;
+		resize: vertical;
+	}
+
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
+	}
+
+	.hint {
+		font-size: 0.78rem;
+		color: var(--color-text-muted);
+		opacity: 0.85;
 	}
 
 	.actions {

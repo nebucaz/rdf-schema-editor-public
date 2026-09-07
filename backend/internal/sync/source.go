@@ -8,14 +8,38 @@ package sync
 
 import "context"
 
-// Entity is one upstream record, mapped into this app's vocabulary-neutral shape. Attributes holds
-// whatever source-specific fields a future sync/merge engine (Story 007) maps onto local attributes;
-// left as a flat string map since only one source's actual shape (Backstage's `spec`) is known today.
+// Entity is one upstream record, mapped into this app's vocabulary-neutral shape. Fields/FieldLists
+// hold every source field a mapping predicate might reference, keyed however that Source
+// implementation's own fetch chooses to key them — Backstage's client (Story 098) flattens its
+// `metadata`/`spec` payload into dotted keys (`"metadata.description"`, `"spec.lifecycle"`, ...),
+// but a future Source is free to key these maps however its own data demands, as long as its keys
+// match what its own entities' `rse:sourceField` mapping information names. Fields is for
+// single-valued keys, FieldLists for array-valued ones, so Story 101's merge-write can read either
+// without re-parsing the source payload. Relations holds the source's own relation graph
+// (`ownedBy`, `partOf`, ...), consumed by Story 106.
 type Entity struct {
 	UID        string
 	Name       string
 	Kind       string
-	Attributes map[string]string
+	Fields     map[string]string
+	FieldLists map[string][]string
+	Relations  []Relation
+	// SourceRef is this entity's own identity in the source's own target-reference scheme (STORY-106)
+	// — Backstage: `kind:namespace/name`, lowercase kind, e.g. `component:default/payments-service` —
+	// distinct from UID (what individual IRIs actually mint from). Written as the `rse:syncSourceRef`
+	// marker on this entity's synced individual, so a *different* entity's `Relations[].TargetRef`
+	// naming this one can be resolved back to its minted IRI without an extra upstream fetch. Empty
+	// is valid (a Source that never populates Relations has no reason to populate this either) — an
+	// empty SourceRef simply never matches any TargetRef lookup.
+	SourceRef string
+}
+
+// Relation is one upstream relation edge from this Entity to another upstream entity, named by the
+// source's own target-reference scheme (Backstage: `kind:namespace/name`) — resolved to a local
+// individual IRI only at relation-write time (Story 106), never here.
+type Relation struct {
+	Type      string
+	TargetRef string
 }
 
 // Source is the small interface every ingestion source implements. DiscoverKinds returns the

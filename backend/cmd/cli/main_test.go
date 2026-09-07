@@ -57,7 +57,7 @@ func TestRun_Sync_DefaultsToDryRun(t *testing.T) {
 	var gotQuery string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
-		fmt.Fprint(w, `{"source":"backstage","dryRun":true,"syncedPerKind":{"Component":12},"mapping":{"Component":"core:Application"},"skippedKinds":["API"]}`)
+		fmt.Fprint(w, `{"source":"backstage","dryRun":true,"syncedPerKind":{"Component":12},"mapping":{"Component":"core:Application"},"skippedKinds":["API"],"representsSynced":4,"relationsSynced":7}`)
 	}))
 	defer server.Close()
 
@@ -79,6 +79,12 @@ func TestRun_Sync_DefaultsToDryRun(t *testing.T) {
 	}
 	if !strings.Contains(out, "API") || !strings.Contains(out, "unmapped") {
 		t.Errorf("stdout missing unmapped-kind row: %s", out)
+	}
+	if !strings.Contains(out, "Represents links: 4 written") {
+		t.Errorf("stdout missing represents-links count from backend response: %s", out)
+	}
+	if !strings.Contains(out, "Relation edges: 7 written") {
+		t.Errorf("stdout missing relation-edges count from backend response: %s", out)
 	}
 }
 

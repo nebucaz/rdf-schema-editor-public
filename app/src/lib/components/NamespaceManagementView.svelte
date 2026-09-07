@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
+	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import NamespaceForm from './NamespaceForm.svelte';
 
 	let loadError = $state<string | null>(null);
@@ -44,6 +45,12 @@
 		);
 		await namespaceStore.refresh();
 		showAddForm = false;
+		// A newly-registered namespace's own classes/individuals (if any already exist under that
+		// base IRI, e.g. STORY-113's identifier-based minting into a Concept Namespace registered
+		// only afterward) are invisible on the canvas until `fetchFullSchemaForAllNamespaces` — which
+		// only ever visits *registered* namespaces — re-runs; `namespaceStore.refresh()` alone only
+		// updates namespace-picker dropdowns/filters, not the canvas's own cached schema.
+		workbenchActions.reload();
 	}
 
 	async function handleEditSubmit(
@@ -100,6 +107,9 @@
 			await namespaceStore.refresh();
 			deleteTarget = null;
 			deleteEntryCount = null;
+			// Mirrors handleAddSubmit: a deleted namespace's classes/individuals must drop out of the
+			// canvas's own cached schema too, not just the namespace picker/filter list.
+			workbenchActions.reload();
 		} catch (err) {
 			deleteError = err instanceof Error ? err.message : 'Failed to delete namespace';
 		} finally {

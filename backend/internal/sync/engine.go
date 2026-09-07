@@ -24,6 +24,32 @@ type SyncSummary struct {
 	SyncedPerKind map[string]int    `json:"syncedPerKind"`
 	Mapping       map[string]string `json:"mapping"`
 	SkippedKinds  []string          `json:"skippedKinds"`
+	// MappingFailures surfaces STORY-101's non-aborting `rse:sourceField` mapping-config errors for
+	// this run (currently: a resolved array value against a non-repeatable property) — never
+	// includes a property simply absent from a class's shape, since that's a normal "not mapped
+	// here" outcome, not a failure.
+	MappingFailures []string `json:"mappingFailures,omitempty"`
+	// RepresentsFailures surfaces STORY-105's non-aborting `represents`-link resolution failures for
+	// this run (a present-but-invalid `enterprise.catalog.iri` annotation: malformed IRI, no matching
+	// shape entry, or a target type mismatch) — mirroring MappingFailures' own shape. Never includes
+	// an entity with no annotation set at all, or every entity when the representsPredicate setting
+	// itself is unset, since both are normal "nothing to link" outcomes, not failures.
+	RepresentsFailures []string `json:"representsFailures,omitempty"`
+	// SkippedRelations surfaces STORY-106's non-aborting `rse:sourceRelation` edge-write skips for
+	// this run: either a relation `type` with no mapped `owl:ObjectProperty` on the entity's own
+	// shadow class, or a `targetRef` that doesn't resolve to any synced individual yet (this run or
+	// any prior one) — both normal, expected outcomes (a config gap, or a target simply not synced
+	// yet), never an error; an unresolved target is retried automatically on a later run once its
+	// own entity is synced.
+	SkippedRelations []string `json:"skippedRelations,omitempty"`
+	// RepresentsSynced counts this run's successfully resolved `represents` links (STORY-105) —
+	// entities with no `enterprise.catalog.iri` annotation, or with the representsPredicate setting
+	// unset, contribute 0, not a failure; see RepresentsFailures for what actually went wrong.
+	RepresentsSynced int `json:"representsSynced,omitempty"`
+	// RelationsSynced counts this run's successfully written `rse:sourceRelation` edges (STORY-106),
+	// the write-side counterpart to SkippedRelations — together they account for every upstream
+	// relation seen this run.
+	RelationsSynced int `json:"relationsSynced,omitempty"`
 }
 
 // Engine runs one full sync pass (Story 007) for any registered Source, shared by Story 008's
@@ -70,6 +96,13 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 		return SyncSummary{}, err
 	}
 
+	// STORY-105 step 1: resolved once per run, not per entity/kind — an unset setting skips the
+	// `represents` mechanism entirely for every entity this run (no error, no per-entity ops below).
+	representsPredicateIRI, err := FetchRepresentsPredicateIri(ctx, e.gdb, e.vocab.AppSettingsIRI, e.vocab.RepresentsPredicateSettingIRI)
+	if err != nil {
+		return SyncSummary{}, err
+	}
+
 	kinds, err := source.DiscoverKinds(ctx)
 	if err != nil {
 		return SyncSummary{}, err
@@ -91,7 +124,19 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 	syncedPerKind := make(map[string]int)
 	reportedMapping := make(map[string]string)
 	var skippedKinds []string
+	var mappingFailures []string
+	var representsFailures []string
+	representsSynced := 0
 	kindsWithInstances := make(map[string]string) // kind -> classIRI, for the isMasterFor pass below
+	bootstrappedNamespaces := make(map[string]bool)
+
+	// STORY-106: populated across every mapped kind below, consumed by the second-pass relation-edge
+	// loop after this loop ends. sourceRefToIndividualIRI resolves a targetRef minted *this run*
+	// without a GraphDB round-trip (its rse:syncSourceRef marker isn't committed yet — see
+	// resolveSyncSourceRefTarget's own doc comment); syncedEntities carries what that second pass
+	// needs per entity (its own Relations, individual IRI, class, and write-target graph).
+	sourceRefToIndividualIRI := make(map[string]string)
+	var syncedEntities []syncedEntityInfo
 
 	for _, kind := range kinds {
 		classIRI, mapped := mapping[kind]
@@ -101,25 +146,87 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 		}
 		reportedMapping[kind] = classIRI
 
+		// STORY-099: each mapped shadow class resolves its own Concept Namespace — replacing the old
+		// single `sourceNS` shared by every kind — so two mapped kinds can land in two entirely
+		// different Namespaces within the same run. A class with no `rse:namespace` anywhere in its
+		// `rdfs:subClassOf*` ancestry has no valid sync target and is skipped, same posture as an
+		// unmapped kind, never aborting the whole run.
+		conceptNSBaseIRI, err := e.resolveConceptNamespace(ctx, classIRI)
+		if err != nil {
+			return SyncSummary{}, err
+		}
+		if conceptNSBaseIRI == "" {
+			skippedKinds = append(skippedKinds, kind)
+			continue
+		}
+		conceptNS := deriveNamespaceGraphs(conceptNSBaseIRI)
+
+		if !bootstrappedNamespaces[conceptNSBaseIRI] {
+			nsOps, err := e.planNamespaceDeclaration(ctx, defaultNS, conceptNSBaseIRI, lastPathSegment(conceptNSBaseIRI))
+			if err != nil {
+				return SyncSummary{}, err
+			}
+			ops = append(ops, nsOps...)
+			bootstrappedNamespaces[conceptNSBaseIRI] = true
+		}
+
 		entities, err := source.FetchEntities(ctx, kind)
 		if err != nil {
 			return SyncSummary{}, err
 		}
 
-		existing, err := e.fetchExistingSyncedIRIs(ctx, sourceNS.instances, classIRI, source.Name())
+		existing, err := e.fetchExistingSyncedIRIs(ctx, conceptNS.instances, classIRI, source.Name())
+		if err != nil {
+			return SyncSummary{}, err
+		}
+
+		// STORY-101: resolved once per mapped kind (not per entity) — every entity of this kind
+		// checks its fields against the same class-shape-scoped mapping.
+		sourceFieldMapping, err := e.resolveSourceFieldMapping(ctx, classIRI)
 		if err != nil {
 			return SyncSummary{}, err
 		}
 
 		seen := make(map[string]bool, len(entities))
 		for _, entity := range entities {
-			iri := individualIRI(sourceNS, source.Name(), entity.UID)
+			iri := individualIRI(conceptNS, source.Name(), entity.UID)
 			seen[iri] = true
 			label := entity.Name
 			if label == "" {
 				label = entity.UID
 			}
-			ops = append(ops, mergeWriteOps(e.vocab, sourceNS.instances, iri, classIRI, label, source.Name(), activity)...)
+			ops = append(ops, mergeWriteOps(e.vocab, conceptNS.instances, iri, classIRI, label, source.Name(), entity.SourceRef, activity)...)
+			attrOps, attrFailures := mappedAttributeOps(conceptNS.instances, iri, sourceFieldMapping, entity)
+			ops = append(ops, attrOps...)
+			mappingFailures = append(mappingFailures, attrFailures...)
+
+			if entity.SourceRef != "" {
+				sourceRefToIndividualIRI[entity.SourceRef] = iri
+			}
+			if len(entity.Relations) > 0 {
+				syncedEntities = append(syncedEntities, syncedEntityInfo{
+					entity:        entity,
+					classIRI:      classIRI,
+					individualIRI: iri,
+					graph:         conceptNS.instances,
+				})
+			}
+
+			// STORY-105 steps 2-5: only attempted when the setting itself is configured.
+			if representsPredicateIRI != "" {
+				targetIRI, failure, err := e.resolveRepresentsTarget(ctx, classIRI, representsPredicateIRI, entity)
+				if err != nil {
+					return SyncSummary{}, err
+				}
+				if failure != "" {
+					representsFailures = append(representsFailures, failure)
+				}
+				if targetIRI != "" {
+					representsSynced++
+				}
+				ops = append(ops, representsOps(conceptNS.instances, iri, representsPredicateIRI, targetIRI)...)
+			}
+
 			activityUsed = true
 		}
 
@@ -130,10 +237,16 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 
 		for _, existingIRI := range existing {
 			if !seen[existingIRI] {
-				ops = append(ops, staleOps(e.vocab, sourceNS.instances, existingIRI)...)
+				ops = append(ops, staleOps(e.vocab, conceptNS.instances, existingIRI)...)
 			}
 		}
 	}
+
+	relationOps, relationsSynced, skippedRelations, err := e.planRelationEdges(ctx, syncedEntities, sourceRefToIndividualIRI)
+	if err != nil {
+		return SyncSummary{}, err
+	}
+	ops = append(ops, relationOps...)
 
 	if activityUsed {
 		ops = append(ops, activityTripleOps(sourceNS.instances, activity, time.Now().UTC().Format(time.RFC3339))...)
@@ -152,12 +265,179 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 	}
 
 	return SyncSummary{
-		Source:        source.Name(),
-		DryRun:        dryRun,
-		SyncedPerKind: syncedPerKind,
-		Mapping:       reportedMapping,
-		SkippedKinds:  skippedKinds,
+		Source:             source.Name(),
+		DryRun:             dryRun,
+		SyncedPerKind:      syncedPerKind,
+		Mapping:            reportedMapping,
+		SkippedKinds:       skippedKinds,
+		MappingFailures:    mappingFailures,
+		RepresentsFailures: representsFailures,
+		SkippedRelations:   skippedRelations,
+		RepresentsSynced:   representsSynced,
+		RelationsSynced:    relationsSynced,
 	}, nil
+}
+
+// syncedEntityInfo is what STORY-106's second-pass relation-edge loop (`planRelationEdges`) needs
+// per seen-this-run entity that has ≥1 upstream relation — collected during the per-`kind` loop
+// above rather than re-fetched, since `source.FetchEntities` was already called once per kind and a
+// second call isn't guaranteed to return the same data (an upstream catalog is live).
+type syncedEntityInfo struct {
+	entity        Entity
+	classIRI      string
+	individualIRI string
+	graph         string
+}
+
+// planRelationEdges is STORY-106's second pass, run once after every mapped kind's shadow
+// individuals have been planned (not yet committed — see `resolveSyncSourceRefTarget`'s doc comment
+// on why `sourceRefToIndividualIRI` is checked first): for every synced entity's own upstream
+// relations, resolves a mapped `owl:ObjectProperty` for that relation's `type` (cached per classIRI,
+// since many entities of the same kind share one mapping) and its target's local individual IRI,
+// writing the edge only when both resolve. Skips (never errors) on either failure, appending a
+// human-readable note to the returned skip list.
+//
+// Each (individual, propIRI) pair actually resolving ≥1 edge this run gets exactly one
+// `deleteWhereOp` before its first `insertDataOp` — the same "generator-owned, fully replaced every
+// run" idiom `mergeWriteOps`/`mappedAttributeOps` already use for every other predicate this package
+// writes, needed here too since a real triple store's own set semantics (a duplicate `INSERT DATA` of
+// an already-present triple is a no-op) can't be relied on alone to keep a *changed* target set from
+// a prior run from lingering alongside this run's.
+func (e *Engine) planRelationEdges(
+	ctx context.Context,
+	syncedEntities []syncedEntityInfo,
+	sourceRefToIndividualIRI map[string]string,
+) (ops []string, synced int, skipped []string, err error) {
+	relationMappingCache := make(map[string]map[string]string)
+	clearedPairs := make(map[string]bool)
+
+	for _, se := range syncedEntities {
+		mapping, cached := relationMappingCache[se.classIRI]
+		if !cached {
+			mapping, err = e.resolveSourceRelationMapping(ctx, se.classIRI)
+			if err != nil {
+				return nil, 0, nil, err
+			}
+			relationMappingCache[se.classIRI] = mapping
+		}
+
+		for _, rel := range se.entity.Relations {
+			propIRI, mapped := mapping[rel.Type]
+			if !mapped {
+				skipped = append(skipped, fmt.Sprintf(
+					"%s: relation type %q has no rse:sourceRelation mapping on <%s> — skipped",
+					se.entity.UID, rel.Type, se.classIRI,
+				))
+				continue
+			}
+
+			targetIRI := sourceRefToIndividualIRI[rel.TargetRef]
+			if targetIRI == "" {
+				targetIRI, err = e.resolveSyncSourceRefTarget(ctx, rel.TargetRef)
+				if err != nil {
+					return nil, 0, nil, err
+				}
+			}
+			if targetIRI == "" {
+				skipped = append(skipped, fmt.Sprintf(
+					"%s: relation target %q not found this run — skipped, retried automatically once synced",
+					se.entity.UID, rel.TargetRef,
+				))
+				continue
+			}
+
+			pairKey := se.graph + "|" + se.individualIRI + "|" + propIRI
+			if !clearedPairs[pairKey] {
+				ops = append(ops, deleteWhereOp(se.graph, se.individualIRI, propIRI))
+				clearedPairs[pairKey] = true
+			}
+			ops = append(ops, insertDataOp(se.graph, fmt.Sprintf(`<%s> <%s> <%s> .`, se.individualIRI, propIRI, targetIRI)))
+			synced++
+		}
+	}
+
+	return ops, synced, skipped, nil
+}
+
+// selectCrossGraphObjects returns every object of the (subject, predicate) pair, searched across
+// every named graph in the repository (no `FROM`/`GRAPH` restriction) — the same unrestricted
+// cross-graph shape `sparql-connector.ts`'s `findNamespaceOfClass` uses on the TS side. Shared by
+// `resolveConceptNamespace`'s ancestry walk for both a class's own `rse:namespace` lookup and its
+// direct `rdfs:subClassOf` superclasses.
+func (e *Engine) selectCrossGraphObjects(ctx context.Context, subject, predicate string) ([]string, error) {
+	query := fmt.Sprintf(`SELECT ?o WHERE { GRAPH ?g { <%s> <%s> ?o } }`, subject, predicate)
+	result, err := e.gdb.Select(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("select cross-graph objects: %w", err)
+	}
+	objects := make([]string, 0, len(result.Results.Bindings))
+	for _, binding := range result.Results.Bindings {
+		if o, ok := binding["o"]; ok {
+			objects = append(objects, o.Value)
+		}
+	}
+	return objects, nil
+}
+
+// resolveConceptNamespace walks a shadow class's `rdfs:subClassOf` ancestry breadth-first (STORY-099)
+// to find its effective `Namespace`: classIRI's own `rse:namespace` declaration wins if present,
+// otherwise the nearest ancestor's (typically `backstage:CoreConcept`'s) — own is always checked
+// before that node's superclasses are even fetched, so an override can never lose to an inherited
+// value at the same or a deeper level. Returns "" (not an error) when no declaration exists anywhere
+// in the ancestry — same "must not be imported"-style skip posture as an unmapped `kind`, not a hard
+// error that aborts the whole run. Cycle-safe via a visited set (a malformed schema's subClassOf loop
+// must never hang a sync run).
+func (e *Engine) resolveConceptNamespace(ctx context.Context, classIRI string) (string, error) {
+	visited := make(map[string]bool)
+	queue := []string{classIRI}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if visited[current] {
+			continue
+		}
+		visited[current] = true
+
+		namespaces, err := e.selectCrossGraphObjects(ctx, current, e.vocab.NamespacePredicateIRI)
+		if err != nil {
+			return "", err
+		}
+		if len(namespaces) > 0 {
+			return namespaces[0], nil
+		}
+
+		supers, err := e.selectCrossGraphObjects(ctx, current, rdfsSubClassOf)
+		if err != nil {
+			return "", err
+		}
+		for _, super := range supers {
+			if !visited[super] {
+				queue = append(queue, super)
+			}
+		}
+	}
+	return "", nil
+}
+
+// planNamespaceDeclaration computes the (idempotent, ASK-guarded) op to bootstrap baseIRI's own
+// `Namespace` declaration in defaultNS's `/schema` graph, if it doesn't already exist — mirroring
+// `insertNamespace`'s triple shape exactly. Shared by `planBootstrap` (the source's own fixed
+// namespace) and `RunSync`'s per-`kind` loop (STORY-099: each newly-touched Concept Namespace), so
+// both bootstrap the same way. A human-declared Namespace (with its own real `prefix`, description,
+// etc.) already existing is left untouched — this only ever fills in a *missing* declaration.
+func (e *Engine) planNamespaceDeclaration(ctx context.Context, defaultNS namespaceGraphs, baseIRI, prefix string) ([]string, error) {
+	exists, err := e.gdb.Ask(ctx, askTripleExistsIRI(defaultNS.schema, baseIRI, rdfType, e.vocab.NamespaceClassIRI))
+	if err != nil {
+		return nil, fmt.Errorf("check namespace bootstrap: %w", err)
+	}
+	if exists {
+		return nil, nil
+	}
+	return []string{insertDataOp(defaultNS.schema, fmt.Sprintf(
+		`<%s> <%s> <%s> . <%s> <%s> "%s" .`,
+		baseIRI, rdfType, e.vocab.NamespaceClassIRI,
+		baseIRI, e.vocab.NamespacePrefixIRI, escapeString(prefix),
+	))}, nil
 }
 
 // fetchExistingSyncedIRIs returns every individual of classIRI, in graph, already marked as synced
@@ -192,17 +472,11 @@ func (e *Engine) planBootstrap(
 ) (ops []string, systemOfWorkIRI string, isMasterForIRI string, err error) {
 	sourceBaseIRI := sourceNS.instances
 
-	nsExists, err := e.gdb.Ask(ctx, askTripleExistsIRI(defaultNS.schema, sourceBaseIRI, rdfType, e.vocab.NamespaceClassIRI))
+	nsOps, err := e.planNamespaceDeclaration(ctx, defaultNS, sourceBaseIRI, source.Name())
 	if err != nil {
-		return nil, "", "", fmt.Errorf("check namespace bootstrap: %w", err)
+		return nil, "", "", err
 	}
-	if !nsExists {
-		ops = append(ops, insertDataOp(defaultNS.schema, fmt.Sprintf(
-			`<%s> <%s> <%s> . <%s> <%s> "%s" .`,
-			sourceBaseIRI, rdfType, e.vocab.NamespaceClassIRI,
-			sourceBaseIRI, e.vocab.NamespacePrefixIRI, escapeString(source.Name()),
-		)))
-	}
+	ops = append(ops, nsOps...)
 
 	classIRI := systemOfWorkClassIRI(sourceNS)
 	classExists, err := e.gdb.Ask(ctx, askTripleExistsIRI(sourceNS.schema, classIRI, rdfType, owlClass))

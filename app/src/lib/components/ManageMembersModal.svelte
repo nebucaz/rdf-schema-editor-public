@@ -2,6 +2,9 @@
 	import MemberForm from './MemberForm.svelte';
 	import type { EntityMemberVM } from './EntityNode.svelte';
 	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '$lib/services/sparql-connector';
+	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '$lib/services/canvas-model';
+	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
+	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
 
 	interface PredicateOption {
 		iri: string;
@@ -12,8 +15,19 @@
 		members: EntityMemberVM[];
 		namespaceOptions?: FetchedNamespace[];
 		initialNamespaceBaseIri?: string;
-		onAdd: (label: string, namespaceBaseIri?: string) => Promise<void>;
-		onEdit: (member: EntityMemberVM, label: string) => Promise<void>;
+		onAdd: (
+			label: string,
+			namespaceBaseIri?: string,
+			attributeSubmissions?: AttributeValueSubmission[],
+			identifier?: string,
+			relationSubmissions?: RelationValueSubmission[]
+		) => Promise<void>;
+		onEdit: (
+			member: EntityMemberVM,
+			label: string,
+			attributeSubmissions?: AttributeValueSubmission[],
+			relationSubmissions?: RelationValueSubmission[]
+		) => Promise<void>;
 		onDelete: (member: EntityMemberVM) => Promise<void>;
 		/** data-catalog Story 019: an enumerated member is an individual too, so it gets the same
 		 *  Assertions section as a standalone `IndividualNode` — falls out of both entry points
@@ -23,6 +37,17 @@
 		onLoadAssertions?: (individualIri: string) => Promise<FetchedAssertion[]>;
 		onAddAssertion?: (individualIri: string, predicateLabel: string, objectIri: string) => Promise<void>;
 		onDeleteAssertion?: (individualIri: string, predicateIri: string, objectIri: string) => Promise<void>;
+		/** This entity class's own+inherited attribute list (STORY-111) — the same class for every
+		 *  member here (`ManageMembersModal` is always scoped to one entity), so it's a plain prop
+		 *  rather than looked up per member. */
+		attributes?: CanvasAttributeSpec[];
+		/** Whether the owning class's `rdfs:label` is shape-required (STORY-112) — see `MemberForm`. */
+		labelRequired?: boolean;
+		onLoadAttributeValues?: (individualIri: string) => Promise<Record<string, string | string[]>>;
+		/** See `MemberForm`'s own `relationFields`/`relationTargetOptions` props (STORY-114) — same
+		 *  "one class for every member here" rationale as `attributes` above. */
+		relationFields?: CanvasRelationFieldSpec[];
+		relationTargetOptions?: Record<string, RelationTargetOption[]>;
 	}
 
 	let {
@@ -36,7 +61,12 @@
 		objectOptions = [],
 		onLoadAssertions,
 		onAddAssertion,
-		onDeleteAssertion
+		onDeleteAssertion,
+		attributes = [],
+		labelRequired = false,
+		onLoadAttributeValues,
+		relationFields = [],
+		relationTargetOptions = {}
 	}: Props = $props();
 
 	/** `MemberForm` (per Decision 5) is wrapped inline here rather than opened as a second stacked
@@ -48,10 +78,16 @@
 	let deleteBusy = $state(false);
 	let error = $state<string | null>(null);
 	let assertions = $state<FetchedAssertion[]>([]);
+	let attributeValues = $state<Record<string, string | string[]>>({});
 
 	async function reloadAssertions(individualIri: string) {
 		if (!onLoadAssertions) return;
 		assertions = await onLoadAssertions(individualIri);
+	}
+
+	async function reloadAttributeValues(individualIri: string) {
+		if (!onLoadAttributeValues) return;
+		attributeValues = await onLoadAttributeValues(individualIri);
 	}
 
 	$effect(() => {
@@ -62,13 +98,32 @@
 		}
 	});
 
-	async function handleAddSubmit(label: string, namespaceBaseIri?: string) {
-		await onAdd(label, namespaceBaseIri);
+	$effect(() => {
+		if (editTarget && onLoadAttributeValues) {
+			void reloadAttributeValues(editTarget.iri);
+		} else {
+			attributeValues = {};
+		}
+	});
+
+	async function handleAddSubmit(
+		label: string,
+		namespaceBaseIri?: string,
+		attributeSubmissions: AttributeValueSubmission[] = [],
+		identifier?: string,
+		relationSubmissions: RelationValueSubmission[] = []
+	) {
+		await onAdd(label, namespaceBaseIri, attributeSubmissions, identifier, relationSubmissions);
 		showAddForm = false;
 	}
 
-	async function handleEditSubmit(member: EntityMemberVM, label: string) {
-		await onEdit(member, label);
+	async function handleEditSubmit(
+		member: EntityMemberVM,
+		label: string,
+		attributeSubmissions: AttributeValueSubmission[] = [],
+		relationSubmissions: RelationValueSubmission[] = []
+	) {
+		await onEdit(member, label, attributeSubmissions, relationSubmissions);
 		editTarget = null;
 	}
 
@@ -95,6 +150,10 @@
 		submitLabel="Add"
 		onCancel={() => (showAddForm = false)}
 		onSubmit={handleAddSubmit}
+		{attributes}
+		{labelRequired}
+		{relationFields}
+		{relationTargetOptions}
 	/>
 {:else if editTarget}
 	{@const target = editTarget}
@@ -103,11 +162,17 @@
 		initialLabel={target.label}
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
-		onSubmit={(label) => handleEditSubmit(target, label)}
+		onSubmit={(label, _namespaceBaseIri, attributeSubmissions, _identifier, relationSubmissions) =>
+			handleEditSubmit(target, label, attributeSubmissions, relationSubmissions)}
 		individualIri={target.iri}
 		{assertions}
 		{predicateOptions}
 		{objectOptions}
+		{attributes}
+		{attributeValues}
+		{labelRequired}
+		{relationFields}
+		{relationTargetOptions}
 		onAddAssertion={onAddAssertion
 			? async (predicateLabel, objectIri) => {
 					await onAddAssertion(target.iri, predicateLabel, objectIri);

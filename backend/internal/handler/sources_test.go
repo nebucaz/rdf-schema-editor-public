@@ -59,12 +59,18 @@ func newTestRouter(h *SourceHandler) http.Handler {
 // case use, with a vocabulary matching this file's own "http://ns/schema#backstageKind" convention.
 func testEngine(gdb *graphdb.Client) *sync.Engine {
 	return sync.NewEngine(gdb, sync.Vocabulary{
-		DefaultNamespaceBaseIRI:   "http://ns",
-		BackstageKindPredicateIRI: "http://ns/schema#backstageKind",
-		SyncSourcePredicateIRI:    "http://ns/schema#syncSource",
-		SyncStatusPredicateIRI:    "http://ns/schema#syncStatus",
-		NamespaceClassIRI:         "http://ns/schema#Namespace",
-		NamespacePrefixIRI:        "http://ns/schema#prefix",
+		DefaultNamespaceBaseIRI:       "http://ns",
+		BackstageKindPredicateIRI:     "http://ns/schema#backstageKind",
+		SyncSourcePredicateIRI:        "http://ns/schema#syncSource",
+		SyncStatusPredicateIRI:        "http://ns/schema#syncStatus",
+		NamespaceClassIRI:             "http://ns/schema#Namespace",
+		NamespacePrefixIRI:            "http://ns/schema#prefix",
+		NamespacePredicateIRI:         "http://ns/schema#namespace",
+		SourceFieldPredicateIRI:       "http://ns/schema#sourceField",
+		AppSettingsIRI:                "http://ns/schema#AppSettings",
+		RepresentsPredicateSettingIRI: "http://ns/schema#representsPredicate",
+		SourceRelationPredicateIRI:    "http://ns/schema#sourceRelation",
+		SyncSourceRefPredicateIRI:     "http://ns/schema#syncSourceRef",
 	})
 }
 
@@ -249,6 +255,9 @@ func TestSourceHandler_Sync_DryRunDefault(t *testing.T) {
 	store.Seed(graphdbtest.Triple{
 		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#backstageKind", O: "Component",
 	})
+	store.Seed(graphdbtest.Triple{
+		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#namespace", O: "http://ns/backstage", ObjectIsIRI: true,
+	})
 
 	registry := sync.NewRegistry()
 	registry.Register(&fakeSource{
@@ -278,8 +287,8 @@ func TestSourceHandler_Sync_DryRunDefault(t *testing.T) {
 	if summary.SyncedPerKind["Component"] != 1 {
 		t.Errorf("syncedPerKind[Component] = %d, want 1", summary.SyncedPerKind["Component"])
 	}
-	if len(store.Snapshot()) != 1 {
-		t.Errorf("triple count = %d after a dry run, want unchanged (only the seeded mapping triple)", len(store.Snapshot()))
+	if len(store.Snapshot()) != 2 {
+		t.Errorf("triple count = %d after a dry run, want unchanged (only the two seeded mapping/namespace triples)", len(store.Snapshot()))
 	}
 }
 
@@ -289,6 +298,9 @@ func TestSourceHandler_Sync_ApplyWritesToGraph(t *testing.T) {
 	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: graphdbServer.URL})
 	store.Seed(graphdbtest.Triple{
 		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#backstageKind", O: "Component",
+	})
+	store.Seed(graphdbtest.Triple{
+		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#namespace", O: "http://ns/backstage", ObjectIsIRI: true,
 	})
 
 	registry := sync.NewRegistry()
@@ -309,8 +321,8 @@ func TestSourceHandler_Sync_ApplyWritesToGraph(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
 	}
-	if len(store.Snapshot()) <= 1 {
-		t.Error("expected a real sync to write new triples beyond the seeded mapping")
+	if len(store.Snapshot()) <= 2 {
+		t.Error("expected a real sync to write new triples beyond the seeded mapping/namespace triples")
 	}
 }
 
@@ -335,6 +347,9 @@ func TestSourceHandler_Sync_UpstreamUnreachable(t *testing.T) {
 	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: graphdbServer.URL})
 	store.Seed(graphdbtest.Triple{
 		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#backstageKind", O: "Component",
+	})
+	store.Seed(graphdbtest.Triple{
+		Graph: "http://ns/schema", S: "http://ns/schema#Application", P: "http://ns/schema#namespace", O: "http://ns/backstage", ObjectIsIRI: true,
 	})
 
 	registry := sync.NewRegistry()

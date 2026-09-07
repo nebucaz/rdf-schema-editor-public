@@ -8,6 +8,28 @@
 		datatype: XsdDatatype;
 		required: boolean;
 		repeatable: boolean;
+		/** See `CanvasAttributeSpec.requiredForSubclasses` — carried through purely so the Edit
+		 *  Attribute dialog can pre-populate its own checkbox; not rendered on the node itself. */
+		requiredForSubclasses?: boolean;
+		/** Set when this attribute is inherited from an ancestor class (STORY-108) — absent for a
+		 *  class's own attributes. A static, non-interactive hint only: no click/navigation behavior
+		 *  (see the story's "Future work" note on jump-to-ancestor). */
+		inheritedFrom?: { classIri: string; className: string };
+	}
+
+	/** A schema-declared object-property relation field (STORY-114) — the object-property counterpart
+	 *  of `EntityAttributeVM`, structurally mirroring `CanvasRelationFieldSpec`. Not rendered on the
+	 *  canvas node itself (no UI here uses it yet); carried on `EntityNodeData` purely so
+	 *  `ManageMembersModal`/`MemberForm` can read it off `node.data.relationFields`, the same way they
+	 *  already read `node.data.attributes`. */
+	export interface EntityRelationFieldVM {
+		iri: string;
+		name: string;
+		targetClassIri: string;
+		targetClassName: string;
+		required: boolean;
+		repeatable: boolean;
+		inheritedFrom?: { classIri: string; className: string };
 	}
 
 	/** An enumerated class member (STORY-019) — e.g. `core:RelationType`'s `nutzt`. */
@@ -28,6 +50,8 @@
 		 *  fallback chain below. `undefined` when the namespace has no default color configured. */
 		namespaceColor?: string;
 		attributes: EntityAttributeVM[];
+		/** See `EntityRelationFieldVM` (STORY-114) — this class's own+inherited relation fields. */
+		relationFields: EntityRelationFieldVM[];
 		/** Always-available, possibly-empty enumerated members list — no separate "is this an
 		 *  enumeration" toggle, matching how attributes/relations already work (Decision 3). Managed
 		 *  via a dedicated modal (STORY-023), not rendered inline in this node. */
@@ -65,10 +89,14 @@
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
 	import { descriptionVisibilityStore } from '$lib/stores/description-visibility-store.svelte';
+	import { inheritedAttributesVisibilityStore } from '$lib/stores/inherited-attributes-visibility-store.svelte';
 
 	let { data, selected }: NodeProps<EntityNodeType> = $props();
 
 	const showDescriptions = $derived(descriptionVisibilityStore.getShowDescriptions());
+	const showInheritedAttributes = $derived(inheritedAttributesVisibilityStore.getShowInheritedAttributes());
+	const ownAttributes = $derived(data.attributes.filter((a) => !a.inheritedFrom));
+	const inheritedAttributes = $derived(data.attributes.filter((a) => a.inheritedFrom));
 
 	const menuEntries: NodeMenuEntry[] = $derived([
 		{
@@ -153,7 +181,7 @@
 		<p class="description">{data.description}</p>
 	{/if}
 	<ul class="attributes">
-		{#each data.attributes as attribute (attribute.iri)}
+		{#each ownAttributes as attribute (attribute.iri)}
 			<li>
 				<span class="attr-name">{attribute.name}</span>
 				<span
@@ -173,6 +201,22 @@
 			</li>
 		{/each}
 	</ul>
+	{#if showInheritedAttributes && inheritedAttributes.length > 0}
+		<ul class="attributes inherited-attributes">
+			{#each inheritedAttributes as attribute (attribute.iri)}
+				<li>
+					<span class="attr-name">{attribute.name}</span>
+					<span
+						class="attr-type"
+						title={`${attribute.required ? 'Required (!)' : 'Optional (?)'}${attribute.repeatable ? ', repeatable ([]) — multiple values allowed' : ', single-valued'}`}
+					>
+						{attribute.datatype}{attribute.required ? '!' : '?'}{attribute.repeatable ? '[]' : ''}
+					</span>
+					<span class="attr-inherited-from">from {attribute.inheritedFrom?.className}</span>
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	<button class="add-attribute" onclick={data.onAddAttribute}>+ Add attribute</button>
 </div>
 
@@ -319,6 +363,22 @@
 		display: flex;
 		gap: 2px;
 		flex-shrink: 0;
+	}
+
+	.inherited-attributes {
+		border-top: 1px solid var(--color-border);
+	}
+
+	.inherited-attributes .attr-name {
+		font-style: italic;
+		color: var(--color-text-muted);
+	}
+
+	.attr-inherited-from {
+		flex-shrink: 0;
+		color: var(--color-text-muted);
+		font-size: 10px;
+		font-style: italic;
 	}
 
 	.add-attribute {
