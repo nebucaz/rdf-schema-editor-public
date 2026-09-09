@@ -19,6 +19,18 @@ if the upstream source or GraphDB is unreachable. Configure the Backstage source
 without them, but Backstage-sourced routes fail at call time until both are set.
 
 ```
+GET /sources/{source}/raw/{kind}
+```
+
+Returns the source's own undecoded upstream JSON for every entity of `kind` — every field it sent
+(including `relations[]`), with none of this app's field-mapping or `rse:sourceRelation` resolution
+applied. A debugging escape hatch for confirming exactly what upstream sent, e.g. whether a missing
+relation is a genuinely-empty `relations[]` upstream vs. one this app's own mapping/target-resolution
+skipped (see `SyncSummary.skippedRelations` for that latter case). `404` for an unknown source, `501`
+for a source that doesn't implement `sync.RawSource` (not every source need support this), `502` if
+upstream is unreachable.
+
+```
 POST /sources/{source}/sync?dryRun=true|false
 ```
 
@@ -75,6 +87,10 @@ export IMPORTCTL_AUTH_TOKEN=$(AUTH_JWT_SECRET=... go run ./cmd/cli mint-token --
 go run ./cmd/cli discover backstage
 go run ./cmd/cli sync backstage              # dry-run by default — writes nothing
 go run ./cmd/cli sync backstage --apply      # performs a real sync
+
+# dump the raw upstream JSON for every Component (or any other kind) — no mapping applied
+go run ./cmd/cli raw backstage Component
+go run ./cmd/cli raw backstage Component --out component-dump.json
 
 # point at a non-default backend:
 go run ./cmd/cli sync backstage --backend-url http://localhost:8090

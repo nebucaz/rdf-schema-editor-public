@@ -6,7 +6,10 @@
 // a rewrite of this plumbing.
 package sync
 
-import "context"
+import (
+	"context"
+	"encoding/json"
+)
 
 // Entity is one upstream record, mapped into this app's vocabulary-neutral shape. Fields/FieldLists
 // hold every source field a mapping predicate might reference, keyed however that Source
@@ -49,6 +52,15 @@ type Source interface {
 	Name() string
 	DiscoverKinds(ctx context.Context) ([]string, error)
 	FetchEntities(ctx context.Context, kind string) ([]Entity, error)
+}
+
+// RawSource is an optional capability a Source may additionally implement (Backstage does) — the
+// exact upstream JSON for one kind, undecoded, for debugging what a source actually sent (e.g.
+// confirming `relations[]` really is empty upstream rather than lost somewhere in FetchEntities' own
+// mapping). Not part of Source itself since a future source may have no equivalent "raw upstream
+// payload" concept; callers type-assert a resolved Source against this interface.
+type RawSource interface {
+	FetchRawEntities(ctx context.Context, kind string) ([]json.RawMessage, error)
 }
 
 // Registry resolves a source by its Name() — the seam Story 004's discovery endpoint, Story 007's

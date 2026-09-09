@@ -17,6 +17,7 @@ import {
 	REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI,
 	SOURCE_FIELD_PREDICATE_IRI,
 	SOURCE_RELATION_PREDICATE_IRI,
+	GENERATED_REVERSE_OF_PREDICATE_IRI,
 	SYNC_SOURCE_PREDICATE_IRI,
 	SYNC_STATUS_PREDICATE_IRI,
 	NAMESPACE_CLASS_IRI,
@@ -231,6 +232,12 @@ export interface FetchedPropertyBase {
 	range: string;
 	/** See `FetchedClass.namespaceBaseIri` (STORY-033). */
 	namespaceBaseIri: string;
+	/** The forward property's IRI, when this property is the auto-generated reverse half of a
+	 *  relation pair (`rse:generatedReverseOf`) — `undefined` for every ordinary property, including
+	 *  a *hand-drawn* relation pointing the same direction a reverse relation would. Only ever set on
+	 *  object properties in practice (a datatype property has no reverse concept), but lives here
+	 *  since both share `fetchPropertiesByType`. */
+	generatedReverseOf?: string;
 }
 
 /** `domain`/`range`, plus cardinality merged in from the owning class's `sh:property` entry. */
@@ -995,15 +1002,19 @@ export class SparqlConnector {
 		return { iri };
 	}
 
-	/** Updates only `rdfs:label` — the member's IRI never changes, mirroring `renameClass`. */
-	async renameIndividual(
-		iri: string,
-		newLabel: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<void> {
+	/** Updates only `rdfs:label` — the member's IRI never changes, mirroring `renameClass`.
+	 *  `namespaceBaseIri` is optional: when omitted, resolved via `findNamespaceOfIndividual` instead
+	 *  of assuming `iri` lives in its *class's* declaring/active namespace, which a Concept
+	 *  Namespace override (STORY-099/100) or a hand-typed identifier can make a wrong guess — the
+	 *  same class of bug that made `deleteIndividual` silently no-op (`DELETE WHERE` against the
+	 *  wrong graph matches nothing, no error) while the UI still removed the member optimistically. A
+	 *  caller that already knows the namespace for certain (e.g. `insertIndividual`'s own follow-up
+	 *  writes, right after minting) may still pass it explicitly to skip the extra lookup. */
+	async renameIndividual(iri: string, newLabel: string, namespaceBaseIri?: string): Promise<void> {
 		if (!newLabel.trim()) throw new Error('Member name must not be empty');
 		this.assertSafeSparqlIri(iri, 'individual IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(iri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const escaped = this.escapeString(newLabel);
 
 		await this.executeUpdate(`
@@ -1017,10 +1028,15 @@ export class SparqlConnector {
 
 	/** Removes the member entirely: its `rdf:type` and `rdfs:label` triples, plus (STORY-081) every
 	 *  `WorkspaceMembership` row referencing it, across every Workspace, plus (STORY-083) unlinking
-	 *  (not deleting) any Note whose `noteLinkedElement` pointed at it. */
-	async deleteIndividual(iri: string, namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<void> {
+	 *  (not deleting) any Note whose `noteLinkedElement` pointed at it. `namespaceBaseIri` is
+	 *  optional — see `renameIndividual`'s doc for why an omitted value resolves via
+	 *  `findNamespaceOfIndividual` rather than defaulting to a guess: a `DELETE WHERE` against the
+	 *  wrong graph matches zero triples and succeeds silently, which previously left a member
+	 *  removed from the canvas/UI while its triples stayed in GraphDB untouched. */
+	async deleteIndividual(iri: string, namespaceBaseIri?: string): Promise<void> {
 		this.assertSafeSparqlIri(iri, 'individual IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(iri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		await this.executeUpdate(`
 			${PREFIXES}
 			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.instances)} } ;
@@ -1029,20 +1045,31 @@ export class SparqlConnector {
 		`);
 	}
 
-	/** Every member of `classIriValue` — structurally a smaller sibling of `fetchAllClasses`. */
+	/** Every member of `classIriValue`, across every namespace in the repository — not just the one
+	 *  declaring `classIriValue` itself. An individual can be minted into a namespace different from
+	 *  its class's own declaring namespace (STORY-099/100's Concept Namespace override — a
+	 *  hand-typed-identifier member, or a Backstage-synced individual), so scoping this to one
+	 *  namespace's instance graph would silently drop such individuals from e.g. `MemberForm`'s
+	 *  relation-field typeahead even though their triples are all still present. An unrestricted
+	 *  cross-graph `GRAPH ?g {...}` lookup, mirroring `fetchAllIndividualClassRelations`'s own
+	 *  cross-namespace posture — deliberately no `FROM` clause: mixing `FROM <g>` with an
+	 *  unrestricted `GRAPH ?g {...}` collapses the query's named-graph set to empty per SPARQL 1.1
+	 *  semantics, silently zeroing every result. `?g` doubles as each result's `namespaceBaseIri` for
+	 *  free — `namespaceGraphs()`'s instance graph is literally the namespace's own base IRI, no
+	 *  suffix — so the caller (`MemberForm`'s relation-field typeahead) can disambiguate two
+	 *  same-labeled individuals from different namespaces without a second lookup. */
 	async fetchIndividualsOfClass(
-		classIriValue: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<Array<{ iri: string; label: string }>> {
+		classIriValue: string
+	): Promise<Array<{ iri: string; label: string; namespaceBaseIri: string }>> {
 		this.assertSafeSparqlIri(classIriValue, 'class IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?i ?label ${fromClause(graphs.instances)} WHERE { ?i a <${classIriValue}> . OPTIONAL { ?i rdfs:label ?label } }
+			SELECT ?i ?label ?g WHERE { GRAPH ?g { ?i a <${classIriValue}> . OPTIONAL { ?i rdfs:label ?label } } }
 		`);
 		return results.results.bindings.map((b) => ({
 			iri: b.i.value,
-			label: b.label?.value ?? extractLocalName(b.i.value)
+			label: b.label?.value ?? extractLocalName(b.i.value),
+			namespaceBaseIri: b.g.value
 		}));
 	}
 
@@ -1061,17 +1088,22 @@ export class SparqlConnector {
 	 * Current values of `attributes` on `individualIri`, keyed by attribute IRI — a single string for
 	 * a `repeatable: false` attribute, an array of strings for a `repeatable: true` one. `attributes`
 	 * is the same own+inherited attribute list STORY-109's `mergeAncestorAttributes` produces for the
-	 * individual's class (only `iri`/`repeatable` are needed here).
+	 * individual's class (only `iri`/`repeatable` are needed here). `namespaceBaseIri` is optional —
+	 * see `renameIndividual`'s doc for why an omitted value resolves via `findNamespaceOfIndividual`
+	 * instead of guessing the individual's *class's* namespace, which a Concept Namespace override
+	 * can make wrong: a `FROM`-scoped SELECT against the wrong graph silently returns no bindings,
+	 * indistinguishable from "this individual genuinely has none of these attributes set".
 	 */
 	async fetchIndividualAttributeValues(
 		individualIri: string,
 		attributes: Array<{ iri: string; repeatable: boolean }>,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri?: string
 	): Promise<Record<string, string | string[]>> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		for (const attr of attributes) this.assertSafeSparqlIri(attr.iri, 'attribute IRI');
 		if (attributes.length === 0) return {};
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const repeatableByIri = new Map(attributes.map((a) => [a.iri, a.repeatable]));
 
 		const results = await this.selectQuery(`
@@ -1101,18 +1133,20 @@ export class SparqlConnector {
 	 * Sets (or, when `value` is `null`, clears) a single-valued (`repeatable: false`) attribute's
 	 * literal value on an individual — DELETE-then-INSERT to replace (or DELETE-only to clear),
 	 * mirroring `renameIndividual`'s shape exactly but for an arbitrary attribute predicate/datatype
-	 * instead of the fixed `rdfs:label` one.
+	 * instead of the fixed `rdfs:label` one. `namespaceBaseIri` is optional — see `renameIndividual`'s
+	 * doc for why an omitted value resolves via `findNamespaceOfIndividual`.
 	 */
 	async setIndividualAttributeValue(
 		individualIri: string,
 		attributeIri: string,
 		datatype: XsdDatatype,
 		value: string | null,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri?: string
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const insertClause =
 			value === null
 				? ''
@@ -1128,34 +1162,39 @@ export class SparqlConnector {
 	}
 
 	/** Adds one value to a repeatable attribute on an individual — mirrors `insertAssertion`'s shape
-	 *  but with a typed literal object instead of an IRI object. */
+	 *  but with a typed literal object instead of an IRI object. `namespaceBaseIri` is optional — see
+	 *  `renameIndividual`'s doc for why an omitted value resolves via `findNamespaceOfIndividual`. */
 	async addIndividualAttributeValue(
 		individualIri: string,
 		attributeIri: string,
 		datatype: XsdDatatype,
 		value: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri?: string
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		await this.executeUpdate(
 			`${PREFIXES} INSERT DATA { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
 		);
 	}
 
 	/** Removes one value from a repeatable attribute on an individual — mirrors `deleteAssertion`'s
-	 *  shape but with a typed literal object instead of an IRI object. */
+	 *  shape but with a typed literal object instead of an IRI object. `namespaceBaseIri` is optional
+	 *  — see `renameIndividual`'s doc for why an omitted value resolves via
+	 *  `findNamespaceOfIndividual`. */
 	async removeIndividualAttributeValue(
 		individualIri: string,
 		attributeIri: string,
 		datatype: XsdDatatype,
 		value: string,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri?: string
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const graphs = namespaceGraphs(namespaceBaseIri);
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		await this.executeUpdate(
 			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
 		);
@@ -1169,6 +1208,10 @@ export class SparqlConnector {
 	 * module stays GraphDB-free, so the type isn't imported here, just matched. Runs sequentially
 	 * (not `Promise.all`'d): a repeatable attribute's own add/remove pair must not race a
 	 * single-valued attribute's DELETE-then-INSERT touching the same individual.
+	 *
+	 * `namespaceBaseIri` is optional — resolved once via `findNamespaceOfIndividual` when omitted
+	 * (see `renameIndividual`'s doc) and passed explicitly into every per-attribute call below, so a
+	 * batch of N submissions costs one extra lookup, not N.
 	 */
 	async applyAttributeSubmissions(
 		individualIri: string,
@@ -1180,18 +1223,20 @@ export class SparqlConnector {
 			added?: string[];
 			removed?: string[];
 		}>,
-		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+		namespaceBaseIri?: string
 	): Promise<void> {
+		if (submissions.length === 0) return;
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
 		for (const s of submissions) {
 			if (s.repeatable) {
 				for (const v of s.added ?? []) {
-					await this.addIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, namespaceBaseIri);
+					await this.addIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, resolvedNamespaceBaseIri);
 				}
 				for (const v of s.removed ?? []) {
-					await this.removeIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, namespaceBaseIri);
+					await this.removeIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, v, resolvedNamespaceBaseIri);
 				}
 			} else {
-				await this.setIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, s.value ?? null, namespaceBaseIri);
+				await this.setIndividualAttributeValue(individualIri, s.attributeIri, s.datatype, s.value ?? null, resolvedNamespaceBaseIri);
 			}
 		}
 	}
@@ -1718,9 +1763,16 @@ export class SparqlConnector {
 	 * `owl:ObjectProperty`/`rdfs:label`. Drawing it again from the *same* source class to the *same*
 	 * target is still rejected as a duplicate, matching the existing `propertyExists` semantics; to
 	 * a *different* target, a generic relation instead merges the new target into the existing
-	 * `sh:property` entry as an `sh:or` union (`rewriteGenericPropertyShapeTargets`) — a specific
-	 * relation still rejects same-source-class reuse outright, since its `rdfs:domain`/`rdfs:range`
-	 * are per-(source,target) by construction.
+	 * `sh:property` entry as an `sh:or` union (`rewriteGenericPropertyShapeTargets`).
+	 *
+	 * A *specific* relation's IRI is minted deterministically from `sourceClassIri` + `name`
+	 * (`utils/iri.ts`), so re-declaring one under the same source class and name — most often a
+	 * relation the user thought they'd deleted, or is deliberately redefining — always collides with
+	 * whatever's already there under that IRI. Rather than rejecting that as a duplicate, this
+	 * rewrites the existing `owl:ObjectProperty`/`sh:property` triples in place (new target, label,
+	 * cardinality) and returns the same IRI, as long as the existing declaration's own
+	 * `rdfs:domain` is this same `sourceClassIri` — a mismatched `rdfs:domain` (only reachable via
+	 * hand-edited Turtle) is treated as a genuine naming collision and still rejected.
 	 */
 	async insertObjectProperty(
 		sourceClassIri: string,
@@ -1810,11 +1862,54 @@ export class SparqlConnector {
 		}
 
 		const propIri = propertyIri(sourceClassIri, name, graphs.schema);
-		if (await this.propertyExists(propIri, namespaceBaseIri)) {
-			throw new Error(`A relation named "${name}" already exists on this entity (${propIri})`);
-		}
-
 		const shapeIri = await this.ensureNodeShape(sourceClassIri, namespaceBaseIri);
+
+		if (await this.propertyExists(propIri, namespaceBaseIri)) {
+			// Same source class + same name always mints this same deterministic IRI (`utils/iri.ts`),
+			// so this is this class's *own* earlier relation of this name, not another entity's
+			// collision — most commonly left behind by a delete that didn't fully clean up (see
+			// `deleteObjectProperty`'s doc comment), or simply redefining it outright. Either way,
+			// re-declaring it here reuses/rewrites those existing triples in place — same end state a
+			// clean delete-then-recreate would produce — rather than erroring. A property with this
+			// IRI but a *different* `rdfs:domain` (only reachable via hand-edited Turtle, since minting
+			// always ties the IRI to `sourceClassIri`) is a genuine naming collision and still refused.
+			const ownedByThisClass = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${propIri}> rdfs:domain <${sourceClassIri}> }`
+			);
+			if (!ownedByThisClass) {
+				throw new Error(`A relation named "${name}" already exists on this entity (${propIri})`);
+			}
+
+			await this.executeUpdate(`
+				${PREFIXES}
+				${withGraph(graphs.schema)}
+				DELETE { <${propIri}> rdfs:range ?oldRange ; rdfs:label ?oldLabel . }
+				INSERT {
+					<${propIri}> a owl:ObjectProperty ;
+						rdfs:domain <${sourceClassIri}> ;
+						rdfs:range <${targetClassIri}> ;
+						rdfs:label "${escapedName}" .
+				}
+				WHERE {
+					OPTIONAL { <${propIri}> rdfs:range ?oldRange }
+					OPTIONAL { <${propIri}> rdfs:label ?oldLabel }
+				} ;
+				DELETE WHERE {
+					${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape sh:path <${propIri}> . ?propShape ?p ?o .`, graphs.shapes)}
+				} ;
+				INSERT DATA {
+					GRAPH <${graphs.shapes}> {
+						<${shapeIri}> sh:property [
+							sh:path <${propIri}> ;
+							sh:class <${targetClassIri}> ;
+							sh:name "${escapedName}"${constraints}
+						] .
+					}
+				}
+			`);
+
+			return { iri: propIri };
+		}
 
 		await this.executeUpdate(`
 			${PREFIXES}
@@ -1961,31 +2056,44 @@ export class SparqlConnector {
 	 * Removes both the `owl:ObjectProperty` declaration and its `sh:property` shape entry, from
 	 * `sourceClassIri`'s own namespace, derived automatically (Decision 8).
 	 *
-	 * When `targetClassIri` is given and this source class's property shape currently targets
-	 * *more than one* class (an `sh:or` union — the same generic relation drawn to several targets
-	 * from this one class), only that one target is dropped from the union; the shape, the shared
-	 * `owl:ObjectProperty` declaration, and the other targets are all left untouched. Deleting the
-	 * union's last remaining target falls through to the existing whole-shape removal below.
+	 * When `targetClassIri` is given, the relation is *generic* (no `rdfs:domain` — see
+	 * `deletePropertyTriples`'s own `hasDomain` check), and this source class's property shape
+	 * currently targets *more than one* class (an `sh:or` union — the same generic relation drawn
+	 * to several targets from this one class), only that one target is dropped from the union; the
+	 * shape, the shared `owl:ObjectProperty` declaration, and the other targets are all left
+	 * untouched. A *specific* relation (has `rdfs:domain`) is single-owner, single-target by
+	 * construction (`updateObjectProperty`'s specific-relation path always rewrites its one
+	 * `sh:property` blank node in place rather than adding another) and always falls through to the
+	 * whole-shape removal below, regardless of how many `sh:property` blocks `targets` happens to
+	 * report — treating a specific relation's multi-target shape as a union to shrink would silently
+	 * leave stale, undeletable duplicate blocks (and the `owl:ObjectProperty` declaration itself)
+	 * behind instead of fully removing it. Deleting the union's last remaining target also falls
+	 * through to the existing whole-shape removal below.
 	 */
 	async deleteObjectProperty(propIri: string, sourceClassIri: string, targetClassIri?: string): Promise<void> {
 		const namespaceBaseIri = await this.findNamespaceOfClass(sourceClassIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 
 		if (targetClassIri) {
-			const shapeIri = nodeShapeIri(sourceClassIri, graphs.shapes);
-			const details = await this.fetchGenericPropertyShapeDetails(shapeIri, propIri, graphs);
-			if (details.targets.length > 1) {
-				const remaining = details.targets.filter((t) => t !== targetClassIri);
-				await this.rewriteGenericPropertyShapeTargets(
-					shapeIri,
-					propIri,
-					remaining,
-					details.name ?? '',
-					(details.minCount ?? 0) >= 1,
-					details.maxCount === undefined,
-					graphs
-				);
-				return;
+			const hasDomain = await this.askQuery(
+				`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${propIri}> rdfs:domain ?d }`
+			);
+			if (!hasDomain) {
+				const shapeIri = nodeShapeIri(sourceClassIri, graphs.shapes);
+				const details = await this.fetchGenericPropertyShapeDetails(shapeIri, propIri, graphs);
+				if (details.targets.length > 1) {
+					const remaining = details.targets.filter((t) => t !== targetClassIri);
+					await this.rewriteGenericPropertyShapeTargets(
+						shapeIri,
+						propIri,
+						remaining,
+						details.name ?? '',
+						(details.minCount ?? 0) >= 1,
+						details.maxCount === undefined,
+						graphs
+					);
+					return;
+				}
 			}
 		}
 
@@ -2495,10 +2603,7 @@ export class SparqlConnector {
 			);
 			return;
 		}
-		// A single-quoted SPARQL string literal's grammar excludes raw newline/carriage-return bytes
-		// (STRING_LITERAL_QUOTE) — this field is a multi-line textarea, so those must be escaped as
-		// the two-character `\n`/`\r` sequences (valid ECHARs), not passed through verbatim.
-		const escapedPath = this.escapeString(trimmed).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+		const escapedPath = this.escapeString(trimmed);
 		await this.executeUpdate(`
 			${PREFIXES}
 			${withGraph(graphs.schema)}
@@ -2553,10 +2658,7 @@ export class SparqlConnector {
 			);
 			return;
 		}
-		// A single-quoted SPARQL string literal's grammar excludes raw newline/carriage-return bytes
-		// (STRING_LITERAL_QUOTE) — mirrors `updateAttributeSourceField`'s own escaping, since a pasted
-		// value can still carry one even into a single-line input.
-		const escapedType = this.escapeString(trimmed).replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+		const escapedType = this.escapeString(trimmed);
 		await this.executeUpdate(`
 			${PREFIXES}
 			${withGraph(graphs.schema)}
@@ -2579,6 +2681,98 @@ export class SparqlConnector {
 			} LIMIT 1
 		`);
 		return results.results.bindings[0]?.type?.value ?? null;
+	}
+
+	// -- Reverse relations (STORY-XXX) ------------------------------------------------------------
+	// The relation form's "Define reverse relation" checkbox mints a second, ordinary specific
+	// relation (via `insertObjectProperty` with source/target swapped) and links it to the first via
+	// two predicates: `owl:inverseOf`, written symmetrically on both sides (standard OWL, lets a
+	// lookup work from either property), and `rse:generatedReverseOf`, written only on the
+	// auto-generated side (app-specific bookkeeping — which half of the pair is "the one nobody
+	// explicitly drew," so the canvas can default-hide just that one). Neither the base relation
+	// declaration nor its `sh:property` shape entry is special-cased here — `insertObjectProperty`/
+	// `updateObjectProperty`/`deleteObjectProperty` handle those exactly as for any other relation;
+	// this section only owns the link between the two.
+
+	/** Links `forwardPropIri`/`reversePropIri` as each other's reverse (STORY-XXX): `owl:inverseOf`
+	 *  written symmetrically in each property's own namespace's schema graph, plus
+	 *  `rse:generatedReverseOf` on the reverse side only. Namespaces resolved independently per side
+	 *  (mirrors `insertObjectProperty`'s own per-relation namespace derivation) since a relation can
+	 *  cross namespaces. */
+	async linkGeneratedReverse(
+		forwardPropIri: string,
+		forwardSourceClassIri: string,
+		reversePropIri: string,
+		reverseSourceClassIri: string
+	): Promise<void> {
+		this.assertSafeSparqlIri(forwardPropIri, 'property IRI');
+		this.assertSafeSparqlIri(reversePropIri, 'reverse property IRI');
+		const forwardNamespaceBaseIri = await this.findNamespaceOfClass(forwardSourceClassIri);
+		const reverseNamespaceBaseIri = await this.findNamespaceOfClass(reverseSourceClassIri);
+		const forwardGraphs = namespaceGraphs(forwardNamespaceBaseIri);
+		const reverseGraphs = namespaceGraphs(reverseNamespaceBaseIri);
+		await this.executeUpdate(`
+			${PREFIXES}
+			INSERT DATA {
+				GRAPH <${forwardGraphs.schema}> { <${forwardPropIri}> owl:inverseOf <${reversePropIri}> . }
+				GRAPH <${reverseGraphs.schema}> {
+					<${reversePropIri}> owl:inverseOf <${forwardPropIri}> ;
+						<${GENERATED_REVERSE_OF_PREDICATE_IRI}> <${forwardPropIri}> .
+				}
+			}
+		`);
+	}
+
+	/** Removes the `owl:inverseOf`/`rse:generatedReverseOf` link between `forwardPropIri` and
+	 *  `reversePropIri` (STORY-XXX) — always call this before deleting either side of a pair, since
+	 *  `deleteObjectProperty` only cleans up the triples it itself wrote and would otherwise leave a
+	 *  dangling half-link on the side left standing. Uses `DELETE WHERE` (mirrors
+	 *  `updateRelationSourceType`'s own clearing idiom) rather than `DELETE DATA`, so it's a no-op —
+	 *  not an error — if the link is already gone on one side. */
+	async unlinkGeneratedReverse(
+		forwardPropIri: string,
+		forwardSourceClassIri: string,
+		reversePropIri: string,
+		reverseSourceClassIri: string
+	): Promise<void> {
+		this.assertSafeSparqlIri(forwardPropIri, 'property IRI');
+		this.assertSafeSparqlIri(reversePropIri, 'reverse property IRI');
+		const forwardNamespaceBaseIri = await this.findNamespaceOfClass(forwardSourceClassIri);
+		const reverseNamespaceBaseIri = await this.findNamespaceOfClass(reverseSourceClassIri);
+		const forwardGraphs = namespaceGraphs(forwardNamespaceBaseIri);
+		const reverseGraphs = namespaceGraphs(reverseNamespaceBaseIri);
+		await this.executeUpdate(`
+			${PREFIXES}
+			DELETE WHERE { ${inGraph(`<${forwardPropIri}> owl:inverseOf <${reversePropIri}>`, forwardGraphs.schema)} };
+			DELETE WHERE { ${inGraph(`<${reversePropIri}> owl:inverseOf <${forwardPropIri}>`, reverseGraphs.schema)} };
+			DELETE WHERE { ${inGraph(`<${reversePropIri}> <${GENERATED_REVERSE_OF_PREDICATE_IRI}> <${forwardPropIri}>`, reverseGraphs.schema)} }
+		`);
+	}
+
+	/** Returns `propIri`'s currently-defined reverse relation — its `owl:inverseOf` partner's IRI,
+	 *  current name (`rdfs:label`), and `rse:sourceRelation` mapping (STORY-107) if any — or `null`
+	 *  if `propIri` has no reverse defined. Works symmetrically (call with either side's IRI). One
+	 *  unrestricted cross-graph query (mirrors `fetchLabelsForIris`'s/`findNamespaceOfSubject`'s own
+	 *  cross-graph style) since the reverse may live in a different namespace's schema graph than
+	 *  `propIri`'s own, when the relation crosses namespaces. */
+	async fetchInverseRelation(
+		propIri: string
+	): Promise<{ iri: string; name: string; sourceRelation: string | null } | null> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?inverse ?label ?sourceType WHERE {
+				GRAPH ?g1 { <${propIri}> owl:inverseOf ?inverse }
+				OPTIONAL { GRAPH ?g2 { ?inverse rdfs:label ?label } }
+				OPTIONAL { GRAPH ?g3 { ?inverse <${SOURCE_RELATION_PREDICATE_IRI}> ?sourceType } }
+			} LIMIT 1
+		`);
+		const binding = results.results.bindings[0];
+		if (!binding?.inverse) return null;
+		return {
+			iri: binding.inverse.value,
+			name: binding.label?.value ?? '',
+			sourceRelation: binding.sourceType?.value ?? null
+		};
 	}
 
 	/**
@@ -5998,9 +6192,10 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?p ?label ?domain ?range ${fromClause(graphs.schema)} WHERE {
+			SELECT ?p ?label ?domain ?range ?reverseOf ${fromClause(graphs.schema)} WHERE {
 				?p a ${owlType} ; rdfs:domain ?domain ; rdfs:range ?range .
 				OPTIONAL { ?p rdfs:label ?label }
+				OPTIONAL { ?p <${GENERATED_REVERSE_OF_PREDICATE_IRI}> ?reverseOf }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
@@ -6008,7 +6203,8 @@ export class SparqlConnector {
 			label: b.label?.value ?? extractLocalName(b.p.value),
 			domain: b.domain.value,
 			range: b.range.value,
-			namespaceBaseIri
+			namespaceBaseIri,
+			generatedReverseOf: b.reverseOf?.value
 		}));
 	}
 
@@ -6149,8 +6345,22 @@ export class SparqlConnector {
 		return await response.json();
 	}
 
+	/**
+	 * Escapes a value for interpolation into a single-line `"..."` SPARQL string literal
+	 * (STRING_LITERAL_QUOTE). That production excludes raw `"`, `\`, and newline/carriage-return
+	 * bytes outright — any caller whose value can contain one (free-text descriptions, multi-line
+	 * `sourceField` paths, a saved query's own multi-line `sparqlText`, ...) must have it turned into
+	 * the corresponding two-character ECHAR (`\"`, `\\`, `\n`, `\r`) here, not at the call site: an
+	 * unescaped newline reaching GraphDB fails as a lexical error mid-literal, one query-string away
+	 * from the actual cause. `\\` must be escaped first so the backslashes this method itself inserts
+	 * for the other characters are never re-escaped.
+	 */
 	private escapeString(str: string): string {
-		return str.replace(/["\\]/g, '\\$&');
+		return str
+			.replace(/\\/g, '\\\\')
+			.replace(/"/g, '\\"')
+			.replace(/\n/g, '\\n')
+			.replace(/\r/g, '\\r');
 	}
 
 	/**

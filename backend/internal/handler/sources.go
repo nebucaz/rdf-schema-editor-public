@@ -69,6 +69,40 @@ func (h *SourceHandler) Discover(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(discoverResponse{Source: sourceName, UnmappedKinds: unmapped})
 }
 
+// Raw handles GET /sources/{source}/raw/{kind}: the exact upstream JSON for every entity of kind,
+// undecoded — a debugging escape hatch for confirming what a source actually sent (e.g. whether
+// `relations[]` really is empty upstream) rather than relying on SyncSummary's already-mapped view.
+// 501 for a source that doesn't implement sync.RawSource — not every Source need support this.
+func (h *SourceHandler) Raw(w http.ResponseWriter, r *http.Request) {
+	sourceName := chi.URLParam(r, "source")
+	kind := chi.URLParam(r, "kind")
+	source, ok := h.registry.Get(sourceName)
+	if !ok {
+		auditLog(r, sourceName, http.StatusNotFound, "unknown source")
+		http.Error(w, "unknown source: "+sourceName, http.StatusNotFound)
+		return
+	}
+
+	rawSource, ok := source.(sync.RawSource)
+	if !ok {
+		auditLog(r, sourceName, http.StatusNotImplemented, "source does not support raw dump")
+		http.Error(w, "source does not support raw dump: "+sourceName, http.StatusNotImplemented)
+		return
+	}
+
+	items, err := rawSource.FetchRawEntities(r.Context(), kind)
+	if err != nil {
+		auditLog(r, sourceName, http.StatusBadGateway, "fetch raw entities: "+err.Error())
+		http.Error(w, "fetch raw entities: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	auditLog(r, sourceName, http.StatusOK, "")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(items)
+}
+
 // Sync handles POST /sources/{source}/sync?dryRun=true|false — triggers an immediate RunSync
 // (Story 007) and returns its summary synchronously (Story 008). `dryRun` defaults to false.
 func (h *SourceHandler) Sync(w http.ResponseWriter, r *http.Request) {

@@ -136,6 +136,18 @@ export const SOURCE_FIELD_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sourceField`;
 export const SOURCE_RELATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sourceRelation`;
 
 /**
+ * `rse:generatedReverseOf`: written only on the *auto-generated* half of a relation pair created via
+ * the relation form's "Define reverse relation" checkbox — `<reverseIri> rse:generatedReverseOf
+ * <forwardIri>`, one-directional (unlike the symmetric `owl:inverseOf` triples the same feature also
+ * writes on both sides). Purely app-side bookkeeping: it's what lets the canvas tell which one of a
+ * symmetric `owl:inverseOf` pair is "the one nobody explicitly drew," so it can default-hide just that
+ * one behind the reverse-relations visibility toggle. Unlike `SOURCE_FIELD_PREDICATE_IRI`/
+ * `SOURCE_RELATION_PREDICATE_IRI` above, this one is deliberately *not* mirrored on the Go side — the
+ * sync engine has no reason to read it.
+ */
+export const GENERATED_REVERSE_OF_PREDICATE_IRI = `${SCHEMA_NAMESPACE}generatedReverseOf`;
+
+/**
  * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
  * own declaration triple, `<base> a <NAMESPACE_CLASS_IRI> ; <NAMESPACE_PREFIX_PREDICATE_IRI>
  * "prefix" ; rdfs:comment "..."`, stored in the default namespace's own `/schema` graph alongside

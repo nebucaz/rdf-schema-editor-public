@@ -14,6 +14,7 @@ function createWorkbenchActionsStore() {
 	let externalVocabManagementOpen = $state(false);
 	let exportingSvg = $state(false);
 	let hiddenNamespaces = $state<Set<string>>(new Set());
+	let showReverseRelations = $state(false);
 	let viewMode = $state<'schema' | 'instances'>('schema');
 	let activeWorkspace = $state<string | null>(null);
 	let activeNamespace = $state<string | null>(null);
@@ -28,6 +29,7 @@ function createWorkbenchActionsStore() {
 	let onToggleTriples: () => void = () => {};
 	let onExportSvg: () => void = () => {};
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
+	let onToggleReverseRelationsVisibility: () => void = () => {};
 	let onSetViewMode: (mode: 'schema' | 'instances') => void = () => {};
 	let onSetActiveWorkspace: (workspaceIri: string) => void = () => {};
 	let onSetActiveNamespace: (baseIri: string) => void = () => {};
@@ -67,6 +69,16 @@ function createWorkbenchActionsStore() {
 		},
 		set hiddenNamespaces(value: Set<string>) {
 			hiddenNamespaces = value;
+		},
+		/** Reverse-relations visibility (STORY-XXX): `+page.svelte` owns the value (it drives edge
+		 *  `hidden` state and persists via `reverseRelationsVisibilityStore`), the header's toggle
+		 *  button (`+layout.svelte`) only displays it and triggers toggles — same bridge shape as
+		 *  `hiddenNamespaces`/`toggleNamespaceVisibility`. */
+		get showReverseRelations() {
+			return showReverseRelations;
+		},
+		set showReverseRelations(value: boolean) {
+			showReverseRelations = value;
 		},
 		/** Schema/Instances view mode (data-catalog Story 007): `+page.svelte` owns the canvas
 		 *  rebuild, the header's segmented toggle (`+layout.svelte`) only displays the current value
@@ -128,6 +140,9 @@ function createWorkbenchActionsStore() {
 		registerToggleNamespaceVisibility(fn: (baseIri: string) => void) {
 			onToggleNamespaceVisibility = fn;
 		},
+		registerToggleReverseRelationsVisibility(fn: () => void) {
+			onToggleReverseRelationsVisibility = fn;
+		},
 		registerSetViewMode(fn: (mode: 'schema' | 'instances') => void) {
 			onSetViewMode = fn;
 		},
@@ -148,6 +163,9 @@ function createWorkbenchActionsStore() {
 		},
 		toggleNamespaceVisibility(baseIri: string) {
 			onToggleNamespaceVisibility(baseIri);
+		},
+		toggleReverseRelationsVisibility() {
+			onToggleReverseRelationsVisibility();
 		},
 		setViewMode(mode: 'schema' | 'instances') {
 			onSetViewMode(mode);

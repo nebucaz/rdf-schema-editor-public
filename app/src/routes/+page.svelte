@@ -76,6 +76,7 @@
 	import { activeWorkspaceStore } from '$lib/stores/active-workspace-store';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { namespaceVisibilityStore } from '$lib/stores/namespace-visibility-store';
+	import { reverseRelationsVisibilityStore } from '$lib/stores/reverse-relations-visibility-store.svelte';
 	import { viewModeStore, type ViewMode } from '$lib/stores/view-mode-store';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
@@ -235,6 +236,10 @@
 
 	let hiddenNamespaces = $state<Set<string>>(namespaceVisibilityStore.getHidden());
 	let nodeNamespaces = new Map<string, string>();
+	/** STORY-XXX: mirrors `hiddenNamespaces`'s bridge shape — this page owns the value (drives edge
+	 *  `hidden` state via `applyVisibilityFilters`, persists via `reverseRelationsVisibilityStore`),
+	 *  `+layout.svelte`'s toggle button only displays/triggers it, via `workbenchActions`. */
+	let showReverseRelations = $state<boolean>(reverseRelationsVisibilityStore.getShowReverseRelations());
 
 	/** A node id with no `nodeNamespaces` entry is an external stub (`ExternalNodeSpec` carries no
 	 *  `namespace` field) — its visibility is derived from its referencing inheritance edges instead
@@ -267,10 +272,16 @@
 		});
 		edges = edges.map((e) => {
 			if (e.type === 'noteLink') return e;
-			return {
-				...e,
-				hidden: isEdgeHidden(e.source, e.target, nodeNamespaces, hiddenNamespaces, externalReferencingSources, workspaceMembers)
-			};
+			const namespaceHidden = isEdgeHidden(
+				e.source,
+				e.target,
+				nodeNamespaces,
+				hiddenNamespaces,
+				externalReferencingSources,
+				workspaceMembers
+			);
+			const reverseHidden = !!(e.data as RelationEdgeData | undefined)?.generatedReverseOf && !showReverseRelations;
+			return { ...e, hidden: namespaceHidden || reverseHidden };
 		});
 	}
 
@@ -284,6 +295,12 @@
 			namespaceVisibilityStore.setHidden(baseIri, true);
 		}
 		hiddenNamespaces = next;
+		applyVisibilityFilters();
+	}
+
+	function toggleReverseRelationsVisibility() {
+		showReverseRelations = !showReverseRelations;
+		reverseRelationsVisibilityStore.setShowReverseRelations(showReverseRelations);
 		applyVisibilityFilters();
 	}
 
@@ -974,7 +991,12 @@
 			identifier
 		);
 		if (attributeSubmissions.length > 0) {
-			await sparqlConnector.applyAttributeSubmissions(iri, attributeSubmissions, resolvedNamespaceBaseIri);
+			// Not `resolvedNamespaceBaseIri`: a hand-typed `identifier` can make `insertIndividual`
+			// redirect the actual mint to the class's Concept Namespace instead (STORY-113's override),
+			// which `insertIndividual` doesn't report back — so `iri`'s own namespace is resolved fresh
+			// here (`findNamespaceOfIndividual`, since `iri` now exists) rather than reusing a guess
+			// that may not match where it actually landed.
+			await sparqlConnector.applyAttributeSubmissions(iri, attributeSubmissions);
 		}
 		if (relationSubmissions.length > 0) {
 			await applyRelationSubmissions(iri, relationSubmissions);
@@ -992,10 +1014,14 @@
 		relationSubmissions: RelationValueSubmission[] = []
 	) {
 		if (!manageMembersClassIri) return;
-		const namespaceBaseIri = nodeNamespaces.get(manageMembersClassIri) ?? activeNamespaceBaseIri();
-		await sparqlConnector.renameIndividual(member.iri, label, namespaceBaseIri);
+		// Member's own namespace, not manageMembersClassIri's — an individual can be minted into a
+		// namespace different from its class's (STORY-099/100's Concept Namespace override), so
+		// `sparqlConnector` resolves it itself (`findNamespaceOfIndividual`) rather than trusting a
+		// guess based on the class; passing the class's namespace here previously risked silently
+		// writing to the wrong graph, matching nothing.
+		await sparqlConnector.renameIndividual(member.iri, label);
 		if (attributeSubmissions.length > 0) {
-			await sparqlConnector.applyAttributeSubmissions(member.iri, attributeSubmissions, namespaceBaseIri);
+			await sparqlConnector.applyAttributeSubmissions(member.iri, attributeSubmissions);
 		}
 		if (relationSubmissions.length > 0) {
 			await applyRelationSubmissions(member.iri, relationSubmissions);
@@ -1008,8 +1034,10 @@
 
 	async function handleDeleteMember(member: EntityMemberVM) {
 		if (!manageMembersClassIri) return;
-		const namespaceBaseIri = nodeNamespaces.get(manageMembersClassIri) ?? activeNamespaceBaseIri();
-		await sparqlConnector.deleteIndividual(member.iri, namespaceBaseIri);
+		// See handleEditMember's comment: member.iri's own namespace, resolved by the connector, not
+		// guessed from manageMembersClassIri — a wrong guess previously made this DELETE WHERE match
+		// zero triples silently while the UI still removed the member from the canvas.
+		await sparqlConnector.deleteIndividual(member.iri);
 		updateNodeData(manageMembersClassIri, (d) => ({
 			...d,
 			members: d.members.filter((m) => m.iri !== member.iri)
@@ -1173,11 +1201,11 @@
 			editIndividualAttributeValues = {};
 			return;
 		}
-		const namespaceBaseIri = nodeNamespaces.get(editIndividualId) ?? activeNamespaceBaseIri();
+		// editIndividualId's own namespace, resolved by the connector (`findNamespaceOfIndividual`),
+		// not guessed from `nodeNamespaces` — see handleEditMember's identical comment.
 		editIndividualAttributeValues = await sparqlConnector.fetchIndividualAttributeValues(
 			editIndividualId,
-			editIndividualAttributes,
-			namespaceBaseIri
+			editIndividualAttributes
 		);
 	}
 
@@ -1191,17 +1219,25 @@
 	/**
 	 * Candidate target individuals for each relation field's typeahead (STORY-114), keyed by relation
 	 * IRI — one `fetchIndividualsOfClass` call per field, scoped to that field's own `targetClassIri`
-	 * and its own namespace (read off the already-built canvas model via `nodeNamespaces`, rather than
-	 * a second connector lookup). Shared by both `MemberForm` entry points below.
+	 * and searching every namespace (not just the one declaring `targetClassIri`), since a target
+	 * individual can be minted into a different namespace via a Concept Namespace override. Each
+	 * option's `label` is prefixed `[prefix]` via `namespacePrefixFor`, mirroring
+	 * `loadGenericRelationOptions`'s own disambiguation — without it, two individuals sharing a label
+	 * across namespaces (e.g. two identifier-minted `core:Schnittstelle`s) would be visually
+	 * indistinguishable in the datalist *and* would collide in `resolveRelationTargetIri`'s exact-label
+	 * lookup, silently resolving to whichever one happens to come first. Shared by both `MemberForm`
+	 * entry points below.
 	 */
 	async function loadRelationTargetOptions(
 		relationFields: EntityRelationFieldVM[]
 	): Promise<Record<string, RelationTargetOption[]>> {
 		const entries = await Promise.all(
 			relationFields.map(async (rel) => {
-				const namespaceBaseIri = nodeNamespaces.get(rel.targetClassIri) ?? activeNamespaceBaseIri();
-				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri, namespaceBaseIri);
-				return [rel.iri, options] as const;
+				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
+				return [
+					rel.iri,
+					options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))
+				] as const;
 			})
 		);
 		return Object.fromEntries(entries);
@@ -1256,10 +1292,11 @@
 		relationSubmissions: RelationValueSubmission[] = []
 	) {
 		if (!editIndividualId) return;
-		const namespaceBaseIri = nodeNamespaces.get(editIndividualId) ?? activeNamespaceBaseIri();
-		await sparqlConnector.renameIndividual(editIndividualId, label, namespaceBaseIri);
+		// editIndividualId's own namespace, resolved by the connector — see handleEditMember's
+		// identical comment.
+		await sparqlConnector.renameIndividual(editIndividualId, label);
 		if (attributeSubmissions.length > 0) {
-			await sparqlConnector.applyAttributeSubmissions(editIndividualId, attributeSubmissions, namespaceBaseIri);
+			await sparqlConnector.applyAttributeSubmissions(editIndividualId, attributeSubmissions);
 		}
 		if (relationSubmissions.length > 0) {
 			await applyRelationSubmissions(editIndividualId, relationSubmissions);
@@ -1297,6 +1334,16 @@
 	 *  needed) for an individual-involving relation, which has no `owl:ObjectProperty` to map. */
 	let editRelationSourceType = $state('');
 	let editRelationSourceTypeLoaded = $state(true);
+
+	/** STORY-XXX: the class→class relation's currently-defined reverse relation (if any) as of when
+	 *  the Edit Relation dialog opened — fetched alongside `editRelationSourceType` in the same
+	 *  prefetch, gated by the same `editRelationSourceTypeLoaded` flag. `editRelationReversePropIri`
+	 *  is the existing reverse's own IRI (`null` when none is defined yet), needed at submit time to
+	 *  decide between updating it in place, minting a fresh one, or deleting it. */
+	let editRelationReverseDefined = $state(false);
+	let editRelationReverseName = $state('');
+	let editRelationReverseSourceType = $state('');
+	let editRelationReversePropIri = $state<string | null>(null);
 
 	/** The assertion subject IRI for the relation currently open for editing — a class→class
 	 *  relation's own property IRI (already a real resource, so assertions attach to it directly, no
@@ -1401,7 +1448,10 @@
 		required: boolean,
 		repeatable: boolean,
 		kind: 'specific' | 'generic',
-		sourceRelation: string
+		sourceRelation: string,
+		defineReverse: boolean,
+		reverseName: string,
+		reverseSourceRelation: string
 	) {
 		const target = editRelationTarget;
 		if (!target) return;
@@ -1418,17 +1468,111 @@
 				{ kind, oldTargetClassIri }
 			);
 			await sparqlConnector.updateRelationSourceType(propIri, sourceRelation || null, namespaceBaseIri);
-			const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
-			edges = edges.map((e) =>
-				e.id === target.edgeId
-					? {
-							...e,
-							id: newEdgeId,
-							target: targetIri,
-							data: makeRelationEdgeData(newEdgeId, propIri, edge.source, name, required, repeatable, kind)
+
+			// STORY-XXX: reconcile the reverse relation against `editRelationReversePropIri` (the
+			// reverse defined as of when this dialog opened, if any) — see the plan's three-way split
+			// (rename in place / retarget-so-recreate / remove) for why a simple target-changed check
+			// decides between updating and re-minting.
+			const existingReverseIri = editRelationReversePropIri;
+			let reverseEdgeToRemoveId: string | null = null;
+			let reverseEdgeToUpsert: Edge | null = null;
+			if (kind === 'specific') {
+				if (defineReverse) {
+					if (existingReverseIri && oldTargetClassIri === targetIri) {
+						// Same target class: rename the existing reverse in place — its IRI is scoped to
+						// that class, still valid, so this is a label-only update (CLAUDE.md's "IRI never
+						// changes, rename only touches label" rule).
+						await sparqlConnector.updateObjectProperty(
+							oldTargetClassIri,
+							existingReverseIri,
+							{ name: reverseName, targetClassIri: edge.source, required: false, repeatable: false },
+							{ kind: 'specific' }
+						);
+						const reverseNamespaceBaseIri = nodeNamespaces.get(oldTargetClassIri) ?? activeNamespaceBaseIri();
+						await sparqlConnector.updateRelationSourceType(
+							existingReverseIri,
+							reverseSourceRelation || null,
+							reverseNamespaceBaseIri
+						);
+						const reverseEdgeId = relationEdgeId(existingReverseIri, oldTargetClassIri, edge.source);
+						reverseEdgeToUpsert = {
+							id: reverseEdgeId,
+							source: oldTargetClassIri,
+							target: edge.source,
+							type: 'relation',
+							hidden: !showReverseRelations,
+							data: makeRelationEdgeData(
+								reverseEdgeId,
+								existingReverseIri,
+								oldTargetClassIri,
+								reverseName,
+								false,
+								false,
+								'specific',
+								propIri
+							)
+						};
+					} else {
+						// No existing reverse, or the forward relation was retargeted — either way the
+						// reverse's IRI (scoped to its owning class) needs to be freshly minted against
+						// `targetIri`; a retargeted old reverse can't be reused, so drop it first.
+						if (existingReverseIri) {
+							await sparqlConnector.unlinkGeneratedReverse(propIri, edge.source, existingReverseIri, oldTargetClassIri);
+							await sparqlConnector.deleteObjectProperty(existingReverseIri, oldTargetClassIri);
+							reverseEdgeToRemoveId = relationEdgeId(existingReverseIri, oldTargetClassIri, edge.source);
 						}
-					: e
-			);
+						const { iri: newReverseIri } = await sparqlConnector.insertObjectProperty(
+							targetIri,
+							edge.source,
+							reverseName,
+							false,
+							false,
+							{ kind: 'specific' }
+						);
+						await sparqlConnector.linkGeneratedReverse(propIri, edge.source, newReverseIri, targetIri);
+						if (reverseSourceRelation) {
+							const reverseNamespaceBaseIri = nodeNamespaces.get(targetIri) ?? activeNamespaceBaseIri();
+							await sparqlConnector.updateRelationSourceType(newReverseIri, reverseSourceRelation, reverseNamespaceBaseIri);
+						}
+						editRelationReversePropIri = newReverseIri;
+						const reverseEdgeId = relationEdgeId(newReverseIri, targetIri, edge.source);
+						reverseEdgeToUpsert = {
+							id: reverseEdgeId,
+							source: targetIri,
+							target: edge.source,
+							type: 'relation',
+							hidden: !showReverseRelations,
+							data: makeRelationEdgeData(reverseEdgeId, newReverseIri, targetIri, reverseName, false, false, 'specific', propIri)
+						};
+					}
+				} else if (existingReverseIri) {
+					await sparqlConnector.unlinkGeneratedReverse(propIri, edge.source, existingReverseIri, oldTargetClassIri);
+					await sparqlConnector.deleteObjectProperty(existingReverseIri, oldTargetClassIri);
+					reverseEdgeToRemoveId = relationEdgeId(existingReverseIri, oldTargetClassIri, edge.source);
+					editRelationReversePropIri = null;
+				}
+			}
+
+			const newEdgeId = relationEdgeId(propIri, edge.source, targetIri);
+			let newEdges = edges
+				.filter((e) => e.id !== reverseEdgeToRemoveId)
+				.map((e) =>
+					e.id === target.edgeId
+						? {
+								...e,
+								id: newEdgeId,
+								target: targetIri,
+								data: makeRelationEdgeData(newEdgeId, propIri, edge.source, name, required, repeatable, kind)
+							}
+						: e
+				);
+			if (reverseEdgeToUpsert) {
+				const upsert = reverseEdgeToUpsert;
+				newEdges = newEdges.some((e) => e.id === upsert.id)
+					? newEdges.map((e) => (e.id === upsert.id ? upsert : e))
+					: [...newEdges, upsert];
+			}
+			edges = newEdges;
 			editRelationTarget = { edgeKind: 'class', edgeId: newEdgeId };
 			return;
 		}
@@ -1604,7 +1748,8 @@
 		name: string,
 		required: boolean,
 		repeatable: boolean,
-		kind: 'specific' | 'generic' = 'specific'
+		kind: 'specific' | 'generic' = 'specific',
+		generatedReverseOf?: string
 	): RelationEdgeData {
 		return {
 			name,
@@ -1612,14 +1757,28 @@
 			repeatable,
 			kind,
 			propIri,
+			generatedReverseOf,
 			onEdit: () => {
 				editRelationTarget = { edgeKind: 'class', edgeId };
 				void loadGenericRelationOptions();
 				editRelationSourceTypeLoaded = false;
 				editRelationSourceType = '';
+				editRelationReverseDefined = false;
+				editRelationReverseName = '';
+				editRelationReverseSourceType = '';
+				editRelationReversePropIri = null;
 				const namespaceBaseIri = nodeNamespaces.get(sourceClassIri) ?? activeNamespaceBaseIri();
-				void sparqlConnector.fetchRelationSourceType(propIri, namespaceBaseIri).then((sourceType) => {
+				void Promise.all([
+					sparqlConnector.fetchRelationSourceType(propIri, namespaceBaseIri),
+					sparqlConnector.fetchInverseRelation(propIri)
+				]).then(([sourceType, reverse]) => {
 					editRelationSourceType = sourceType ?? '';
+					if (reverse) {
+						editRelationReverseDefined = true;
+						editRelationReverseName = reverse.name;
+						editRelationReverseSourceType = reverse.sourceRelation ?? '';
+						editRelationReversePropIri = reverse.iri;
+					}
 					editRelationSourceTypeLoaded = true;
 				});
 			},
@@ -1710,6 +1869,10 @@
 				};
 				editRelationSourceType = '';
 				editRelationSourceTypeLoaded = true;
+				editRelationReverseDefined = false;
+				editRelationReverseName = '';
+				editRelationReverseSourceType = '';
+				editRelationReversePropIri = null;
 			},
 			onDelete: () => {
 				deleteIndividualRelationTarget = { edgeId, individualIri, predicateIri, targetIri };
@@ -1954,7 +2117,10 @@
 		required: boolean,
 		repeatable: boolean,
 		kind: 'specific' | 'generic',
-		sourceRelation: string
+		sourceRelation: string,
+		defineReverse: boolean,
+		reverseName: string,
+		reverseSourceRelation: string
 	) {
 		if (!pendingRelationCreate?.source || !pendingRelationCreate?.target) return;
 		const { source, target } = pendingRelationCreate;
@@ -1966,7 +2132,7 @@
 			await sparqlConnector.updateRelationSourceType(iri, sourceRelation, namespaceBaseIri);
 		}
 		const edgeId = relationEdgeId(iri, source, target);
-		edges = [
+		let newEdges: Edge[] = [
 			...edges,
 			{
 				id: edgeId,
@@ -1976,6 +2142,34 @@
 				data: makeRelationEdgeData(edgeId, iri, source, name, required, repeatable, kind)
 			}
 		];
+		if (kind === 'specific' && defineReverse) {
+			const { iri: reverseIri } = await sparqlConnector.insertObjectProperty(
+				target,
+				source,
+				reverseName,
+				false,
+				false,
+				{ kind: 'specific' }
+			);
+			await sparqlConnector.linkGeneratedReverse(iri, source, reverseIri, target);
+			if (reverseSourceRelation) {
+				const reverseNamespaceBaseIri = nodeNamespaces.get(target) ?? activeNamespaceBaseIri();
+				await sparqlConnector.updateRelationSourceType(reverseIri, reverseSourceRelation, reverseNamespaceBaseIri);
+			}
+			const reverseEdgeId = relationEdgeId(reverseIri, target, source);
+			newEdges = [
+				...newEdges,
+				{
+					id: reverseEdgeId,
+					source: target,
+					target: source,
+					type: 'relation',
+					hidden: !showReverseRelations,
+					data: makeRelationEdgeData(reverseEdgeId, reverseIri, target, reverseName, false, false, 'specific', iri)
+				}
+			];
+		}
+		edges = newEdges;
 		pendingRelationCreate = null;
 	}
 
@@ -1986,6 +2180,13 @@
 		deleteRelationBusy = true;
 		errorMessage = null;
 		try {
+			// STORY-XXX: breaking the `owl:inverseOf`/`rse:generatedReverseOf` link first (if any)
+			// keeps the other side of a defined pair from being left pointing at a now-deleted IRI —
+			// deleting one side of a pair only breaks the link, it never cascades to the other side.
+			const reverse = await sparqlConnector.fetchInverseRelation(edge.data.propIri);
+			if (reverse) {
+				await sparqlConnector.unlinkGeneratedReverse(edge.data.propIri, edge.source, reverse.iri, edge.target);
+			}
 			await sparqlConnector.deleteObjectProperty(edge.data.propIri, edge.source, edge.target);
 			edges = edges.filter((e) => e.id !== deleteRelationEdgeId);
 			deleteRelationEdgeId = null;
@@ -2403,19 +2604,20 @@
 		const newEdges: Edge[] = model.edges.map((spec) => {
 			if (spec.kind === 'relation') {
 				const edgeId = relationEdgeId(spec.iri, spec.source, spec.target);
+				const namespaceHidden = isEdgeHidden(
+					spec.source,
+					spec.target,
+					newNodeNamespaces,
+					hiddenNamespaces,
+					externalReferencingSources,
+					workspaceMembers
+				);
 				return {
 					id: edgeId,
 					source: spec.source,
 					target: spec.target,
 					type: 'relation',
-					hidden: isEdgeHidden(
-						spec.source,
-						spec.target,
-						newNodeNamespaces,
-						hiddenNamespaces,
-						externalReferencingSources,
-						workspaceMembers
-					),
+					hidden: namespaceHidden || (!!spec.generatedReverseOf && !showReverseRelations),
 					data: makeRelationEdgeData(
 						edgeId,
 						spec.iri,
@@ -2423,7 +2625,8 @@
 						spec.name,
 						spec.required,
 						spec.repeatable,
-						spec.relationKind
+						spec.relationKind,
+						spec.generatedReverseOf
 					)
 				};
 			}
@@ -2785,6 +2988,9 @@
 		workbenchActions.hiddenNamespaces = hiddenNamespaces;
 	});
 	$effect(() => {
+		workbenchActions.showReverseRelations = showReverseRelations;
+	});
+	$effect(() => {
 		workbenchActions.viewMode = viewMode;
 	});
 	$effect(() => {
@@ -2807,6 +3013,7 @@
 		});
 		workbenchActions.registerExportSvg(() => void handleExportSvg());
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
+		workbenchActions.registerToggleReverseRelationsVisibility(toggleReverseRelationsVisibility);
 		workbenchActions.registerSetViewMode(handleViewModeChange);
 		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
 		workbenchActions.registerSetActiveNamespace(handleActiveNamespaceChange);
@@ -3033,6 +3240,7 @@
 		showAddEntity = false;
 		addEntityAtPosition = null;
 	}}
+	dismissible={false}
 >
 	<EntityForm
 		mode="create"
@@ -3053,6 +3261,7 @@
 	isOpen={pendingEntityFromConnection !== null}
 	title="Create Entity"
 	onClose={() => (pendingEntityFromConnection = null)}
+	dismissible={false}
 >
 	<EntityForm
 		mode="create"
@@ -3068,6 +3277,7 @@
 	isOpen={pendingExternalClassFromConnection !== null}
 	title="Add External Class"
 	onClose={() => (pendingExternalClassFromConnection = null)}
+	dismissible={false}
 >
 	<ExternalClassForm
 		prefixes={externalVocabStore.asPrefixMap()}
@@ -3077,7 +3287,7 @@
 	/>
 </Modal>
 
-<Modal isOpen={editEntityId !== null} title="Edit Entity" onClose={() => (editEntityId = null)}>
+<Modal isOpen={editEntityId !== null} title="Edit Entity" onClose={() => (editEntityId = null)} dismissible={false}>
 	{#if editingNode && editEntityBackstageKindLoaded}
 		<EntityForm
 			mode="edit"
@@ -3168,6 +3378,7 @@
 	isOpen={attributeModal !== null}
 	title={attributeModal?.attribute ? 'Edit Attribute' : 'Add Attribute'}
 	onClose={() => (attributeModal = null)}
+	dismissible={false}
 >
 	{#if attributeModal && attributeSourceFieldLoaded}
 		<AttributeForm
@@ -3200,6 +3411,7 @@
 	isOpen={manageMembersClassIri !== null}
 	title="Manage Instances"
 	onClose={() => (manageMembersClassIri = null)}
+	dismissible={false}
 >
 	{#if manageMembersNode && manageMembersConceptNamespaceLoaded}
 		<ManageMembersModal
@@ -3217,18 +3429,19 @@
 			onAddAssertion={handleAddAssertion}
 			onDeleteAssertion={handleDeleteAssertion}
 			onLoadAttributeValues={(iri) =>
-				sparqlConnector.fetchIndividualAttributeValues(
-					iri,
-					manageMembersNode.data.attributes,
-					nodeNamespaces.get(manageMembersNode.data.classIri) ?? activeNamespaceBaseIri()
-				)}
+				sparqlConnector.fetchIndividualAttributeValues(iri, manageMembersNode.data.attributes)}
 			relationFields={manageMembersNode.data.relationFields}
 			relationTargetOptions={manageMembersRelationTargetOptions}
 		/>
 	{/if}
 </Modal>
 
-<Modal isOpen={editIndividualId !== null} title="Edit Individual" onClose={() => (editIndividualId = null)}>
+<Modal
+	isOpen={editIndividualId !== null}
+	title="Edit Individual"
+	onClose={() => (editIndividualId = null)}
+	dismissible={false}
+>
 	{#if editIndividualNode}
 		<MemberForm
 			mode="edit"
@@ -3272,7 +3485,12 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={pendingRelationCreate !== null} title="Add Relation" onClose={() => (pendingRelationCreate = null)}>
+<Modal
+	isOpen={pendingRelationCreate !== null}
+	title="Add Relation"
+	onClose={() => (pendingRelationCreate = null)}
+	dismissible={false}
+>
 	{#if pendingRelationCreate?.target}
 		<RelationForm
 			targetIri={pendingRelationCreate.target}
@@ -3283,13 +3501,19 @@
 			{genericRelationOptions}
 			initialKind="generic"
 			allowSourceRelation={true}
+			allowReverseRelation={true}
 			onCancel={() => (pendingRelationCreate = null)}
 			onSubmit={handleCreateRelationSubmit}
 		/>
 	{/if}
 </Modal>
 
-<Modal isOpen={editRelationTarget !== null} title="Edit Relation" onClose={() => (editRelationTarget = null)}>
+<Modal
+	isOpen={editRelationTarget !== null}
+	title="Edit Relation"
+	onClose={() => (editRelationTarget = null)}
+	dismissible={false}
+>
 	{#if editingRelationView && editRelationSourceTypeLoaded}
 		<RelationForm
 			initialName={editingRelationView.name}
@@ -3305,6 +3529,10 @@
 			showConstraints={editingRelationView.showConstraints}
 			allowSourceRelation={editingRelationView.edgeKind === 'class'}
 			initialSourceRelation={editRelationSourceType}
+			allowReverseRelation={editingRelationView.edgeKind === 'class'}
+			initialDefineReverse={editRelationReverseDefined}
+			initialReverseName={editRelationReverseName}
+			initialReverseSourceRelation={editRelationReverseSourceType}
 			onCancel={() => (editRelationTarget = null)}
 			onSubmit={handleEditRelationFormSubmit}
 		/>
@@ -3344,7 +3572,12 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={pendingLinkCreate !== null} title="Add Attributed Link" onClose={() => (pendingLinkCreate = null)}>
+<Modal
+	isOpen={pendingLinkCreate !== null}
+	title="Add Attributed Link"
+	onClose={() => (pendingLinkCreate = null)}
+	dismissible={false}
+>
 	{#if pendingLinkCreate?.target}
 		<RelationForm
 			targetIri={pendingLinkCreate.target}
@@ -3357,7 +3590,12 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={editLinkEdgeId !== null} title="Edit Attributed Link" onClose={() => (editLinkEdgeId = null)}>
+<Modal
+	isOpen={editLinkEdgeId !== null}
+	title="Edit Attributed Link"
+	onClose={() => (editLinkEdgeId = null)}
+	dismissible={false}
+>
 	{#if editingLinkEdge}
 		<RelationForm
 			initialName={editingLinkEdge.data.propName}
@@ -3401,6 +3639,7 @@
 	isOpen={pendingIndividualRelationCreate !== null}
 	title="Add Relation"
 	onClose={() => (pendingIndividualRelationCreate = null)}
+	dismissible={false}
 >
 	{#if pendingIndividualRelationCreate?.target}
 		<IndividualRelationForm
@@ -3429,7 +3668,12 @@
 	{/if}
 </Modal>
 
-<Modal isOpen={showAddAssociation} title="Add Attributed Relationship" onClose={() => (showAddAssociation = false)}>
+<Modal
+	isOpen={showAddAssociation}
+	title="Add Attributed Relationship"
+	onClose={() => (showAddAssociation = false)}
+	dismissible={false}
+>
 	<AssociationForm
 		{entityOptions}
 		namespaceOptions={namespaceStore.namespaces}
@@ -3443,6 +3687,7 @@
 	isOpen={editAssociationId !== null}
 	title="Edit Attributed Relationship"
 	onClose={() => (editAssociationId = null)}
+	dismissible={false}
 >
 	{#if editingAssociationNode}
 		<AssociationEditForm
@@ -3475,6 +3720,7 @@
 		showAddExternalClass = false;
 		addExternalClassAtPosition = null;
 	}}
+	dismissible={false}
 >
 	<ExternalClassForm
 		prefixes={externalVocabStore.asPrefixMap()}

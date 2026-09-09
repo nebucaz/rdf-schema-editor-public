@@ -338,6 +338,12 @@
 
 {#if !hideNameForm}
 	<form onsubmit={handleSubmit}>
+		{#if mode === 'edit' && individualIri}
+			<label>
+				IRI
+				<input type="text" class="iri" value={individualIri} readonly title={individualIri} />
+			</label>
+		{/if}
 		<label>
 			Label{#if labelRequired}<span class="required-mark"> *</span>{/if}
 			<input type="text" bind:value={label} placeholder="e.g. nutzt" />
@@ -550,6 +556,13 @@
 		border: 1px solid var(--color-border);
 		border-radius: 6px;
 		padding: 0.5rem 0.65rem;
+	}
+
+	input.iri {
+		font-family: 'SF Mono', Menlo, Consolas, monospace;
+		font-size: 0.8rem;
+		color: var(--color-text-muted);
+		background: var(--color-bg-secondary);
 	}
 
 	.error {

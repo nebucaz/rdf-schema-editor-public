@@ -39,6 +39,7 @@ import {
 	NAMESPACE_PREDICATE_IRI,
 	SOURCE_FIELD_PREDICATE_IRI,
 	SOURCE_RELATION_PREDICATE_IRI,
+	GENERATED_REVERSE_OF_PREDICATE_IRI,
 	catalogIri,
 	datasetIri,
 	distributionIri,
@@ -165,6 +166,9 @@ function mockGraphFetch(
 		/** STORY-107: the property IRI's current `rse:sourceRelation` mapping, for
 		 *  `fetchRelationSourceType`. */
 		sourceType?: string;
+		/** STORY-XXX: the `owl:inverseOf` partner returned by `fetchInverseRelation`, or `undefined`
+		 *  when no reverse is defined. */
+		inverseRelation?: { iri: string; label?: string; sourceType?: string };
 		authoritativeEntityClassIri?: string;
 		/** STORY-103: the configured `rse:representsPredicate` setting value, for
 		 *  `fetchRepresentsPredicateIri`. */
@@ -198,6 +202,28 @@ function mockGraphFetch(
 			const supers = (subjectIri ? fixture.superClasses?.[subjectIri] : undefined) ?? [];
 			const bindings = supers.map((s) => ({ super: { type: 'uri', value: s } }));
 			return new Response(JSON.stringify({ head: { vars: ['super'] }, results: { bindings } }), { status: 200 });
+		}
+		if (q.includes('owl:inverseOf') && q.includes('?label')) {
+			// fetchInverseRelation's own query — checked before the generic `GRAPH ?g` branch below,
+			// since its `GRAPH ?g1`/`?g2`/`?g3` variables would otherwise (wrongly) match that branch's
+			// substring check.
+			const bindings = fixture.inverseRelation
+				? [
+						{
+							inverse: { type: 'uri', value: fixture.inverseRelation.iri },
+							...(fixture.inverseRelation.label !== undefined
+								? { label: { type: 'literal', value: fixture.inverseRelation.label } }
+								: {}),
+							...(fixture.inverseRelation.sourceType !== undefined
+								? { sourceType: { type: 'literal', value: fixture.inverseRelation.sourceType } }
+								: {})
+						}
+					]
+				: [];
+			return new Response(
+				JSON.stringify({ head: { vars: ['inverse', 'label', 'sourceType'] }, results: { bindings } }),
+				{ status: 200 }
+			);
 		}
 		if (q.includes('GRAPH ?g')) {
 			const match = q.match(/GRAPH \?g \{ <([^>]+)> a owl:Class \}/);
@@ -576,6 +602,83 @@ describe('SparqlConnector — relation edges (STORY-006)', () => {
 		expect(updates[0]).toContain(`sh:path <${propIri}>`);
 		expect(updates[0]).toContain(
 			`DELETE WHERE { ${inGraph(`<${propIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+});
+
+describe('SparqlConnector — redefining a specific relation reuses its own leftover triples', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** `insertObjectProperty`'s specific-relation path mints a deterministic IRI from
+	 *  (sourceClassIri, name), so re-declaring one under the same source class always collides with
+	 *  whatever's already at that IRI — most often triples a delete left behind. Mocks
+	 *  `findNamespaceOfClass`'s `GRAPH ?g` lookup, `propertyExists`'s
+	 *  `owl:DatatypeProperty`/`owl:ObjectProperty` ASK, `ensureNodeShape`'s `sh:NodeShape` ASK, and
+	 *  the new "is the existing declaration's own `rdfs:domain` this same source class" ASK. */
+	function mockRedefineFetch(fixture: { propertyExists: boolean; ownedByThisClass?: boolean }) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:domain <')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.ownedByThisClass ?? false }), {
+					status: 200
+				});
+			}
+			if (q.includes('owl:DatatypeProperty') || q.includes('owl:ObjectProperty')) {
+				return new Response(JSON.stringify({ head: {}, boolean: fixture.propertyExists }), { status: 200 });
+			}
+			if (q.includes('sh:NodeShape')) {
+				return new Response(JSON.stringify({ head: {}, boolean: true }), { status: 200 });
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('rewrites the existing owl:ObjectProperty/sh:property triples in place instead of erroring, when the leftover declaration is this same source class\'s own', async () => {
+		const api = classIri('Api');
+		const system = classIri('System');
+		const expectedIri = propertyIri(api, 'isPartOf');
+		const { fn, updates } = mockRedefineFetch({ propertyExists: true, ownedByThisClass: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.insertObjectProperty(api, system, 'isPartOf', false, true);
+
+		expect(result.iri).toBe(expectedIri);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${expectedIri}> a owl:ObjectProperty`);
+		expect(updates[0]).toContain(`rdfs:domain <${api}>`);
+		expect(updates[0]).toContain(`rdfs:range <${system}>`);
+		expect(updates[0]).toContain(`sh:class <${system}>`);
+		expect(updates[0]).toContain(`<${nodeShapeIri(api)}> sh:property ?propShape . ?propShape sh:path <${expectedIri}>`);
+		expect(updates[0]).toContain('DELETE WHERE {');
+		expect(updates[0]).toContain('INSERT DATA {');
+	});
+
+	it('still rejects the collision when the existing declaration at that IRI belongs to a different rdfs:domain', async () => {
+		const api = classIri('Api');
+		const system = classIri('System');
+		const { fn } = mockRedefineFetch({ propertyExists: true, ownedByThisClass: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.insertObjectProperty(api, system, 'isPartOf', false, true)).rejects.toThrow(
+			/already exists/
 		);
 	});
 });
@@ -1833,6 +1936,94 @@ describe('SparqlConnector — rse:sourceRelation annotation (Backstage-sync STOR
 		const set = mockGraphFetch({ sourceType: 'ownedBy' });
 		vi.stubGlobal('fetch', set.fn);
 		await expect(connector.fetchRelationSourceType(propIri)).resolves.toBe('ownedBy');
+	});
+});
+
+describe('SparqlConnector — reverse relations (STORY-XXX)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('linkGeneratedReverse writes owl:inverseOf on both sides and rse:generatedReverseOf only on the reverse', async () => {
+		const componentIri = classIri('Component');
+		const groupIri = classIri('Group');
+		const forwardPropIri = propertyIri(componentIri, 'ownedBy');
+		const reversePropIri = propertyIri(groupIri, 'owns');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.linkGeneratedReverse(forwardPropIri, componentIri, reversePropIri, groupIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+		expect(updates[0]).toContain(`<${forwardPropIri}> owl:inverseOf <${reversePropIri}> .`);
+		expect(updates[0]).toContain(`<${reversePropIri}> owl:inverseOf <${forwardPropIri}>`);
+		expect(updates[0]).toContain(`<${reversePropIri}> owl:inverseOf <${forwardPropIri}> ;`);
+		expect(updates[0]).toContain(`<${GENERATED_REVERSE_OF_PREDICATE_IRI}> <${forwardPropIri}>`);
+		// The generatedReverseOf triple must not land on the forward side.
+		const forwardBlock = updates[0].slice(0, updates[0].indexOf(reversePropIri));
+		expect(forwardBlock).not.toContain(GENERATED_REVERSE_OF_PREDICATE_IRI);
+	});
+
+	it('unlinkGeneratedReverse clears owl:inverseOf on both sides and rse:generatedReverseOf', async () => {
+		const componentIri = classIri('Component');
+		const groupIri = classIri('Group');
+		const forwardPropIri = propertyIri(componentIri, 'ownedBy');
+		const reversePropIri = propertyIri(groupIri, 'owns');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.unlinkGeneratedReverse(forwardPropIri, componentIri, reversePropIri, groupIri);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${forwardPropIri}> owl:inverseOf <${reversePropIri}>`, DEFAULT_GRAPHS.schema)} }`
+		);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${reversePropIri}> owl:inverseOf <${forwardPropIri}>`, DEFAULT_GRAPHS.schema)} }`
+		);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${reversePropIri}> <${GENERATED_REVERSE_OF_PREDICATE_IRI}> <${forwardPropIri}>`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it('fetchInverseRelation returns null when no reverse is defined', async () => {
+		const propIri = propertyIri(classIri('Component'), 'ownedBy');
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchInverseRelation(propIri)).resolves.toBeNull();
+	});
+
+	it('fetchInverseRelation returns the partner iri/name/mapping when a reverse is defined', async () => {
+		const propIri = propertyIri(classIri('Component'), 'ownedBy');
+		const reverseIri = propertyIri(classIri('Group'), 'owns');
+		const { fn } = mockGraphFetch({
+			inverseRelation: { iri: reverseIri, label: 'owns', sourceType: 'ownerOf' }
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchInverseRelation(propIri)).resolves.toEqual({
+			iri: reverseIri,
+			name: 'owns',
+			sourceRelation: 'ownerOf'
+		});
+	});
+
+	it('fetchInverseRelation defaults name/sourceRelation when the reverse has neither label nor mapping', async () => {
+		const propIri = propertyIri(classIri('Component'), 'ownedBy');
+		const reverseIri = propertyIri(classIri('Group'), 'owns');
+		const { fn } = mockGraphFetch({ inverseRelation: { iri: reverseIri } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchInverseRelation(propIri)).resolves.toEqual({
+			iri: reverseIri,
+			name: '',
+			sourceRelation: null
+		});
 	});
 });
 
@@ -3878,14 +4069,27 @@ describe('SparqlConnector — partition-scoped save (STORY-017)', () => {
  *  `SELECT ?ns`/`SELECT ?super` cross-graph lookups (run by `insertIndividual`'s identifier path,
  *  STORY-113's Concept-Namespace override) with empty bindings — i.e. "no Concept Namespace
  *  declared anywhere in the ancestry" — the correct default for every test in this block that
- *  doesn't itself exercise that override. */
-function mockIndividualFetch(fixture: { exists?: boolean } = {}) {
+ *  doesn't itself exercise that override. Also answers `findNamespaceOfIndividual`'s own
+ *  `GRAPH ?g { <iri> a ?type }` lookup (the omitted-`namespaceBaseIri` fallback every rename/delete/
+ *  attribute-value method now resolves through) with `namespaceByIndividual[iri]`, defaulting to
+ *  `DEFAULT_NAMESPACE_BASE_IRI` — the correct default for every test whose individual was minted
+ *  there and doesn't itself exercise a cross-namespace scenario. */
+function mockIndividualFetch(fixture: { exists?: boolean; namespaceByIndividual?: Record<string, string> } = {}) {
 	const updates: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
 		const body = JSON.parse(opts.body);
 		if (body.update !== undefined) {
 			updates.push(body.update as string);
 			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		const namespaceMatch = q.match(/GRAPH \?g \{ <([^>]+)> a \?type \}/);
+		if (namespaceMatch) {
+			const graph = fixture.namespaceByIndividual?.[namespaceMatch[1]] ?? DEFAULT_NAMESPACE_BASE_IRI;
+			return new Response(
+				JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: graph } }] } }),
+				{ status: 200 }
+			);
 		}
 		return new Response(
 			JSON.stringify({ head: {}, results: { bindings: [] }, boolean: fixture.exists ?? false }),
@@ -4066,17 +4270,74 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 		]);
 	});
 
+	// The next two tests guard the actual bug report: a member minted into a Concept Namespace
+	// different from its class's own namespace previously vanished from the frontend list (the UI
+	// call "succeeded") while its triples stayed untouched in GraphDB — `DELETE WHERE`/rename against
+	// the wrong graph matches zero triples and reports success, no error surfaced anywhere.
+
+	it('deleteIndividual resolves the individual\'s own namespace via findNamespaceOfIndividual when none is passed, not a caller\'s guess', async () => {
+		const iri = `https://example.com/ssi#871912`;
+		const actualNamespace = 'https://example.com/ssi';
+		const { fn, updates } = mockIndividualFetch({ namespaceByIndividual: { [iri]: actualNamespace } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIndividual(iri);
+
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, actualNamespace)} }`)
+		]);
+	});
+
+	it('deleteIndividual skips the namespace lookup entirely when the caller passes one explicitly', async () => {
+		const iri = individualIri(relationType, 'nutzt');
+		const { fn, updates } = mockIndividualFetch({
+			// A wrong-namespace fixture the code must never consult, since an explicit namespaceBaseIri
+			// is supplied below.
+			namespaceByIndividual: { [iri]: 'https://example.com/should-not-be-used' }
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIndividual(iri, DEFAULT_NAMESPACE_BASE_IRI);
+
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, DEFAULT_GRAPHS.instances)} }`)
+		]);
+		expect(fn).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: expect.stringContaining('GRAPH ?g') }));
+	});
+
+	it('renameIndividual resolves the individual\'s own namespace via findNamespaceOfIndividual when none is passed', async () => {
+		const iri = `https://example.com/ssi#871912`;
+		const actualNamespace = 'https://example.com/ssi';
+		const { fn, updates } = mockIndividualFetch({ namespaceByIndividual: { [iri]: actualNamespace } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.renameIndividual(iri, 'Neuer Name');
+
+		expect(updates).toEqual([expect.stringContaining(`WITH <${actualNamespace}>`)]);
+	});
+
 	it('fetchIndividualsOfClass round-trips the members inserted for a class', async () => {
 		const nutztIri = individualIri(relationType, 'nutzt');
 		const verbuchtIri = individualIri(relationType, 'verbucht');
 		const fn = vi.fn(async () =>
 			new Response(
 				JSON.stringify({
-					head: { vars: ['i', 'label'] },
+					head: { vars: ['i', 'label', 'g'] },
 					results: {
 						bindings: [
-							{ i: { type: 'uri', value: nutztIri }, label: { type: 'literal', value: 'nutzt' } },
-							{ i: { type: 'uri', value: verbuchtIri }, label: { type: 'literal', value: 'verbucht' } }
+							{
+								i: { type: 'uri', value: nutztIri },
+								label: { type: 'literal', value: 'nutzt' },
+								g: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+							},
+							{
+								i: { type: 'uri', value: verbuchtIri },
+								label: { type: 'literal', value: 'verbucht' },
+								g: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+							}
 						]
 					}
 				}),
@@ -4089,9 +4350,50 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 		const members = await connector.fetchIndividualsOfClass(relationType);
 
 		expect(members).toEqual([
-			{ iri: nutztIri, label: 'nutzt' },
-			{ iri: verbuchtIri, label: 'verbucht' }
+			{ iri: nutztIri, label: 'nutzt', namespaceBaseIri: DEFAULT_GRAPHS.instances },
+			{ iri: verbuchtIri, label: 'verbucht', namespaceBaseIri: DEFAULT_GRAPHS.instances }
 		]);
+	});
+
+	it('fetchIndividualsOfClass finds a member minted under a namespace different from the one declaring its class, and reports that namespace', async () => {
+		// Mirrors a hand-typed-identifier member (STORY-113) or a Backstage `represents` target: the
+		// class lives in "core"'s own /schema graph, but the individual was minted into "interfaces",
+		// the class's separately-configured Concept Namespace (STORY-099/100).
+		const coreBase = 'https://example.com/core';
+		const interfacesBase = 'https://example.com/interfaces';
+		const schnittstelleClassIri = classIri('Schnittstelle', coreBase);
+		const individualIriValue = `${interfacesBase}#871912`;
+
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			const q: string = body.query;
+			expect(q).toContain('GRAPH ?g');
+			// No `FROM` clause anywhere — mixing `FROM` with the unrestricted `GRAPH ?g` above would
+			// collapse the query's named-graph set to empty per SPARQL 1.1 semantics, silently zeroing
+			// out every result (the actual bug this test guards against).
+			expect(q).not.toMatch(/\bFROM\b/);
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['i', 'label', 'g'] },
+					results: {
+						bindings: [
+							{
+								i: { type: 'uri', value: individualIriValue },
+								label: { type: 'literal', value: '871912' },
+								g: { type: 'uri', value: interfacesBase }
+							}
+						]
+					}
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const members = await connector.fetchIndividualsOfClass(schnittstelleClassIri);
+
+		expect(members).toEqual([{ iri: individualIriValue, label: '871912', namespaceBaseIri: interfacesBase }]);
 	});
 
 	it('fetchAllIndividuals finds an individual minted under a Concept Namespace different from the one declaring its class — the class check spans every graph, not just this namespace\'s own /schema', async () => {
@@ -4143,7 +4445,10 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 });
 
 /** Mocks a `SELECT ?p ?value` query (`fetchIndividualAttributeValues`) returning `bindings`, plus
- *  recorded update bodies for the write-side methods in the same describe block. */
+ *  recorded update bodies for the write-side methods in the same describe block. Also answers
+ *  `findNamespaceOfIndividual`'s own `GRAPH ?g { <iri> a ?type }` lookup (the omitted-
+ *  `namespaceBaseIri` fallback every method in this block now resolves through) with
+ *  `DEFAULT_NAMESPACE_BASE_IRI` — every individual in this block's tests is minted there. */
 function mockAttributeValueFetch(bindings: Array<{ p: string; value: string }> = []) {
 	const updates: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
@@ -4151,6 +4456,16 @@ function mockAttributeValueFetch(bindings: Array<{ p: string; value: string }> =
 		if (body.update !== undefined) {
 			updates.push(body.update as string);
 			return new Response(JSON.stringify({ success: true }), { status: 200 });
+		}
+		const q: string = body.query;
+		if (/GRAPH \?g \{ <[^>]+> a \?type \}/.test(q)) {
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['g'] },
+					results: { bindings: [{ g: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI } }] }
+				}),
+				{ status: 200 }
+			);
 		}
 		return new Response(
 			JSON.stringify({
@@ -4324,6 +4639,23 @@ describe('SparqlConnector — applyAttributeSubmissions (STORY-111)', () => {
 		expect(updates).toHaveLength(2);
 		expect(updates[0]).toContain(`<${birthDateIri}>`);
 		expect(updates[1]).toContain(`<${nicknameIri}>`);
+	});
+
+	it('resolves the individual\'s own namespace once via findNamespaceOfIndividual (not per submission) when none is passed', async () => {
+		const { fn, updates } = mockAttributeValueFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.applyAttributeSubmissions(employeeIri, [
+			{ attributeIri: birthDateIri, datatype: 'date', repeatable: false, value: '2000-01-01' },
+			{ attributeIri: nicknameIri, datatype: 'string', repeatable: true, added: ['Ally', 'A.'], removed: [] }
+		]);
+		expect(updates).toHaveLength(3);
+
+		const namespaceLookupCalls = fn.mock.calls.filter(([, opts]: [string, { body: string }]) => {
+			const body = JSON.parse(opts.body);
+			return body.update === undefined && /GRAPH \?g \{ <[^>]+> a \?type \}/.test(body.query as string);
+		});
+		expect(namespaceLookupCalls).toHaveLength(1);
 	});
 });
 
@@ -5431,6 +5763,22 @@ describe('SparqlConnector — SavedQuery CRUD (STORY-087)', () => {
 		);
 		expect(updates[0]).toContain('rdfs:comment "finds gaps"');
 		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+
+	it('insertSavedQuery escapes the embedded newlines of a multi-line sparqlText instead of breaking the literal', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const sparqlText = 'SELECT ?type WHERE {\n  <urn:instance> a ?type .\n}';
+		await connector.insertSavedQuery('Get Instance Type', sparqlText, 'finds the type of the given instance');
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`<${SAVED_QUERY_TEXT_PREDICATE_IRI}> "SELECT ?type WHERE {\\n  <urn:instance> a ?type .\\n}"`
+		);
+		// No raw newline byte reaches the request body inside the string literal — only `\n`.
+		expect(updates[0]).not.toMatch(/"SELECT \?type WHERE \{\n/);
 	});
 
 	it('insertSavedQuery omits rdfs:comment when no description is given', async () => {
@@ -7384,7 +7732,7 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 	function mockFullSchemaFetch(
 		fixture: {
 			genericEdges?: Array<{ p: string; label: string; domain: string; range: string; minCount?: number; maxCount?: number }>;
-			specificObjectProps?: Array<{ p: string; label: string; domain: string; range: string }>;
+			specificObjectProps?: Array<{ p: string; label: string; domain: string; range: string; reverseOf?: string }>;
 		} = {}
 	) {
 		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
@@ -7406,7 +7754,8 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 					p: { type: 'uri', value: e.p },
 					label: { type: 'literal', value: e.label },
 					domain: { type: 'uri', value: e.domain },
-					range: { type: 'uri', value: e.range }
+					range: { type: 'uri', value: e.range },
+					...(e.reverseOf !== undefined ? { reverseOf: { type: 'uri', value: e.reverseOf } } : {})
 				}));
 				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
 			}
@@ -7435,6 +7784,24 @@ describe('SparqlConnector — canvas reconstruction from the shapes graph (STORY
 			repeatable: true,
 			relationKind: 'generic'
 		});
+	});
+
+	it('fetchFullSchema tags a specific relation with generatedReverseOf when rse:generatedReverseOf is set (STORY-XXX)', async () => {
+		const component = classIri('Component');
+		const group = classIri('Group');
+		const forwardIri = propertyIri(component, 'ownedBy');
+		const reverseIri = propertyIri(group, 'owns');
+		const fn = mockFullSchemaFetch({
+			specificObjectProps: [{ p: reverseIri, label: 'owns', domain: group, range: component, reverseOf: forwardIri }]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const schema = await connector.fetchFullSchema();
+
+		expect(schema.objectProperties).toContainEqual(
+			expect.objectContaining({ iri: reverseIri, generatedReverseOf: forwardIri })
+		);
 	});
 
 	it('the generic-edge query FROMs every registered namespace\'s own /schema graph, not just the namespace being fetched — a generic relation reused from a source class in a different namespace (STORY-051/053 cross-namespace reuse) has its owl:ObjectProperty declaration under the namespace that first minted it, not under the reusing source class\'s own namespace', async () => {
@@ -7810,6 +8177,63 @@ describe('SparqlConnector — reference-counted deletion for generic relations (
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(
 			`DELETE WHERE { ${inGraph(`<${usesIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
+		);
+	});
+
+	it('deleting a specific relation always fully removes it, even if dirty/duplicate sh:property blocks make its shape look like a multi-target union', async () => {
+		// A specific relation (has rdfs:domain) is single-owner, single-target by construction —
+		// `fetchGenericPropertyShapeDetails` reporting >1 "targets" here can only mean leftover,
+		// duplicate `sh:property` blocks (e.g. from an earlier delete that didn't fully clean up).
+		// `deleteObjectProperty` must not mistake that for a generic relation's `sh:or` union and
+		// shrink it — it must still do the full, unconditional removal.
+		const api = classIri('Api');
+		const system = classIri('System');
+		const component = classIri('Component');
+		const propIri = propertyIri(api, 'isPartOf');
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['g'] },
+						results: { bindings: [{ g: { type: 'uri', value: DEFAULT_GRAPHS.schema } }] }
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('rdfs:domain ?d')) {
+				return new Response(JSON.stringify({ head: {}, boolean: true }), { status: 200 });
+			}
+			if (q.includes('SELECT ?class ?name ?minCount ?maxCount')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: [] },
+						results: {
+							bindings: [
+								{ class: { type: 'uri', value: system }, name: { type: 'literal', value: 'isPartOf' } },
+								{ class: { type: 'uri', value: component }, name: { type: 'literal', value: 'isPartOf' } }
+							]
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteObjectProperty(propIri, api, system);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${propIri}> ?p ?o .`, DEFAULT_GRAPHS.schema)} }`
 		);
 	});
 });

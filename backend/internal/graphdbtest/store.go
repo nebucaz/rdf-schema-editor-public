@@ -182,6 +182,11 @@ var (
 	// unrestricted-graph search for whichever individual carries a fixed predicate/literal-object
 	// pair (the `rse:syncSourceRef` marker), returning at most one binding.
 	syncSourceRefPattern = regexp.MustCompile(`^SELECT \?i WHERE \{ GRAPH \?g \{ \?i <([^>]+)> "([^"]*)" \} \} LIMIT 1$`)
+	// namespaceOfClassPattern matches `Engine.findNamespaceOfClass`'s query: an unrestricted-graph
+	// search for the named graph a fixed (subject, predicate, object) triple lives in — used to find
+	// which namespace declares a given class, mirroring `sparql-connector.ts`'s own
+	// `findNamespaceOfClass`.
+	namespaceOfClassPattern = regexp.MustCompile(`^SELECT \?g WHERE \{ GRAPH \?g \{ <([^>]+)> <([^>]+)> <([^>]+)> \} \} LIMIT 1$`)
 )
 
 func (s *Store) evalSelect(query string) (string, error) {
@@ -337,6 +342,16 @@ func (s *Store) evalSelect(query string) (string, error) {
 		for _, t := range s.triples {
 			if t.P == predicate && !t.ObjectIsIRI && t.O == literal {
 				return wrapBindings([]string{fmt.Sprintf(`{"i":{"type":"uri","value":%q}}`, t.S)}), nil
+			}
+		}
+		return wrapBindings(nil), nil
+
+	case namespaceOfClassPattern.MatchString(query):
+		m := namespaceOfClassPattern.FindStringSubmatch(query)
+		subject, predicate, object := m[1], m[2], m[3]
+		for _, t := range s.triples {
+			if t.S == subject && t.P == predicate && t.ObjectIsIRI && t.O == object {
+				return wrapBindings([]string{fmt.Sprintf(`{"g":{"type":"uri","value":%q}}`, t.Graph)}), nil
 			}
 		}
 		return wrapBindings(nil), nil

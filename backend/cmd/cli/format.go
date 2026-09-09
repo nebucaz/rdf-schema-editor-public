@@ -42,11 +42,21 @@ func printSync(w io.Writer, source string, resp syncResponse) {
 	sort.Strings(mappedKinds)
 	skippedKinds := append([]string(nil), resp.SkippedKinds...)
 	sort.Strings(skippedKinds)
+	fallbackNamespaceKinds := append([]string(nil), resp.FallbackNamespaceKinds...)
+	sort.Strings(fallbackNamespaceKinds)
+	usedFallback := make(map[string]bool, len(fallbackNamespaceKinds))
+	for _, kind := range fallbackNamespaceKinds {
+		usedFallback[kind] = true
+	}
 
 	tw := tabwriter.NewWriter(w, 0, 4, 3, ' ', 0)
 	fmt.Fprintln(tw, "KIND\tMAPPED CLASS\tPROPOSED")
 	for _, kind := range mappedKinds {
 		count := resp.SyncedPerKind[kind]
+		if usedFallback[kind] {
+			fmt.Fprintf(tw, "%s\t%s\t%d individuals   (no Concept Namespace — used the class's own namespace)\n", kind, resp.Mapping[kind], count)
+			continue
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%d individuals\n", kind, resp.Mapping[kind], count)
 	}
 	for _, kind := range skippedKinds {
@@ -60,6 +70,9 @@ func printSync(w io.Writer, source string, resp syncResponse) {
 	} else {
 		fmt.Fprintf(w, "%d kinds mapped, %d kind(s) unmapped: %s\n", len(mappedKinds), len(skippedKinds), strings.Join(skippedKinds, ", "))
 		fmt.Fprintf(w, "Run 'importctl discover %s' for details on unmapped kinds.\n", source)
+	}
+	if len(fallbackNamespaceKinds) > 0 {
+		fmt.Fprintf(w, "%d kind(s) used their class's own namespace (no Concept Namespace configured): %s\n", len(fallbackNamespaceKinds), strings.Join(fallbackNamespaceKinds, ", "))
 	}
 
 	fmt.Fprintln(w)

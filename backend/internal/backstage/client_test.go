@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/sync"
@@ -248,6 +249,56 @@ func TestClient_FetchEntities_EmptyResultSet(t *testing.T) {
 	}
 	if len(entities) != 0 {
 		t.Errorf("entities = %v, want empty", entities)
+	}
+}
+
+// TestClient_FetchRawEntities_ReturnsUndecodedItemsAcrossPages proves FetchRawEntities preserves
+// every field an item carries (including one entityEnvelope doesn't model, e.g. `apiVersion`) and
+// pages to completion exactly like FetchEntities/DiscoverKinds — the debugging escape hatch this
+// method exists for is only useful if it shows literally what Backstage sent.
+func TestClient_FetchRawEntities_ReturnsUndecodedItemsAcrossPages(t *testing.T) {
+	var gotFilter string
+	page := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotFilter = r.URL.Query().Get("filter")
+		w.Header().Set("Content-Type", "application/json")
+		if page == 0 {
+			page++
+			fmt.Fprint(w, `{
+				"items": [
+					{"apiVersion":"backstage.io/v1alpha1","kind":"Component","metadata":{"uid":"1","name":"a"},"someUnmappedField":"kept"}
+				],
+				"totalItems": 2,
+				"pageInfo": {"nextCursor": "cursor-2"}
+			}`)
+			return
+		}
+		fmt.Fprint(w, `{
+			"items": [
+				{"apiVersion":"backstage.io/v1alpha1","kind":"Component","metadata":{"uid":"2","name":"b"},"relations":[]}
+			],
+			"totalItems": 2,
+			"pageInfo": {}
+		}`)
+	}))
+	defer server.Close()
+
+	c := NewClient(server.URL, "")
+	items, err := c.FetchRawEntities(context.Background(), "Component")
+	if err != nil {
+		t.Fatalf("FetchRawEntities() error = %v", err)
+	}
+	if gotFilter != "kind=Component" {
+		t.Errorf("filter param = %q, want kind=Component", gotFilter)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %d, want 2 (paginated across both pages)", len(items))
+	}
+	if !strings.Contains(string(items[0]), `"someUnmappedField":"kept"`) {
+		t.Errorf("items[0] = %s, want it to preserve a field entityEnvelope doesn't model", items[0])
+	}
+	if !strings.Contains(string(items[1]), `"relations":[]`) {
+		t.Errorf("items[1] = %s, want the raw (empty) relations array preserved verbatim", items[1])
 	}
 }
 

@@ -108,6 +108,7 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 		r.Post("/sparql", sparqlHandler.Query)
 		r.Post("/sparql/update", sparqlHandler.Update)
 		r.Get("/sources/{source}/discover", sourceHandler.Discover)
+		r.Get("/sources/{source}/raw/{kind}", sourceHandler.Raw)
 		r.Post("/sources/{source}/sync", sourceHandler.Sync)
 	})
 

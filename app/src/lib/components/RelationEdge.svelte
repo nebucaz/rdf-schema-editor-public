@@ -13,6 +13,11 @@
 		 *  reusing it, so it alone can't serve as a unique per-edge id (two edges reusing the same
 		 *  generic relation from different source classes would otherwise collide on `id`). */
 		propIri: string;
+		/** The forward relation's `propIri`, when this edge is the auto-generated reverse half of a
+		 *  relation pair (`rse:generatedReverseOf`, STORY-XXX) — `undefined` for every ordinary
+		 *  relation, including a hand-drawn one that happens to point the opposite direction. Drives
+		 *  the reverse-relations visibility toggle's default-hide filtering in `+page.svelte`. */
+		generatedReverseOf?: string;
 		onEdit: () => void;
 		onDelete: () => void;
 	}

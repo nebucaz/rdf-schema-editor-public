@@ -9,6 +9,7 @@
 	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
 	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
 	import InheritedAttributesVisibilityToggle from '$lib/components/InheritedAttributesVisibilityToggle.svelte';
+	import ReverseRelationsVisibilityToggle from '$lib/components/ReverseRelationsVisibilityToggle.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
 	import WorkspaceManagementView from '$lib/components/WorkspaceManagementView.svelte';
@@ -191,6 +192,7 @@
 			/>
 			<DescriptionVisibilityToggle />
 			<InheritedAttributesVisibilityToggle />
+			<ReverseRelationsVisibilityToggle />
 			<NamespaceFilter
 				namespaces={filterListedNamespaces(namespaceStore.namespaces)}
 				hiddenNamespaces={workbenchActions.hiddenNamespaces}
@@ -288,15 +290,25 @@
 	</main>
 </div>
 
-<Modal isOpen={showNamespaceManagement} title="Namespaces" onClose={() => (showNamespaceManagement = false)}>
+<Modal
+	isOpen={showNamespaceManagement}
+	title="Namespaces"
+	onClose={() => (showNamespaceManagement = false)}
+	dismissible={false}
+>
 	<NamespaceManagementView />
 </Modal>
 
-<Modal isOpen={showMissingConcepts} title="Missing Concepts" onClose={() => (showMissingConcepts = false)}>
+<Modal
+	isOpen={showMissingConcepts}
+	title="Missing Concepts"
+	onClose={() => (showMissingConcepts = false)}
+	dismissible={false}
+>
 	<MissingConceptsPanel namespaces={namespaceStore.namespaces} onCreated={() => workbenchActions.reload()} />
 </Modal>
 
-<Modal isOpen={showSettings} title="Settings" onClose={() => (showSettings = false)}>
+<Modal isOpen={showSettings} title="Settings" onClose={() => (showSettings = false)} dismissible={false}>
 	<SettingsView />
 </Modal>
 
@@ -311,6 +323,7 @@
 		// left looking unselectable in the dropdown.
 		void workspaceStore.refresh();
 	}}
+	dismissible={false}
 >
 	<WorkspaceManagementView />
 </Modal>
@@ -322,6 +335,7 @@
 		showExternalVocabManagement = false;
 		workbenchActions.externalVocabManagementOpen = false;
 	}}
+	dismissible={false}
 >
 	<ExternalVocabularyManagementView />
 </Modal>
@@ -331,6 +345,7 @@
 	title="Queries"
 	maxWidth="900px"
 	onClose={() => (showQueryConsole = false)}
+	dismissible={false}
 >
 	<QueryConsoleView />
 </Modal>

@@ -87,7 +87,11 @@ func NewClient(baseURL, token string) *Client {
 // Name identifies this source in sync.Registry.
 func (c *Client) Name() string { return "backstage" }
 
-func (c *Client) queryPage(ctx context.Context, cursor string, opts QueryOptions) (queryResponse, error) {
+// doQuery issues one GET /entities/by-query page request and returns the raw, still-open response
+// body (caller must close it) — shared by queryPage (decodes into the typed entityEnvelope shape)
+// and FetchRawEntities (decodes into json.RawMessage instead, preserving every field Backstage sent
+// even ones this package doesn't model).
+func (c *Client) doQuery(ctx context.Context, cursor string, opts QueryOptions) (*http.Response, error) {
 	limit := opts.Limit
 	if limit <= 0 {
 		limit = defaultLimit
@@ -108,7 +112,7 @@ func (c *Client) queryPage(ctx context.Context, cursor string, opts QueryOptions
 	reqURL := c.baseURL + "/entities/by-query?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
-		return queryResponse{}, fmt.Errorf("build Backstage request: %w", err)
+		return nil, fmt.Errorf("build Backstage request: %w", err)
 	}
 	req.Header.Set("Accept", "application/json")
 	if c.token != "" {
@@ -117,13 +121,21 @@ func (c *Client) queryPage(ctx context.Context, cursor string, opts QueryOptions
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return queryResponse{}, fmt.Errorf("Backstage unreachable: %w", err)
+		return nil, fmt.Errorf("Backstage unreachable: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		return nil, fmt.Errorf("Backstage returned status %d", resp.StatusCode)
+	}
+	return resp, nil
+}
+
+func (c *Client) queryPage(ctx context.Context, cursor string, opts QueryOptions) (queryResponse, error) {
+	resp, err := c.doQuery(ctx, cursor, opts)
+	if err != nil {
+		return queryResponse{}, err
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return queryResponse{}, fmt.Errorf("Backstage returned status %d", resp.StatusCode)
-	}
 
 	var out queryResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -198,6 +210,43 @@ func (c *Client) FetchEntities(ctx context.Context, kind string) ([]sync.Entity,
 		})
 	}
 	return entities, nil
+}
+
+// rawQueryResponse mirrors queryResponse but leaves each item undecoded — every field Backstage sent
+// for that entity, not just the ones entityEnvelope models (metadata/spec/relations plus anything
+// this package doesn't know about yet).
+type rawQueryResponse struct {
+	Items    []json.RawMessage `json:"items"`
+	PageInfo pageInfo          `json:"pageInfo"`
+}
+
+// FetchRawEntities pages through every entity of kind exactly as FetchEntities does, but returns each
+// item's raw, undecoded JSON instead of mapping it into sync.Entity — a debugging escape hatch for
+// answering "what did Backstage actually send" directly (e.g. confirming `relations[]` really is
+// empty upstream, rather than present but dropped somewhere in FetchEntities' own mapping/
+// rse:sourceRelation resolution). Implements sync.RawSource.
+func (c *Client) FetchRawEntities(ctx context.Context, kind string) ([]json.RawMessage, error) {
+	var all []json.RawMessage
+	cursor := ""
+	opts := QueryOptions{Filters: []string{"kind=" + kind}}
+	for {
+		resp, err := c.doQuery(ctx, cursor, opts)
+		if err != nil {
+			return nil, err
+		}
+		var page rawQueryResponse
+		decodeErr := json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if decodeErr != nil {
+			return nil, fmt.Errorf("decode Backstage response: %w", decodeErr)
+		}
+		all = append(all, page.Items...)
+		if page.PageInfo.NextCursor == "" {
+			break
+		}
+		cursor = page.PageInfo.NextCursor
+	}
+	return all, nil
 }
 
 // entityTargetRef computes e's own identity in Backstage's `targetRef` scheme (STORY-106) —

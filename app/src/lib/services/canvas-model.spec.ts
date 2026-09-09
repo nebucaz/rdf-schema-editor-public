@@ -157,6 +157,31 @@ describe('buildCanvasModel', () => {
 		]);
 	});
 
+	it('tags a relation edge with generatedReverseOf when the property carries rse:generatedReverseOf (STORY-XXX)', () => {
+		const component = classIri('Component');
+		const group = classIri('Group');
+		const forwardIri = propertyIri(component, 'ownedBy');
+		const schema = emptySchema({
+			classes: [fetchedClass(component, 'Component'), fetchedClass(group, 'Group')],
+			objectProperties: [objectProp(group, component, 'owns', { generatedReverseOf: forwardIri })]
+		});
+		const model = buildCanvasModel(schema);
+		expect(model.edges).toEqual([
+			{
+				kind: 'relation',
+				iri: propertyIri(group, 'owns'),
+				source: group,
+				target: component,
+				name: 'owns',
+				required: false,
+				repeatable: true,
+				relationKind: 'specific',
+				namespace: NS,
+				generatedReverseOf: forwardIri
+			}
+		]);
+	});
+
 	it('attaches a relationFields entry for an object property, resolving the target class name (STORY-114)', () => {
 		const application = classIri('Application');
 		const businessProcess = classIri('BusinessProcess');

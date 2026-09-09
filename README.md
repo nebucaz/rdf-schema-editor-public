@@ -261,3 +261,24 @@ Backstage with it. Setting this up end-to-end:
 6. **Apply the sync** (`go run ./cmd/cli sync backstage --apply`), then check the app: the synced
    `backstage:Component`/`backstage:API` individual should show a relation edge (using the predicate
    from step 3) pointing at the `core:Application`/`core:Schnittstelle` individual from step 2.
+
+## Backstage Relations
+
+| Source Entity | Forward Relation Type | Inverse Relation Type | Target Entity |
+| --- | --- | --- | --- |
+| User | memberOf | hasMember | Group |
+| Group or User | ownerOf | ownedBy | Component |
+| Group or User | ownerOf | ownedBy | System |
+| Group or User | ownerOf | ownedBy | Domain |
+| Group or User | ownerOf | ownedBy | API |
+| Group or User | ownerOf | ownedBy | Resource |
+| Group or User | ownerOf | ownedBy | Template |
+| Domain | hasSystem | partOf (or childOf) | System |
+| System | hasComponent | partOf | Component |
+| System | hasApi | partOf | API |
+| Component | dependsOn | dependencyOf | Component |
+| Component | dependsOn | dependencyOf | Resource |
+| Component | providesApi | apiProvidedBy | API |
+| Component | consumesApi | apiConsumedBy | API |
+| Resource | dependencyOf | dependsOn | Component |
+| Location | contains | managedByLocation | Any Entity |

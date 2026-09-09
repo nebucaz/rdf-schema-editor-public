@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,6 +52,7 @@ func (f *fakeSource) FetchEntities(ctx context.Context, kind string) ([]sync.Ent
 func newTestRouter(h *SourceHandler) http.Handler {
 	r := chi.NewRouter()
 	r.Get("/sources/{source}/discover", h.Discover)
+	r.Get("/sources/{source}/raw/{kind}", h.Raw)
 	r.Post("/sources/{source}/sync", h.Sync)
 	return r
 }
@@ -243,6 +245,82 @@ func TestSourceHandler_Discover_AllKindsMapped(t *testing.T) {
 	}
 	if len(resp.UnmappedKinds) != 0 {
 		t.Errorf("unmappedKinds = %v, want empty", resp.UnmappedKinds)
+	}
+}
+
+// -- GET /sources/{source}/raw/{kind} ------------------------------------------------------------
+
+// TestSourceHandler_Raw_RealBackstageClientReturnsUndecodedItems wires the route against the real
+// backstage.Client (which implements sync.RawSource), proving the handler's type-assert succeeds
+// for a source that supports raw dumping and returns its items verbatim.
+func TestSourceHandler_Raw_RealBackstageClientReturnsUndecodedItems(t *testing.T) {
+	backstageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{
+			"items": [
+				{"apiVersion":"backstage.io/v1alpha1","kind":"Component","metadata":{"uid":"1","name":"a"},"relations":[]}
+			],
+			"totalItems": 1,
+			"pageInfo": {}
+		}`)
+	}))
+	defer backstageServer.Close()
+
+	registry := sync.NewRegistry()
+	registry.Register(backstage.NewClient(backstageServer.URL, ""))
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})
+	h := NewSourceHandler(registry, gdb, "http://ns/schema#backstageKind", testEngine(gdb))
+	router := newTestRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/sources/backstage/raw/Component", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body: %s", w.Code, w.Body.String())
+	}
+	var items []json.RawMessage
+	if err := json.Unmarshal(w.Body.Bytes(), &items); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %d, want 1", len(items))
+	}
+	if !strings.Contains(string(items[0]), `"uid":"1"`) {
+		t.Errorf("items[0] = %s, want the raw entity envelope verbatim", items[0])
+	}
+}
+
+// TestSourceHandler_Raw_SourceWithoutRawSupportReturns501 proves a source that doesn't implement
+// sync.RawSource (fakeSource here) is rejected with 501, not a panic on a failed type-assert.
+func TestSourceHandler_Raw_SourceWithoutRawSupportReturns501(t *testing.T) {
+	registry := sync.NewRegistry()
+	registry.Register(&fakeSource{name: "backstage"})
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})
+	h := NewSourceHandler(registry, gdb, "http://ns/schema#backstageKind", testEngine(gdb))
+	router := newTestRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/sources/backstage/raw/Component", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Errorf("status = %d, want 501", w.Code)
+	}
+}
+
+func TestSourceHandler_Raw_UnknownSource(t *testing.T) {
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})
+	registry := sync.NewRegistry()
+	h := NewSourceHandler(registry, gdb, "http://ns/schema#backstageKind", testEngine(gdb))
+	router := newTestRouter(h)
+
+	req := httptest.NewRequest(http.MethodGet, "/sources/nope/raw/Component", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
 

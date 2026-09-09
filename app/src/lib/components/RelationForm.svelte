@@ -52,13 +52,31 @@
 		/** The relation's current `rse:sourceRelation` mapping information (STORY-107), empty when
 		 *  unset. Ignored when `allowSourceRelation` is false. */
 		initialSourceRelation?: string;
+		/** Shows the "Define reverse relation" section (STORY-XXX) — opt-in like
+		 *  `allowSourceRelation`, and further gated on `kind === 'specific'` internally (a generic
+		 *  relation has no fixed domain/range pair to swap). Only meaningful for the plain class→class
+		 *  "Relation" flow. */
+		allowReverseRelation?: boolean;
+		/** Whether this relation currently has a reverse defined (STORY-XXX) — pre-checks the
+		 *  checkbox when editing a relation whose reverse already exists. Ignored when
+		 *  `allowReverseRelation` is false. */
+		initialDefineReverse?: boolean;
+		/** The existing reverse relation's name, empty when none is defined yet. Ignored when
+		 *  `allowReverseRelation` is false. */
+		initialReverseName?: string;
+		/** The existing reverse relation's own `rse:sourceRelation` mapping, empty when unset.
+		 *  Ignored when `allowReverseRelation` is false. */
+		initialReverseSourceRelation?: string;
 		onSubmit: (
 			name: string,
 			targetIri: string,
 			required: boolean,
 			repeatable: boolean,
 			kind: RelationKind,
-			sourceRelation: string
+			sourceRelation: string,
+			defineReverse: boolean,
+			reverseName: string,
+			reverseSourceRelation: string
 		) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -77,6 +95,10 @@
 		showConstraints = true,
 		allowSourceRelation = false,
 		initialSourceRelation = '',
+		allowReverseRelation = false,
+		initialDefineReverse = false,
+		initialReverseName = '',
+		initialReverseSourceRelation = '',
 		onSubmit,
 		onCancel
 	}: Props = $props();
@@ -86,9 +108,20 @@
 	let required = $state(initialRequired);
 	let repeatable = $state(initialRepeatable);
 	let sourceRelation = $state(initialSourceRelation);
+	let defineReverse = $state(initialDefineReverse);
+	let reverseName = $state(initialReverseName);
+	let reverseSourceRelation = $state(initialReverseSourceRelation);
 	let kind = $state<RelationKind>(initialKind);
 	let error = $state<string | null>(null);
+	let success = $state(false);
 	let submitting = $state(false);
+
+	// Any further edit after a successful save invalidates that "Saved" confirmation — it describes
+	// the fields as they were at save time, not their current (unsaved) values. Mirrors
+	// SettingsView.svelte's clearSaveSuccess.
+	function clearSuccess() {
+		success = false;
+	}
 
 	// The kind choice is only meaningful — and only shown — when creating; an existing relation's
 	// kind can't be switched after the fact (generic vs. specific changes how domain/range and
@@ -103,10 +136,26 @@
 			error = 'Name must not be empty';
 			return;
 		}
+		if (allowReverseRelation && kind === 'specific' && defineReverse && !reverseName.trim()) {
+			error = 'Reverse name must not be empty';
+			return;
+		}
 		error = null;
+		success = false;
 		submitting = true;
 		try {
-			await onSubmit(name.trim(), selectedTarget, required, repeatable, kind, sourceRelation.trim());
+			await onSubmit(
+				name.trim(),
+				selectedTarget,
+				required,
+				repeatable,
+				kind,
+				sourceRelation.trim(),
+				allowReverseRelation && kind === 'specific' && defineReverse,
+				reverseName.trim(),
+				reverseSourceRelation.trim()
+			);
+			success = true;
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -120,11 +169,11 @@
 		<fieldset class="kind-choice" disabled={!kindEditable}>
 			<legend>Relation kind</legend>
 			<label class="radio">
-				<input type="radio" name="kind" value="specific" bind:group={kind} />
+				<input type="radio" name="kind" value="specific" bind:group={kind} onchange={clearSuccess} />
 				Specific — new relation for this pair of entities
 			</label>
 			<label class="radio">
-				<input type="radio" name="kind" value="generic" bind:group={kind} />
+				<input type="radio" name="kind" value="generic" bind:group={kind} onchange={clearSuccess} />
 				Generic — reusable across any pair of entities, no rdfs:domain/rdfs:range
 			</label>
 		</fieldset>
@@ -143,6 +192,7 @@
 		<input
 			type="text"
 			bind:value={name}
+			oninput={clearSuccess}
 			placeholder={kind === 'generic' ? 'e.g. uses' : 'e.g. owns'}
 			list={kind === 'generic' ? 'generic-relation-names' : undefined}
 		/>
@@ -157,7 +207,7 @@
 	<label>
 		Target
 		{#if allowRetarget}
-			<select bind:value={selectedTarget}>
+			<select bind:value={selectedTarget} onchange={clearSuccess}>
 				{#each targetOptions as option (option.iri)}
 					<option value={option.iri}>{option.name}</option>
 				{/each}
@@ -168,18 +218,18 @@
 	</label>
 	{#if showConstraints}
 		<label class="checkbox">
-			<input type="checkbox" bind:checked={required} />
+			<input type="checkbox" bind:checked={required} onchange={clearSuccess} />
 			Required (sh:minCount 1)
 		</label>
 		<label class="checkbox">
-			<input type="checkbox" bind:checked={repeatable} />
+			<input type="checkbox" bind:checked={repeatable} onchange={clearSuccess} />
 			Repeatable (allows multiple values)
 		</label>
 	{/if}
 	{#if allowSourceRelation}
 		<label>
 			Mapping information
-			<input type="text" bind:value={sourceRelation} placeholder="e.g. ownedBy" />
+			<input type="text" bind:value={sourceRelation} oninput={clearSuccess} placeholder="e.g. ownedBy" />
 			<span class="hint">
 				Tells the ingestion source configured for this class which of its own relation types this
 				property represents. The exact value — a relation-type string, a role name, or something
@@ -187,8 +237,35 @@
 			</span>
 		</label>
 	{/if}
+	{#if allowReverseRelation && kind === 'specific'}
+		<label class="checkbox">
+			<input type="checkbox" bind:checked={defineReverse} onchange={clearSuccess} />
+			Define reverse relation
+		</label>
+		{#if defineReverse}
+			<label>
+				Reverse name
+				<input type="text" bind:value={reverseName} oninput={clearSuccess} placeholder="e.g. ownedBy" />
+			</label>
+			<label>
+				Reverse mapping information
+				<input
+					type="text"
+					bind:value={reverseSourceRelation}
+					oninput={clearSuccess}
+					placeholder="e.g. ownedBy"
+				/>
+				<span class="hint">
+					Same idea as this relation's own mapping information above, but for the reverse property —
+					the ingestion source may report the reverse direction as a separate relation type.
+				</span>
+			</label>
+		{/if}
+	{/if}
 	{#if error}
-		<p class="error">{error}</p>
+		<p class="error" role="alert">{error}</p>
+	{:else if success}
+		<p class="success" role="status">Saved.</p>
 	{/if}
 	<div class="actions">
 		<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
@@ -266,6 +343,15 @@
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
+	}
+
+	.success {
+		color: var(--color-success);
+		background: var(--color-success-bg);
+		padding: 0.4rem 0.6rem;
+		border-radius: 6px;
+		font-size: 0.85rem;
+		font-weight: 600;
 	}
 
 	.actions {

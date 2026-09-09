@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDiscover(rest, stdout, stderr)
 	case "sync":
 		return runSync(rest, stdout, stderr)
+	case "raw":
+		return runRaw(rest, stdout, stderr)
 	case "mint-token":
 		return runMintToken(rest, stdout, stderr)
 	case "-h", "--help", "help":
@@ -52,15 +56,18 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
 	fmt.Fprintln(w, "  importctl discover <source> [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl sync <source> [--apply] [--backend-url URL] [--token TOKEN]")
+	fmt.Fprintln(w, "  importctl raw <source> <kind> [--out FILE] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl mint-token --sub <value> [--ttl DURATION]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  --backend-url URL   Go backend base URL (default: BACKEND_URL env var, or "+defaultBackendURL+")")
 	fmt.Fprintln(w, "  --apply             perform a real sync (default: dry-run, no GraphDB writes)")
+	fmt.Fprintln(w, "  --out FILE          raw: write the dumped JSON to FILE instead of stdout")
 	fmt.Fprintln(w, "  --token TOKEN       signed JWT sent as Authorization: Bearer <token> (default: IMPORTCTL_AUTH_TOKEN env var)")
 	fmt.Fprintln(w, "  --sub value         mint-token: JWT subject, e.g. frontend-app or importctl (required)")
 	fmt.Fprintln(w, "  --ttl DURATION      mint-token: token lifetime, a Go duration string (default: 8760h / 1 year)")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Example: importctl sync backstage")
+	fmt.Fprintln(w, "Example: importctl raw backstage Component --out component-dump.json")
 	fmt.Fprintln(w, "Example: AUTH_JWT_SECRET=... importctl mint-token --sub frontend-app")
 }
 
@@ -144,6 +151,103 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 	}
 	printSync(stdout, source, resp)
 	return 0
+}
+
+// parseRawArgs mirrors parseArgs's hand-rolled, flag-position-tolerant style (Go's stdlib `flag`
+// package stops at the first positional argument, which would break `raw backstage Component --out
+// f.json`), adding raw's own `--out` on top of the shared `--backend-url`/`--token`.
+func parseRawArgs(args []string) (positional []string, backendURL, token, outPath string, err error) {
+	backendURL = os.Getenv("BACKEND_URL")
+	if backendURL == "" {
+		backendURL = defaultBackendURL
+	}
+	token = os.Getenv("IMPORTCTL_AUTH_TOKEN")
+
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--backend-url":
+			if i+1 >= len(args) {
+				return nil, "", "", "", fmt.Errorf("--backend-url requires a value")
+			}
+			i++
+			backendURL = args[i]
+		case strings.HasPrefix(a, "--backend-url="):
+			backendURL = strings.TrimPrefix(a, "--backend-url=")
+		case a == "--token":
+			if i+1 >= len(args) {
+				return nil, "", "", "", fmt.Errorf("--token requires a value")
+			}
+			i++
+			token = args[i]
+		case strings.HasPrefix(a, "--token="):
+			token = strings.TrimPrefix(a, "--token=")
+		case a == "--out":
+			if i+1 >= len(args) {
+				return nil, "", "", "", fmt.Errorf("--out requires a value")
+			}
+			i++
+			outPath = args[i]
+		case strings.HasPrefix(a, "--out="):
+			outPath = strings.TrimPrefix(a, "--out=")
+		default:
+			positional = append(positional, a)
+		}
+	}
+	return positional, backendURL, token, outPath, nil
+}
+
+// runRaw implements `importctl raw <source> <kind>` — dumps the source's own undecoded upstream JSON
+// for every entity of <kind>, straight from GET /sources/{source}/raw/{kind}, so a user can see
+// exactly what e.g. Backstage sent (including `relations[]`) without this app's own field-mapping or
+// `rse:sourceRelation` resolution in between. Writes to --out when given, stdout otherwise.
+func runRaw(args []string, stdout, stderr io.Writer) int {
+	positional, backendURL, token, outPath, err := parseRawArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(positional) != 2 {
+		fmt.Fprintln(stderr, "usage: importctl raw <source> <kind> [--out FILE] [--backend-url URL] [--token TOKEN]")
+		return 1
+	}
+	source, kind := positional[0], positional[1]
+
+	client := &apiClient{baseURL: backendURL, token: token, http: http.DefaultClient}
+	body, err := client.raw(context.Background(), source, kind)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+
+	pretty, err := prettyJSON(body)
+	if err != nil {
+		// Falls back to the raw bytes verbatim rather than failing outright — still useful for
+		// debugging even if this CLI's own indentation pass chokes on it.
+		pretty = body
+	}
+
+	if outPath != "" {
+		if err := os.WriteFile(outPath, pretty, 0o644); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "wrote %d bytes to %s\n", len(pretty), outPath)
+		return 0
+	}
+	stdout.Write(pretty)
+	fmt.Fprintln(stdout)
+	return 0
+}
+
+// prettyJSON re-indents body for readability — the backend's own response has none, since
+// json.Encoder.Encode never adds any.
+func prettyJSON(body []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, body, "", "  "); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 // runMintToken implements `importctl mint-token --sub <value> [--ttl DURATION]` (STORY-003): signs

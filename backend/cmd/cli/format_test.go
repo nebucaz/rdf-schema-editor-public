@@ -40,6 +40,39 @@ func TestPrintSync_ReportsRepresentsAndRelationCounts(t *testing.T) {
 	}
 }
 
+// TestPrintSync_FallbackNamespaceKindReportedDistinctlyFromUnmapped proves a kind that's mapped to a
+// class with no Concept Namespace (1) still shows its real class and its *actual* synced count in the
+// main table, annotated as having used the class's own namespace as a fallback, (2) is never listed
+// among the "unmapped: kind has no local class" rows, and (3) gets its own distinct summary line —
+// guards against the bug where the same kind appeared as both mapped and unmapped in one run, and
+// against a fallback silently looking identical to a real Concept Namespace resolution.
+func TestPrintSync_FallbackNamespaceKindReportedDistinctlyFromUnmapped(t *testing.T) {
+	resp := syncResponse{
+		Source:                 "backstage",
+		DryRun:                 true,
+		SyncedPerKind:          map[string]int{"System": 1, "Component": 3},
+		Mapping:                map[string]string{"System": "core:System", "Component": "core:Application"},
+		FallbackNamespaceKinds: []string{"Component"},
+	}
+
+	var out bytes.Buffer
+	printSync(&out, "backstage", resp)
+	got := out.String()
+
+	if !strings.Contains(got, "core:Application") || !strings.Contains(got, "3 individuals   (no Concept Namespace — used the class's own namespace)") {
+		t.Errorf("stdout missing Component's fallback-namespace row with its real synced count: %s", got)
+	}
+	if strings.Contains(got, "unmapped: kind has no local class") {
+		t.Errorf("stdout wrongly lists Component as unmapped (it has a class, just no Concept Namespace): %s", got)
+	}
+	if !strings.Contains(got, "1 kind(s) used their class's own namespace (no Concept Namespace configured): Component") {
+		t.Errorf("stdout missing the fallback-namespace summary line: %s", got)
+	}
+	if !strings.Contains(got, "2 kinds mapped, 0 kinds unmapped") {
+		t.Errorf("stdout should still count Component among mapped kinds: %s", got)
+	}
+}
+
 // TestPrintSync_ZeroRepresentsAndRelationsStillReported proves a source that never uses
 // represents-links or upstream relations still gets an explicit "0 written, 0 failed/skipped" line
 // rather than silence — the whole point being that "nothing happened" is itself information the

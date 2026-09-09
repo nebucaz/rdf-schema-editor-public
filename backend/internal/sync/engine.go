@@ -24,6 +24,15 @@ type SyncSummary struct {
 	SyncedPerKind map[string]int    `json:"syncedPerKind"`
 	Mapping       map[string]string `json:"mapping"`
 	SkippedKinds  []string          `json:"skippedKinds"`
+	// FallbackNamespaceKinds are upstream kinds whose mapped class has no `rse:namespace` declared
+	// anywhere in its own or its `rdfs:subClassOf*` ancestry — `resolveConceptNamespace` found
+	// nothing, so this run minted its individuals into the class's own declaring namespace instead
+	// (`findNamespaceOfClass`), same fallback posture `insertIndividual` already uses on the
+	// frontend for a hand-typed identifier with no Concept Namespace configured. Not a failure or a
+	// skip — SyncedPerKind for these kinds is a normal, non-zero count when upstream had entities;
+	// this is purely informational, so a caller can tell "used its own namespace" apart from "used
+	// an explicit Concept Namespace override" without a GraphDB round-trip.
+	FallbackNamespaceKinds []string `json:"fallbackNamespaceKinds,omitempty"`
 	// MappingFailures surfaces STORY-101's non-aborting `rse:sourceField` mapping-config errors for
 	// this run (currently: a resolved array value against a non-repeatable property) — never
 	// includes a property simply absent from a class's shape, since that's a normal "not mapped
@@ -124,6 +133,7 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 	syncedPerKind := make(map[string]int)
 	reportedMapping := make(map[string]string)
 	var skippedKinds []string
+	var fallbackNamespaceKinds []string
 	var mappingFailures []string
 	var representsFailures []string
 	representsSynced := 0
@@ -149,15 +159,33 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 		// STORY-099: each mapped shadow class resolves its own Concept Namespace — replacing the old
 		// single `sourceNS` shared by every kind — so two mapped kinds can land in two entirely
 		// different Namespaces within the same run. A class with no `rse:namespace` anywhere in its
-		// `rdfs:subClassOf*` ancestry has no valid sync target and is skipped, same posture as an
-		// unmapped kind, never aborting the whole run.
+		// `rdfs:subClassOf*` ancestry falls back to the class's own declaring namespace
+		// (`findNamespaceOfClass`) instead of being skipped — mirroring `insertIndividual`'s own
+		// frontend behavior for a hand-typed identifier with no Concept Namespace configured: use it
+		// when one resolves, otherwise fall back to a normal namespace, never refuse outright. A
+		// Backstage entity's own `uid` is exactly that kind of externally-authoritative identifier, so
+		// the same fallback applies here unconditionally, not just for explicit Concept Namespace
+		// overrides. Only a class that isn't declared *anywhere* (a dangling `backstageKind` mapping —
+		// the class was deleted after being mapped) has truly no valid sync target and gets skipped.
 		conceptNSBaseIRI, err := e.resolveConceptNamespace(ctx, classIRI)
 		if err != nil {
 			return SyncSummary{}, err
 		}
 		if conceptNSBaseIRI == "" {
-			skippedKinds = append(skippedKinds, kind)
-			continue
+			conceptNSBaseIRI, err = e.findNamespaceOfClass(ctx, classIRI)
+			if err != nil {
+				return SyncSummary{}, err
+			}
+			if conceptNSBaseIRI == "" {
+				// classIRI itself is undeclared anywhere — not meaningfully "mapped" for display
+				// purposes even though `mapping[kind]` pointed at it, so this must not leave a
+				// `reportedMapping` entry behind (that's the exact "reported as both mapped and
+				// skipped" contradiction this file used to have for the ordinary no-Namespace case).
+				delete(reportedMapping, kind)
+				skippedKinds = append(skippedKinds, kind)
+				continue
+			}
+			fallbackNamespaceKinds = append(fallbackNamespaceKinds, kind)
 		}
 		conceptNS := deriveNamespaceGraphs(conceptNSBaseIRI)
 
@@ -265,16 +293,17 @@ func (e *Engine) RunSync(ctx context.Context, source Source, dryRun bool) (SyncS
 	}
 
 	return SyncSummary{
-		Source:             source.Name(),
-		DryRun:             dryRun,
-		SyncedPerKind:      syncedPerKind,
-		Mapping:            reportedMapping,
-		SkippedKinds:       skippedKinds,
-		MappingFailures:    mappingFailures,
-		RepresentsFailures: representsFailures,
-		SkippedRelations:   skippedRelations,
-		RepresentsSynced:   representsSynced,
-		RelationsSynced:    relationsSynced,
+		Source:                 source.Name(),
+		DryRun:                 dryRun,
+		SyncedPerKind:          syncedPerKind,
+		Mapping:                reportedMapping,
+		SkippedKinds:           skippedKinds,
+		FallbackNamespaceKinds: fallbackNamespaceKinds,
+		MappingFailures:        mappingFailures,
+		RepresentsFailures:     representsFailures,
+		SkippedRelations:       skippedRelations,
+		RepresentsSynced:       representsSynced,
+		RelationsSynced:        relationsSynced,
 	}, nil
 }
 
@@ -377,6 +406,32 @@ func (e *Engine) selectCrossGraphObjects(ctx context.Context, subject, predicate
 		}
 	}
 	return objects, nil
+}
+
+// findNamespaceOfClass looks up which namespace classIRI was declared in, by finding the named graph
+// its own `owl:Class` triple actually lives in — a direct port of `sparql-connector.ts`'s own
+// `findNamespaceOfClass` (unrestricted cross-graph `GRAPH ?g {...}` lookup, `/schema` suffix
+// stripped to recover the namespace's own base IRI, since a namespace's schema graph is always
+// `<base>/schema` — `deriveNamespaceGraphs`'s own convention). This is `RunSync`'s fallback target
+// when a mapped shadow class has no `rse:namespace` anywhere in its ancestry: mint synced individuals
+// into the class's own declaring namespace instead of skipping the kind outright, mirroring
+// `insertIndividual`'s own frontend fallback for a hand-typed identifier with no Concept Namespace
+// declared — since PUBLIC_SCHEMA_NAMESPACE/DefaultNamespaceBaseIRI is not a meaningful "home" for a
+// class once the namespace feature moved every class's own declaration into its own `/schema` graph.
+// Returns "" (not an error) when classIRI isn't declared `a owl:Class` anywhere — a dangling
+// `backstageKind` mapping (the class was deleted after being mapped), same non-aborting per-kind skip
+// posture the rest of this file uses.
+func (e *Engine) findNamespaceOfClass(ctx context.Context, classIRI string) (string, error) {
+	query := fmt.Sprintf(`SELECT ?g WHERE { GRAPH ?g { <%s> <%s> <%s> } } LIMIT 1`, classIRI, rdfType, owlClass)
+	result, err := e.gdb.Select(ctx, query)
+	if err != nil {
+		return "", fmt.Errorf("find namespace of class: %w", err)
+	}
+	if len(result.Results.Bindings) == 0 {
+		return "", nil
+	}
+	graphIRI := result.Results.Bindings[0]["g"].Value
+	return strings.TrimSuffix(graphIRI, "/schema"), nil
 }
 
 // resolveConceptNamespace walks a shadow class's `rdfs:subClassOf` ancestry breadth-first (STORY-099)

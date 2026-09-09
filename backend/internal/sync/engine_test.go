@@ -75,6 +75,13 @@ func seedNamespace(store *graphdbtest.Store, vocab Vocabulary, classIRI, namespa
 	})
 }
 
+// seedClassDeclaration declares classIRI `a owl:Class` in graph — what `findNamespaceOfClass` (the
+// no-Concept-Namespace fallback target) actually searches for, mirroring how every real class in this
+// app's schema carries this triple in its own namespace's `/schema` graph.
+func seedClassDeclaration(store *graphdbtest.Store, classIRI, graph string) {
+	store.Seed(graphdbtest.Triple{Graph: graph, S: classIRI, P: rdfType, O: owlClass, ObjectIsIRI: true})
+}
+
 // seedSubClassOf declares subIRI `rdfs:subClassOf` superIRI — used by the STORY-099 ancestry-walk
 // tests below.
 func seedSubClassOf(store *graphdbtest.Store, subIRI, superIRI string) {
@@ -517,9 +524,15 @@ func TestResolveConceptNamespace_NoneAnywhereReturnsEmpty(t *testing.T) {
 	}
 }
 
-func TestRunSync_KindWithNoValidNamespaceIsSkipped(t *testing.T) {
+// TestRunSync_KindWithNoConceptNamespaceFallsBackToClassOwnNamespace proves a mapped class with no
+// `rse:namespace` anywhere in its ancestry still syncs — into its own declaring namespace
+// (`findNamespaceOfClass`, `/schema` suffix stripped), not skipped — mirroring `insertIndividual`'s
+// own frontend fallback for a hand-typed identifier with no Concept Namespace configured. Reported
+// via FallbackNamespaceKinds (informational), never SkippedKinds, and never dropped from Mapping.
+func TestRunSync_KindWithNoConceptNamespaceFallsBackToClassOwnNamespace(t *testing.T) {
 	engine, store := newTestEngine(t)
 	seedMapping(store, engine.vocab, "Component", testClassIRI)
+	seedClassDeclaration(store, testClassIRI, "http://ld.example.org/schema")
 	// deliberately no seedNamespace call — testClassIRI has no rse:namespace anywhere.
 	source := &fixtureSource{
 		name:  "backstage",
@@ -533,11 +546,25 @@ func TestRunSync_KindWithNoValidNamespaceIsSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunSync() error = %v", err)
 	}
-	if len(summary.SkippedKinds) != 1 || summary.SkippedKinds[0] != "Component" {
-		t.Errorf("SkippedKinds = %v, want [Component] (no valid Namespace)", summary.SkippedKinds)
+	if len(summary.SkippedKinds) != 0 {
+		t.Errorf("SkippedKinds = %v, want empty (Component has a local class — it just lacks a Concept Namespace)", summary.SkippedKinds)
 	}
-	if summary.SyncedPerKind["Component"] != 0 {
-		t.Errorf("SyncedPerKind[Component] = %d, want 0 (nothing synced without a valid Namespace)", summary.SyncedPerKind["Component"])
+	if len(summary.FallbackNamespaceKinds) != 1 || summary.FallbackNamespaceKinds[0] != "Component" {
+		t.Errorf("FallbackNamespaceKinds = %v, want [Component]", summary.FallbackNamespaceKinds)
+	}
+	if summary.Mapping["Component"] != testClassIRI {
+		t.Errorf("Mapping[Component] = %q, want %q", summary.Mapping["Component"], testClassIRI)
+	}
+	if summary.SyncedPerKind["Component"] != 1 {
+		t.Errorf("SyncedPerKind[Component] = %d, want 1 (falls back to the class's own namespace instead of being skipped)", summary.SyncedPerKind["Component"])
+	}
+
+	// testClassIRI's own namespace is "http://ld.example.org" (its /schema graph with the suffix
+	// stripped) — the synced individual must land there, not in DefaultNamespaceBaseIRI or the old
+	// fixed <default>/backstage source namespace.
+	wantIRI := individualIRI(namespaceGraphs{instances: "http://ld.example.org"}, "backstage", "abc-1")
+	if !store.Has("http://ld.example.org", wantIRI, rdfType, testClassIRI, true) {
+		t.Errorf("expected %s to be typed %s in graph http://ld.example.org, snapshot: %+v", wantIRI, testClassIRI, store.Snapshot())
 	}
 }
 

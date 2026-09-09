@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -127,6 +128,84 @@ func TestRun_Sync_FlagAfterPositionalArg(t *testing.T) {
 	}
 	if gotQuery != "dryRun=false" {
 		t.Errorf("query = %q, want dryRun=false", gotQuery)
+	}
+}
+
+func TestRun_Raw_PrintsPrettyPrintedJSONToStdout(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"kind":"Component","metadata":{"uid":"1","name":"a"},"relations":[]}]`)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"raw", "backstage", "Component", "--backend-url", server.URL}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr.String())
+	}
+	if gotPath != "/sources/backstage/raw/Component" {
+		t.Errorf("path = %s, want /sources/backstage/raw/Component", gotPath)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `"uid": "1"`) {
+		t.Errorf("stdout missing pretty-printed field: %s", out)
+	}
+}
+
+func TestRun_Raw_WritesToOutFile(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `[{"kind":"Component"}]`)
+	}))
+	defer server.Close()
+
+	outPath := t.TempDir() + "/dump.json"
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"raw", "backstage", "Component", "--backend-url", server.URL, "--out", outPath}, &stdout, &stderr)
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0, stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), outPath) {
+		t.Errorf("stdout missing confirmation of written file: %s", stdout.String())
+	}
+	written, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatalf("read --out file: %v", err)
+	}
+	if !strings.Contains(string(written), `"kind": "Component"`) {
+		t.Errorf("--out file content = %s, want pretty-printed dump", written)
+	}
+}
+
+func TestRun_Raw_MissingKindArgUsage(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"raw", "backstage"}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Error("exit code = 0, want non-zero when <kind> is missing")
+	}
+	if !strings.Contains(stderr.String(), "usage: importctl raw") {
+		t.Errorf("stderr = %q, want a usage message", stderr.String())
+	}
+}
+
+func TestRun_Raw_UnsupportedSourceSurfaces501(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "source does not support raw dump: gitlab", http.StatusNotImplemented)
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"raw", "gitlab", "Component", "--backend-url", server.URL}, &stdout, &stderr)
+
+	if code == 0 {
+		t.Error("exit code = 0, want non-zero on backend 501")
+	}
+	if !strings.Contains(stderr.String(), "501") {
+		t.Errorf("stderr = %q, want it to mention the 501 status", stderr.String())
 	}
 }
 

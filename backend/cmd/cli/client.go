@@ -21,16 +21,17 @@ type discoverResponse struct {
 }
 
 type syncResponse struct {
-	Source             string            `json:"source"`
-	DryRun             bool              `json:"dryRun"`
-	SyncedPerKind      map[string]int    `json:"syncedPerKind"`
-	Mapping            map[string]string `json:"mapping"`
-	SkippedKinds       []string          `json:"skippedKinds"`
-	MappingFailures    []string          `json:"mappingFailures"`
-	RepresentsFailures []string          `json:"representsFailures"`
-	SkippedRelations   []string          `json:"skippedRelations"`
-	RepresentsSynced   int               `json:"representsSynced"`
-	RelationsSynced    int               `json:"relationsSynced"`
+	Source                 string            `json:"source"`
+	DryRun                 bool              `json:"dryRun"`
+	SyncedPerKind          map[string]int    `json:"syncedPerKind"`
+	Mapping                map[string]string `json:"mapping"`
+	SkippedKinds           []string          `json:"skippedKinds"`
+	FallbackNamespaceKinds []string          `json:"fallbackNamespaceKinds"`
+	MappingFailures        []string          `json:"mappingFailures"`
+	RepresentsFailures     []string          `json:"representsFailures"`
+	SkippedRelations       []string          `json:"skippedRelations"`
+	RepresentsSynced       int               `json:"representsSynced"`
+	RelationsSynced        int               `json:"relationsSynced"`
 }
 
 // apiError is returned for any non-2xx backend response — callers print its Error() to stderr and
@@ -88,6 +89,32 @@ func (c *apiClient) sync(ctx context.Context, source string, dryRun bool) (syncR
 		return syncResponse{}, err
 	}
 	return out, nil
+}
+
+// raw calls GET /sources/{source}/raw/{kind} and returns the response body verbatim — a JSON array
+// of the source's own undecoded entity envelopes, meant for direct printing/saving rather than
+// further parsing here (unlike discover/sync, this CLI has no typed shape to decode it into).
+func (c *apiClient) raw(ctx context.Context, source, kind string) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/sources/"+source+"/raw/"+kind, nil)
+	if err != nil {
+		return nil, err
+	}
+	c.setAuth(req)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("backend unreachable at %s: %w", req.URL, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, &apiError{status: resp.StatusCode, body: string(body)}
+	}
+	return body, nil
 }
 
 func (c *apiClient) doJSON(req *http.Request, out any) error {

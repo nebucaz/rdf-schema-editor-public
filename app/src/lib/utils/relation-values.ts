@@ -9,7 +9,12 @@ export interface RelationFieldSpecLike {
 }
 
 /** One candidate target individual for a relation field's typeahead — `SparqlConnector
- *  .fetchIndividualsOfClass`'s own return shape, scoped to the relation's `targetClassIri`. */
+ *  .fetchIndividualsOfClass`'s own return shape, scoped to the relation's `targetClassIri`. `label`
+ *  is the exact typeahead/datalist display text the caller built (e.g. `"871912 (ssi)"`, the raw
+ *  `rdfs:label`/local name plus a namespace-prefix suffix) — resolution (`resolveRelationTargetIri`)
+ *  matches against this text as-is, so a caller that wants two same-labeled individuals from
+ *  different namespaces to stay distinguishable and separately selectable must bake that
+ *  disambiguation into `label` itself before handing options here, not rely on `iri` alone. */
 export interface RelationTargetOption {
 	iri: string;
 	label: string;

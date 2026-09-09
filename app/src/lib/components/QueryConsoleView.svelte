@@ -59,7 +59,16 @@
 	let saveName = $state('');
 	let saveDescription = $state('');
 	let saveError = $state<string | null>(null);
+	/** Set on a successful Save/Update, mirroring `SettingsView`'s own `saveSuccess` pattern — the
+	 *  form stays open (unlike before, when a success silently closed it with no feedback at all)
+	 *  so the confirmation is actually visible, and clears itself as soon as the name/description
+	 *  is edited again, since it describes that save, not whatever's currently typed. */
+	let saveSuccess = $state<'created' | 'updated' | null>(null);
 	let saveBusy = $state(false);
+
+	function clearSaveSuccess() {
+		saveSuccess = null;
+	}
 
 	let deleteTarget = $state<FetchedSavedQuery | null>(null);
 	let deleteBusy = $state(false);
@@ -83,6 +92,7 @@
 		saveName = '';
 		saveDescription = '';
 		saveError = null;
+		saveSuccess = null;
 		showSaveForm = true;
 	}
 
@@ -93,6 +103,7 @@
 		saveName = target?.label ?? '';
 		saveDescription = target?.description ?? '';
 		saveError = null;
+		saveSuccess = null;
 		showSaveForm = true;
 	}
 
@@ -107,6 +118,7 @@
 			return;
 		}
 		saveError = null;
+		saveSuccess = null;
 		saveBusy = true;
 		try {
 			if (saveFormMode === 'create') {
@@ -125,7 +137,7 @@
 				}
 			}
 			await loadSavedQueries();
-			showSaveForm = false;
+			saveSuccess = saveFormMode === 'create' ? 'created' : 'updated';
 		} catch (err) {
 			saveError = err instanceof Error ? err.message : 'Failed to save query';
 		} finally {
@@ -199,21 +211,35 @@
 		<form class="save-form" onsubmit={(e) => void handleSaveFormSubmit(e)}>
 			<label>
 				Name
-				<input type="text" bind:value={saveName} placeholder="e.g. Undocumented Classes" />
+				<input
+					type="text"
+					bind:value={saveName}
+					oninput={clearSaveSuccess}
+					placeholder="e.g. Undocumented Classes"
+				/>
 			</label>
 			<label>
 				Description (optional)
-				<input type="text" bind:value={saveDescription} placeholder="What this query finds" />
+				<input
+					type="text"
+					bind:value={saveDescription}
+					oninput={clearSaveSuccess}
+					placeholder="What this query finds"
+				/>
 			</label>
 			{#if saveError}
-				<p class="error">{saveError}</p>
+				<p class="error" role="alert">{saveError}</p>
+			{:else if saveSuccess}
+				<p class="success" role="status">
+					{saveSuccess === 'created' ? 'Query saved.' : 'Query updated.'}
+				</p>
 			{/if}
 			<div class="actions">
 				<button type="button" class="secondary" onclick={() => (showSaveForm = false)} disabled={saveBusy}>
 					Cancel
 				</button>
 				<button type="submit" class="primary" disabled={saveBusy}>
-					{saveBusy ? 'Saving…' : saveFormMode === 'create' ? 'Save as…' : 'Update'}
+					{saveBusy ? 'Saving…' : saveFormMode === 'create' ? 'Save' : 'Update'}
 				</button>
 			</div>
 		</form>
@@ -346,6 +372,16 @@
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
+		margin: 0;
+	}
+
+	.success {
+		color: var(--color-success);
+		background: var(--color-success-bg);
+		padding: 0.4rem 0.6rem;
+		border-radius: 6px;
+		font-size: 0.85rem;
+		font-weight: 600;
 		margin: 0;
 	}
 

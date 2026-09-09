@@ -128,6 +128,11 @@ export interface RelationEdgeSpec {
 	 *  relationship's `owl:ObjectProperty` triple lives in its source class's `/schema` graph
 	 *  (Decision 8), even when it crosses into another namespace's class as its range. */
 	namespace: string;
+	/** The forward relation's IRI, when this edge is the auto-generated reverse half of a relation
+	 *  pair (`rse:generatedReverseOf`, STORY-XXX) — `undefined` for every ordinary relation. Mirrors
+	 *  `CanvasAttributeSpec.inheritedFrom`'s optional-tag convention: `buildCanvasModel` tags, it
+	 *  doesn't filter — the canvas decides downstream whether to hide it. */
+	generatedReverseOf?: string;
 }
 
 export interface AttributedLinkEdgeSpec {
@@ -518,7 +523,8 @@ export function buildCanvasModel(
 				required: op.required,
 				repeatable: op.repeatable,
 				relationKind: op.relationKind,
-				namespace: op.namespaceBaseIri
+				namespace: op.namespaceBaseIri,
+				generatedReverseOf: op.generatedReverseOf
 			});
 		}
 	}

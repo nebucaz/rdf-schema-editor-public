@@ -9,18 +9,26 @@
 		/** Overrides the default 500px content width — e.g. the Query Console needs room for a
 		 *  results table (`ResultsTable.svelte`), which most modal content here doesn't. */
 		maxWidth?: string;
+		/** Whether a backdrop click or Escape can dismiss the dialog, in addition to its own close
+		 *  button/Cancel action. Defaults to `true` (the existing behavior everywhere else). Set
+		 *  `false` for a dialog that can hold not-yet-saved input (e.g. the Query Console's inline
+		 *  "Save as…" form) — an accidental click outside it, or an Escape reaching it while typing,
+		 *  would otherwise silently discard whatever's been entered so far. The explicit close
+		 *  button (always rendered) and any in-content Cancel button still work either way, since
+		 *  both call `onClose` directly rather than going through this gate. */
+		dismissible?: boolean;
 	}
 
-	let { isOpen, title, onClose, children, maxWidth = '500px' }: Props = $props();
+	let { isOpen, title, onClose, children, maxWidth = '500px', dismissible = true }: Props = $props();
 
 	function handleBackdropClick(event: MouseEvent) {
-		if (event.target === event.currentTarget) {
+		if (dismissible && event.target === event.currentTarget) {
 			onClose();
 		}
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
-		if (event.key === 'Escape') {
+		if (dismissible && event.key === 'Escape') {
 			onClose();
 		}
 	}
