@@ -18,7 +18,6 @@ function createWorkbenchActionsStore() {
 	let viewMode = $state<'schema' | 'instances'>('schema');
 	let activeWorkspace = $state<string | null>(null);
 	let activeNamespace = $state<string | null>(null);
-	let addElementOpen = $state(false);
 	/** STORY-082: a one-shot request to open the Triples panel scoped to one Workspace — set by
 	 *  `WorkspaceManagementView`'s "View triples" button (rendered inside `+layout.svelte`), read and
 	 *  cleared by `+page.svelte` (which owns `showTriplesPanel`/`TriplesPanel`), mirroring
@@ -108,19 +107,6 @@ function createWorkbenchActionsStore() {
 		},
 		set activeNamespace(value: string | null) {
 			activeNamespace = value;
-		},
-		/** "Add Element" typeahead modal (STORY-080): `+layout.svelte`'s hamburger entry opens it,
-		 *  `+page.svelte` owns the rendered `Modal`/`AddElementForm` (it needs the canvas's
-		 *  `nextPosition()`/`addWorkspaceMember` wiring) — same bridge shape as
-		 *  `externalVocabManagementOpen`. */
-		get addElementOpen() {
-			return addElementOpen;
-		},
-		set addElementOpen(value: boolean) {
-			addElementOpen = value;
-		},
-		openAddElement() {
-			addElementOpen = true;
 		},
 		get triplesWorkspaceScope() {
 			return triplesWorkspaceScope;

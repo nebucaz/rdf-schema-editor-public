@@ -338,6 +338,119 @@ export interface FetchedAssertion {
 	objectLabel: string;
 }
 
+// -- Identity browsing (STORY-115/116/117, `spec/browse-identity/plan.md`) ----------------------
+
+/** `searchIndividuals` input (STORY-115) — every field optional and ANDed together with the others;
+ *  an omitted `query` means no label filter, not "match nothing". `limit`/`offset` page through
+ *  results (default `limit` 50, `offset` 0) — there is no keyset alternative in v1. */
+export interface IndividualSearchParams {
+	/** Case-insensitive substring match against `rdfs:label`. */
+	query?: string;
+	/** Exact-type match only (`FILTER(?type = <classIri>)`) — selecting an abstract/parent class
+	 *  misses individuals typed only as one of its subclasses, since this repo runs no OWL2-RL
+	 *  reasoning to materialize supertype `rdf:type` triples itself. Pass `classIris` instead when the
+	 *  facet should also match subclasses (`identities/+page.svelte` does, expanding the selected
+	 *  class's transitive subclass closure client-side from the already-loaded cross-namespace schema
+	 *  before calling this method — this method has no schema access to compute that closure itself).
+	 *  Ignored when `classIris` is also given. */
+	classIri?: string;
+	/** Same facet as `classIri`, but OR-matches every IRI in the list (`FILTER(?type IN (...))`) —
+	 *  see `classIri`'s doc comment. */
+	classIris?: string[];
+	namespaceBaseIri?: string;
+	/** Exact match against the `rse:syncSource` marker (e.g. `"backstage"`). */
+	syncSource?: string;
+	/** Exact match against the `rse:syncStatus` marker (currently only ever `"stale"`). */
+	syncStatus?: string;
+	limit?: number;
+	offset?: number;
+}
+
+/** One `searchIndividuals` row — same shape as `FetchedIndividual`, kept as its own type since a
+ *  search result is conceptually a distinct read path (paginated, filtered) even though the fields
+ *  happen to match today. */
+export interface IndividualSearchResult {
+	iri: string;
+	label: string;
+	classIri: string;
+	namespaceBaseIri: string;
+	syncSource: string | null;
+	syncStatus: string | null;
+}
+
+/** `searchIndividuals`' return shape — `hasMore` is computed by fetching one extra row past `limit`
+ *  and trimming it off, so the caller never gets a "did this page fill exactly?" ambiguity. */
+export interface IndividualSearchPage {
+	results: IndividualSearchResult[];
+	hasMore: boolean;
+}
+
+/** One outgoing `<iri> ?p ?o` triple (STORY-116) — `fetchResourcePage`'s "everything this IRI has on
+ *  it" half. `objectDatatype` is only ever set when `objectType` is `'literal'` and the literal is
+ *  typed (e.g. `xsd:date`). */
+export interface ResourcePageTriple {
+	predicateIri: string;
+	/** Resolved `rdfs:label` on the predicate, falling back to its local name (STORY-116 AC). */
+	predicateLabel: string;
+	object: string;
+	objectType: 'uri' | 'literal';
+	objectDatatype?: string;
+	/** Resolved `rdfs:label` on the object, only ever set when `objectType === 'uri'` — a literal
+	 *  object is its own display value, not a labeled resource. `undefined` when the target IRI has
+	 *  no `rdfs:label` of its own; callers fall back the same way `predicateLabel`'s absence would be
+	 *  handled elsewhere (`labelOrPrettify`, not a server-side fallback here, since the caller already
+	 *  has `object` to prettify from). */
+	objectLabel?: string;
+}
+
+/** One incoming `?s ?p <iri>` triple (STORY-116) — `fetchResourcePage`'s "what links here" half. */
+export interface ResourcePageIncomingTriple {
+	subjectIri: string;
+	/** Resolved `rdfs:label` on the subject, falling back to its local name. */
+	subjectLabel: string;
+	predicateIri: string;
+	/** Resolved `rdfs:label` on the predicate, falling back to its local name. */
+	predicateLabel: string;
+}
+
+/** `fetchResourcePage`'s return shape (STORY-116) — every outgoing and incoming triple for one
+ *  arbitrary IRI, with predicate/subject labels already resolved. */
+export interface ResourcePage {
+	iri: string;
+	outgoing: ResourcePageTriple[];
+	incoming: ResourcePageIncomingTriple[];
+}
+
+/** One node in a `fetchIdentityNeighborhood` result (STORY-117) — always a real individual, never a
+ *  class/property/shape (see the method's own doc comment for the join that guarantees this). */
+export interface NeighborhoodNode {
+	iri: string;
+	label: string;
+	classIri: string;
+	/** Base IRI of the namespace this individual's own triples live in (STORY-120 color follow-up) —
+	 *  its instances graph *is* the namespace base IRI (`namespaceGraphs()`'s `instances: base`), so
+	 *  this is just that graph IRI echoed back, no suffix-stripping needed (unlike a class's `/schema`
+	 *  graph). Lets a caller color a neighborhood node by its own namespace's default color rather
+	 *  than only its class's. */
+	namespaceBaseIri: string;
+}
+
+/** One edge in a `fetchIdentityNeighborhood` result (STORY-117) — never a structural/ontology
+ *  predicate (`rdf:type`, `rdfs:subClassOf`, `skos:broader`/`inScheme`/`topConceptOf`). */
+export interface NeighborhoodLink {
+	source: string;
+	target: string;
+	predicateIri: string;
+	predicateLabel: string;
+}
+
+/** `fetchIdentityNeighborhood`'s return shape (STORY-117) — a small, mergeable node/link delta; the
+ *  caller (not this method) is responsible for deduping across repeated expand-on-click calls. */
+export interface NeighborhoodGraph {
+	nodes: NeighborhoodNode[];
+	links: NeighborhoodLink[];
+}
+
 /** One attribute's resolved provenance (Sprint 4 Story 012) — the `fetchProvenanceReport` row shape.
  *  `masterIri`/`masterLabel` are `null` when neither the attribute nor its owning class has any
  *  `isMasterFor` assertion anywhere in the chain (Story 013's "no known contributor" case);
@@ -5280,6 +5393,336 @@ export class SparqlConnector {
 			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
 			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? [])
 		};
+	}
+
+	// -- Identity browsing (STORY-115/116/117, `spec/browse-identity/plan.md`) ------------------
+
+	/**
+	 * Paginated, faceted individual search (STORY-115) — port of `semantic-crm`'s
+	 * `searchSubjectsWithMetadata`, simplified to a single `rdfs:label` match (v1 needs no
+	 * configurable predicate list, research.md §7 row 4) and adapted for this app's multi-namespace,
+	 * schema/instance-split data model.
+	 *
+	 * Deliberately unscoped to one namespace, unlike `fetchAllIndividuals` — this is a cross-namespace
+	 * browse/search surface, so every triple pattern lives inside an unrestricted `GRAPH ?ig {...}`/
+	 * `GRAPH ?classGraph {...}` block (never a bare pattern, never mixed with a `FROM` clause — see
+	 * `fetchAllIndividuals`'s own doc comment for why that combination silently zeroes every result).
+	 * `?ig` is the individual's own instances graph, which — per `namespaceGraphs()` — *is* that
+	 * namespace's base IRI, so it doubles directly as the `namespaceBaseIri` facet/output field with no
+	 * extra lookup needed.
+	 *
+	 * Individual-vs-schema-construct filtering reuses the exact `?type a owl:Class` cross-graph join
+	 * `fetchAllIndividuals` already uses, plus its `Note`/`Workspace` exclusion and `VOCAB_FILTER`, so
+	 * classes/properties/shapes (and Notes/Workspaces) never leak into results — none of that exists in
+	 * the ported `semantic-crm` original, which has no schema/instance split to begin with.
+	 *
+	 * Pagination fetches one row past `limit` and trims it off to compute `hasMore`, closing the gap
+	 * `semantic-crm`'s flat `LIMIT 100` cap left open (research.md §8).
+	 */
+	async searchIndividuals(params: IndividualSearchParams = {}): Promise<IndividualSearchPage> {
+		const { query, classIri: classIriFilter, classIris: classIrisFilter, namespaceBaseIri, syncSource, syncStatus } =
+			params;
+		const limit = Math.max(1, Math.floor(params.limit ?? 50));
+		const offset = Math.max(0, Math.floor(params.offset ?? 0));
+
+		if (classIriFilter) this.assertSafeSparqlIri(classIriFilter, 'class IRI');
+		classIrisFilter?.forEach((c) => this.assertSafeSparqlIri(c, 'class IRI'));
+		if (namespaceBaseIri) this.assertSafeSparqlIri(namespaceBaseIri, 'namespace base IRI');
+
+		const filters: string[] = [];
+		if (classIrisFilter && classIrisFilter.length > 0) {
+			filters.push(`FILTER(?type IN (${classIrisFilter.map((c) => `<${c}>`).join(', ')}))`);
+		} else if (classIriFilter) {
+			filters.push(`FILTER(?type = <${classIriFilter}>)`);
+		}
+		if (namespaceBaseIri) filters.push(`FILTER(?ig = <${namespaceBaseIri}>)`);
+		if (syncSource !== undefined) {
+			filters.push(`FILTER(BOUND(?syncSource) && STR(?syncSource) = "${this.escapeString(syncSource)}")`);
+		}
+		if (syncStatus !== undefined) {
+			filters.push(`FILTER(BOUND(?syncStatus) && STR(?syncStatus) = "${this.escapeString(syncStatus)}")`);
+		}
+		if (query) {
+			filters.push(
+				`FILTER(BOUND(?label) && CONTAINS(LCASE(STR(?label)), LCASE("${this.escapeString(query)}")))`
+			);
+		}
+
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?i ?type ?label ?ig ?syncSource ?syncStatus WHERE {
+				GRAPH ?ig {
+					?i a ?type .
+					OPTIONAL { ?i rdfs:label ?label }
+					OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
+					OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
+				}
+				GRAPH ?classGraph { ?type a owl:Class }
+				FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+				${VOCAB_FILTER('?i')}
+				${filters.join('\n\t\t\t\t')}
+			}
+			ORDER BY ?label ?i
+			LIMIT ${limit + 1}
+			OFFSET ${offset}
+		`);
+
+		const rows: IndividualSearchResult[] = results.results.bindings.map((b) => ({
+			iri: b.i.value,
+			classIri: b.type.value,
+			label: b.label?.value ?? extractLocalName(b.i.value),
+			namespaceBaseIri: b.ig.value,
+			syncSource: b.syncSource?.value ?? null,
+			syncStatus: b.syncStatus?.value ?? null
+		}));
+
+		const hasMore = rows.length > limit;
+		return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
+	}
+
+	/**
+	 * "Everything about this one IRI" (STORY-116) — port of `semantic-crm`'s `fetchTriplesForSubject`
+	 * (outgoing) + `fetchIncomingTriplesForObject` (incoming), merged into one call. Unlike
+	 * `fetchIndividualAttributeValues`, this needs no prior knowledge of the individual's class's
+	 * declared attribute list — it reads whatever triples actually exist on the IRI, which matters for
+	 * inspecting a synced individual that carries data outside its class's declared shape.
+	 *
+	 * No `GRAPH`/`FROM` rewrite needed (research.md §8): both ported queries are already
+	 * namespace-agnostic, so an individual and its class can each live in a different namespace
+	 * (STORY-099) without any change here. No individual-vs-schema-construct filter either — unlike
+	 * `searchIndividuals`/`fetchIdentityNeighborhood`, this method is explicitly scoped to one
+	 * already-known IRI, so there's no unscoped result set for a class/property to leak into.
+	 */
+	async fetchResourcePage(iri: string): Promise<ResourcePage> {
+		this.assertSafeSparqlIri(iri, 'resource IRI');
+
+		const { outgoing: outgoingQuery, incoming: incomingQuery } = this.resourcePageQueries(iri);
+		const [outgoingResults, incomingResults] = await Promise.all([
+			this.selectQuery(outgoingQuery),
+			this.selectQuery(incomingQuery)
+		]);
+
+		const outgoing: ResourcePageTriple[] = outgoingResults.results.bindings.map((b) => ({
+			predicateIri: b.p.value,
+			predicateLabel: b.pLabel?.value ?? extractLocalName(b.p.value),
+			object: b.o.value,
+			objectType: b.o.type === 'uri' ? ('uri' as const) : ('literal' as const),
+			objectDatatype: b.o.type === 'uri' ? undefined : b.o.datatype,
+			objectLabel: b.o.type === 'uri' ? b.oLabel?.value : undefined
+		}));
+
+		const incoming: ResourcePageIncomingTriple[] = incomingResults.results.bindings.map((b) => ({
+			subjectIri: b.s.value,
+			subjectLabel: b.sLabel?.value ?? extractLocalName(b.s.value),
+			predicateIri: b.p.value,
+			predicateLabel: b.pLabel?.value ?? extractLocalName(b.p.value)
+		}));
+
+		return { iri, outgoing, incoming };
+	}
+
+	/** The two SELECT strings `fetchResourcePage` actually runs for `iri` — one FILTER-free triple
+	 *  pattern each, issued as two parallel requests rather than the single UNION query below, since
+	 *  there's no need to pay for a UNION's extra planning when the caller can just await both. */
+	private resourcePageQueries(iri: string): { outgoing: string; incoming: string } {
+		return {
+			outgoing: `
+				${PREFIXES}
+				SELECT ?p ?o ?pLabel ?oLabel WHERE {
+					<${iri}> ?p ?o .
+					OPTIONAL { ?p rdfs:label ?pLabel }
+					OPTIONAL { ?o rdfs:label ?oLabel }
+				}
+			`,
+			incoming: `
+				${PREFIXES}
+				SELECT ?s ?p ?sLabel ?pLabel WHERE {
+					?s ?p <${iri}> .
+					OPTIONAL { ?s rdfs:label ?sLabel }
+					OPTIONAL { ?p rdfs:label ?pLabel }
+				}
+			`
+		};
+	}
+
+	/** STORY-119 follow-up: the "Copy query" action on the Identities resource page. Originally handed
+	 *  the user `resourcePageQueries`'s two literal SELECTs concatenated with comment headers — but a
+	 *  SPARQL query box (GraphDB's workbench included) accepts exactly one query per run, so that blob
+	 *  couldn't actually be pasted and executed; it just looked like one string. This instead UNIONs
+	 *  the two triple patterns into one query, sharing `?p`/`?pLabel` and folding "the other resource"
+	 *  (object when outgoing, subject when incoming) into `?other`/`?otherLabel`, with `?direction`
+	 *  telling the two apart in the results — a single paste-and-run query producing every row the
+	 *  page shows for `iri`, at the cost of no longer being `fetchResourcePage`'s own literal strings. */
+	buildResourcePageQuery(iri: string): string {
+		this.assertSafeSparqlIri(iri, 'resource IRI');
+		return `
+			${PREFIXES}
+			SELECT ?direction ?p ?pLabel ?other ?otherLabel WHERE {
+				{
+					BIND("outgoing" AS ?direction)
+					<${iri}> ?p ?other .
+					OPTIONAL { ?p rdfs:label ?pLabel }
+					OPTIONAL { ?other rdfs:label ?otherLabel }
+				}
+				UNION
+				{
+					BIND("incoming" AS ?direction)
+					?other ?p <${iri}> .
+					OPTIONAL { ?other rdfs:label ?otherLabel }
+					OPTIONAL { ?p rdfs:label ?pLabel }
+				}
+			}
+		`.trim();
+	}
+
+	/**
+	 * The Identities resource page's "Delete" action (STORY-119 follow-up) — removes an identity
+	 * entirely: every triple `fetchResourcePage` would show for it, both directions. Deliberately a
+	 * separate method from `deleteIndividual` (the schema canvas's "Manage Members" delete) rather
+	 * than a shared one:
+	 *
+	 * - `deleteIndividual` only strips outgoing triples (`<iri> ?p ?o`) plus its own
+	 *   `WorkspaceMembership`/Note-link cascades — canvas concepts this read-only, `Workspace`-free
+	 *   view has no use for, and correctly never touches.
+	 * - This method additionally strips every *incoming* triple (`?s ?p <iri>` — another individual's
+	 *   relation pointing at this one), cross-graph (`GRAPH ?g {...}`, no `FROM` restriction, same
+	 *   idiom `migrateIndividualsToNamespace`'s own cross-graph reference rewrite uses) since the
+	 *   pointing individual can live in any namespace, not just this identity's own. Leaving those
+	 *   behind would surface as a dangling "Incoming" link pointing at a since-deleted resource — the
+	 *   exact case the confirmation dialog's "delete the corresponding triples (identity, properties,
+	 *   links)" wording promises.
+	 *
+	 * Runs `deleteIndividual` first (its own cascades still apply if this identity happens to also be
+	 * a canvas Workspace member/Note target), then a second cross-graph incoming-triple sweep.
+	 */
+	async deleteIdentity(iri: string, namespaceBaseIri?: string): Promise<void> {
+		this.assertSafeSparqlIri(iri, 'individual IRI');
+		await this.deleteIndividual(iri, namespaceBaseIri);
+		await this.executeUpdate(`${PREFIXES} DELETE WHERE { GRAPH ?g { ?s ?p <${iri}> } }`);
+	}
+
+	/** Structural/ontology predicates excluded from `fetchIdentityNeighborhood` edges (STORY-117) —
+	 *  the same starting exclusion set `semantic-crm`'s `fetchLinkedEntities` uses. SKOS has no
+	 *  existing constant in this file (unlike `RDF`/`RDFS`, imported from `./turtle`), so its two
+	 *  relevant IRIs are spelled out directly here rather than adding a SKOS namespace object for two
+	 *  call sites. */
+	private static readonly NEIGHBORHOOD_STRUCTURAL_PREDICATES = [
+		RDF.type,
+		RDFS.subClassOf,
+		'http://www.w3.org/2004/02/skos/core#broader',
+		'http://www.w3.org/2004/02/skos/core#inScheme',
+		'http://www.w3.org/2004/02/skos/core#topConceptOf'
+	];
+
+	/**
+	 * Small, on-demand local neighborhood (STORY-117) — port of `semantic-crm`'s `fetchLinkedEntities`,
+	 * `VALUES`-seeded and fetching both outgoing and incoming edges of every seed IRI in one call. v1
+	 * only ever expands one hop per call (`depth` beyond 1 is not implemented — research.md §7 row 3 /
+	 * STORY-117's own description defer that to a future call-it-repeatedly UX, mirroring
+	 * `semantic-crm`'s own `handleNodeExpand`); `depth <= 0` short-circuits to an empty graph, matching
+	 * the ported original's own `depth === 0` guard.
+	 *
+	 * Individual-vs-schema-construct filtering (new, not in the ported original, research.md §8): both
+	 * the seed lookup and the edge lookup require each endpoint to carry an `rdf:type` that is itself a
+	 * declared `owl:Class` (the same cross-graph join `fetchAllIndividuals` uses), plus the same
+	 * `Note`/`Workspace` exclusion and `VOCAB_FILTER` — so a structural edge can never pull a
+	 * class/property/shape into the neighborhood as a node. `LIMIT 500` on the edge query mirrors the
+	 * ported original's own cap, so one highly-connected node can't return an unbounded neighborhood.
+	 */
+	async fetchIdentityNeighborhood(seedIris: string[], depth: number = 1): Promise<NeighborhoodGraph> {
+		if (depth <= 0 || seedIris.length === 0) {
+			return { nodes: [], links: [] };
+		}
+		seedIris.forEach((iri) => this.assertSafeSparqlIri(iri, 'seed IRI'));
+
+		const valuesClause = seedIris.map((iri) => `<${iri}>`).join(' ');
+		const predicateExclusion = SparqlConnector.NEIGHBORHOOD_STRUCTURAL_PREDICATES.map(
+			(p) => `?predicate != <${p}>`
+		).join(' && ');
+
+		const [seedResults, linkResults] = await Promise.all([
+			this.selectQuery(`
+				${PREFIXES}
+				SELECT ?i ?type ?label ?ig WHERE {
+					VALUES ?i { ${valuesClause} }
+					GRAPH ?ig {
+						?i a ?type .
+						OPTIONAL { ?i rdfs:label ?label }
+					}
+					GRAPH ?classGraph { ?type a owl:Class }
+					FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+				}
+			`),
+			this.selectQuery(`
+				${PREFIXES}
+				SELECT DISTINCT ?source ?predicate ?target ?sourceLabel ?targetLabel ?predicateLabel ?sourceType ?targetType ?sourceTypeGraph ?targetTypeGraph WHERE {
+					{
+						VALUES ?source { ${valuesClause} }
+						GRAPH ?sg { ?source ?predicate ?target . }
+						FILTER(isIRI(?target))
+					}
+					UNION
+					{
+						VALUES ?target { ${valuesClause} }
+						GRAPH ?tg { ?source ?predicate ?target . }
+						FILTER(isIRI(?source))
+					}
+					FILTER(${predicateExclusion})
+					GRAPH ?sourceTypeGraph { ?source a ?sourceType }
+					GRAPH ?sourceClassGraph { ?sourceType a owl:Class }
+					GRAPH ?targetTypeGraph { ?target a ?targetType }
+					GRAPH ?targetClassGraph { ?targetType a owl:Class }
+					FILTER(?sourceType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+					FILTER(?targetType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+					${VOCAB_FILTER('?source')}
+					${VOCAB_FILTER('?target')}
+					OPTIONAL { ?source rdfs:label ?sourceLabel }
+					OPTIONAL { ?target rdfs:label ?targetLabel }
+					OPTIONAL { ?predicate rdfs:label ?predicateLabel }
+				}
+				LIMIT 500
+			`)
+		]);
+
+		const nodeMap = new Map<string, NeighborhoodNode>();
+		for (const b of seedResults.results.bindings) {
+			nodeMap.set(b.i.value, {
+				iri: b.i.value,
+				label: b.label?.value ?? extractLocalName(b.i.value),
+				classIri: b.type.value,
+				namespaceBaseIri: b.ig.value
+			});
+		}
+
+		const links: NeighborhoodLink[] = [];
+		for (const b of linkResults.results.bindings) {
+			const sourceIri = b.source.value;
+			const targetIri = b.target.value;
+			if (!nodeMap.has(sourceIri)) {
+				nodeMap.set(sourceIri, {
+					iri: sourceIri,
+					label: b.sourceLabel?.value ?? extractLocalName(sourceIri),
+					classIri: b.sourceType.value,
+					namespaceBaseIri: b.sourceTypeGraph.value
+				});
+			}
+			if (!nodeMap.has(targetIri)) {
+				nodeMap.set(targetIri, {
+					iri: targetIri,
+					label: b.targetLabel?.value ?? extractLocalName(targetIri),
+					classIri: b.targetType.value,
+					namespaceBaseIri: b.targetTypeGraph.value
+				});
+			}
+			links.push({
+				source: sourceIri,
+				target: targetIri,
+				predicateIri: b.predicate.value,
+				predicateLabel: b.predicateLabel?.value ?? extractLocalName(b.predicate.value)
+			});
+		}
+
+		return { nodes: Array.from(nodeMap.values()), links };
 	}
 
 	// -- Raw triples view (STORY-011) + manual edit & validation (STORY-012/013) ----------------

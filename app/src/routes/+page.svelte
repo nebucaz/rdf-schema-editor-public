@@ -44,7 +44,6 @@
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
 	import ProvenanceReportView from '$lib/components/ProvenanceReportView.svelte';
-	import AddElementForm from '$lib/components/AddElementForm.svelte';
 	import {
 		sparqlConnector,
 		type AssociationLink,
@@ -3176,12 +3175,6 @@
 		onClose={() => (provenanceReportClassIri = null)}
 	>
 		<ProvenanceReportView classIri={provenanceReportClassIri} />
-	</Modal>
-{/if}
-
-{#if workbenchActions.addElementOpen}
-	<Modal isOpen title="Add Element" onClose={() => (workbenchActions.addElementOpen = false)}>
-		<AddElementForm onAdd={handleAddElementToWorkspace} onClose={() => (workbenchActions.addElementOpen = false)} />
 	</Modal>
 {/if}
 

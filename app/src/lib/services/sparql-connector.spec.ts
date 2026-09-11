@@ -6,6 +6,7 @@ import {
 	genericPropertyIri,
 	individualIri,
 	nodeShapeIri,
+	extractLocalName,
 	SCHEMA_NAMESPACE,
 	NAMESPACE_CLASS_IRI,
 	NAMESPACE_PREFIX_PREDICATE_IRI,
@@ -43,7 +44,9 @@ import {
 	catalogIri,
 	datasetIri,
 	distributionIri,
-	splitDatasetIri
+	splitDatasetIri,
+	SYNC_SOURCE_PREDICATE_IRI,
+	SYNC_STATUS_PREDICATE_IRI
 } from '../utils/iri';
 import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_GRAPH, namespaceGraphs } from '../config';
 import { RDF, RDFS, OWL, SH, DCAT, DCT, PROV, parseTurtle } from './turtle';
@@ -4307,6 +4310,29 @@ describe('SparqlConnector — individuals / enumerated class members (STORY-019)
 		expect(fn).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ body: expect.stringContaining('GRAPH ?g') }));
 	});
 
+	it('deleteIdentity removes outgoing triples via deleteIndividual, then incoming ones cross-graph', async () => {
+		const iri = individualIri(relationType, 'nutzt');
+		const { fn, updates } = mockIndividualFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteIdentity(iri, DEFAULT_NAMESPACE_BASE_IRI);
+
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, DEFAULT_GRAPHS.instances)} }`),
+			expect.stringContaining(`DELETE WHERE { GRAPH ?g { ?s ?p <${iri}> } }`)
+		]);
+	});
+
+	it('deleteIdentity validates the target IRI before issuing any request', async () => {
+		const { fn } = mockIndividualFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.deleteIdentity('not a safe iri')).rejects.toThrow(/Invalid individual IRI/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
 	it('renameIndividual resolves the individual\'s own namespace via findNamespaceOfIndividual when none is passed', async () => {
 		const iri = `https://example.com/ssi#871912`;
 		const actualNamespace = 'https://example.com/ssi';
@@ -8454,5 +8480,630 @@ describe('SparqlConnector — default Workspace migration and backfill (STORY-07
 		// never reached the completion marker.
 		expect(updates.some((u) => u.includes(`<${defaultWsIri}> a <${WORKSPACE_CLASS_IRI}>`))).toBe(true);
 		expect(updates.some((u) => u.includes(WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI))).toBe(false);
+	});
+});
+
+// -- Identity browsing (STORY-115/116/117, `spec/browse-identity/plan.md`) ------------------------
+
+/** Mocks the single `SELECT ?i ?type ?label ?ig ?syncSource ?syncStatus` query `searchIndividuals`
+ *  issues — captures the emitted query text and answers with `bindings` regardless of its filters
+ *  (the filter-narrowing itself lives in the query string, which individual tests assert on
+ *  directly, mirroring how a real GraphDB would apply the same `FILTER`s server-side). */
+function mockSearchIndividualsFetch(bindings: SparqlBinding[] = []) {
+	const queries: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		queries.push(body.query as string);
+		return new Response(
+			JSON.stringify({ head: { vars: ['i', 'type', 'label', 'ig', 'syncSource', 'syncStatus'] }, results: { bindings } }),
+			{ status: 200 }
+		);
+	});
+	return { fn, queries };
+}
+
+describe('SparqlConnector — searchIndividuals (STORY-115)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personClass = classIri('Person');
+	const alice = individualIri(personClass, 'Alice');
+	const bob = individualIri(personClass, 'Bob');
+
+	function aliceBinding(overrides: Partial<Record<string, { type: string; value: string }>> = {}): SparqlBinding {
+		return {
+			i: { type: 'uri', value: alice },
+			type: { type: 'uri', value: personClass },
+			label: { type: 'literal', value: 'Alice' },
+			ig: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI },
+			...overrides
+		};
+	}
+
+	it('text-only search filters by rdfs:label via CONTAINS/LCASE, escaped like every other connector method', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ query: 'ali"ce' });
+
+		expect(queries[0]).toContain('CONTAINS(LCASE(STR(?label)), LCASE("ali\\"ce"))');
+		expect(page.results).toEqual([
+			{ iri: alice, label: 'Alice', classIri: personClass, namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI, syncSource: null, syncStatus: null }
+		]);
+		expect(page.hasMore).toBe(false);
+	});
+
+	it('an empty/undefined query applies no label filter at all', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({});
+
+		expect(queries[0]).not.toContain('CONTAINS');
+	});
+
+	it('classIri facet narrows via FILTER(?type = <...>), validated through assertSafeSparqlIri', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ classIri: personClass });
+
+		expect(queries[0]).toContain(`FILTER(?type = <${personClass}>)`);
+
+		await expect(connector.searchIndividuals({ classIri: 'not a safe iri' })).rejects.toThrow(
+			/Invalid class IRI/
+		);
+	});
+
+	it('namespaceBaseIri facet narrows via FILTER(?ig = <...>), the graph var doubling as namespace', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI });
+
+		expect(queries[0]).toContain(`FILTER(?ig = <${DEFAULT_NAMESPACE_BASE_IRI}>)`);
+
+		await expect(connector.searchIndividuals({ namespaceBaseIri: '<bad>' })).rejects.toThrow(
+			/Invalid namespace base IRI/
+		);
+	});
+
+	it('syncSource facet is an exact match, not a substring match', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([
+			aliceBinding({ syncSource: { type: 'literal', value: 'backstage' } })
+		]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ syncSource: 'backstage' });
+
+		expect(queries[0]).toContain('FILTER(BOUND(?syncSource) && STR(?syncSource) = "backstage")');
+		expect(page.results[0].syncSource).toBe('backstage');
+	});
+
+	it('syncStatus facet is an exact match', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([
+			aliceBinding({ syncStatus: { type: 'literal', value: 'stale' } })
+		]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ syncStatus: 'stale' });
+
+		expect(queries[0]).toContain('FILTER(BOUND(?syncStatus) && STR(?syncStatus) = "stale")');
+	});
+
+	it('combining classIri + syncStatus ANDs both filters into the same WHERE — an intersection, not a union of two separate queries', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ classIri: personClass, syncStatus: 'stale' });
+
+		expect(fn).toHaveBeenCalledTimes(1);
+		expect(queries[0]).toContain(`FILTER(?type = <${personClass}>)`);
+		expect(queries[0]).toContain('FILTER(BOUND(?syncStatus) && STR(?syncStatus) = "stale")');
+	});
+
+	it('classIris facet narrows via FILTER(?type IN (...)), matching any of the given IRIs', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const childClass = classIri('Employee');
+		await connector.searchIndividuals({ classIris: [personClass, childClass] });
+
+		expect(queries[0]).toContain(`FILTER(?type IN (<${personClass}>, <${childClass}>))`);
+
+		await expect(connector.searchIndividuals({ classIris: [personClass, 'not a safe iri'] })).rejects.toThrow(
+			/Invalid class IRI/
+		);
+	});
+
+	it('classIris takes precedence over classIri when both are given', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const childClass = classIri('Employee');
+		await connector.searchIndividuals({ classIri: personClass, classIris: [childClass] });
+
+		expect(queries[0]).toContain(`FILTER(?type IN (<${childClass}>))`);
+		expect(queries[0]).not.toContain(`FILTER(?type = <${personClass}>)`);
+	});
+
+	it('pagination: limit/offset are interpolated, and a page fetches one extra row to compute hasMore', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding(), aliceBinding({ i: { type: 'uri', value: bob } })]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ limit: 1, offset: 2 });
+
+		expect(queries[0]).toContain('LIMIT 2');
+		expect(queries[0]).toContain('OFFSET 2');
+		expect(page.results).toHaveLength(1);
+		expect(page.hasMore).toBe(true);
+	});
+
+	it('a page with fewer rows than limit + 1 reports hasMore: false', async () => {
+		const { fn } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ limit: 50 });
+
+		expect(page.results).toHaveLength(1);
+		expect(page.hasMore).toBe(false);
+	});
+
+	it('excludes schema/shapes constructs via the same ?type a owl:Class join + Note/Workspace exclusion fetchAllIndividuals uses, with no FROM mixed into the unrestricted GRAPH ?var blocks', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({});
+
+		expect(queries[0]).toContain('GRAPH ?classGraph { ?type a owl:Class }');
+		expect(queries[0]).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(queries[0]).toContain('FILTER(isBlank(?i)');
+		expect(queries[0]).not.toMatch(/\bFROM\b/);
+	});
+
+	it('label fallback: a result with no rdfs:label falls back to extractLocalName', async () => {
+		const { fn } = mockSearchIndividualsFetch([aliceBinding({ label: undefined as unknown as SparqlBinding['label'] })]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({});
+
+		expect(page.results[0].label).toBe(extractLocalName(alice));
+	});
+});
+
+/** Mocks `fetchResourcePage`'s two independent SELECT calls (outgoing then incoming, order-agnostic
+ *  since `Promise.all` doesn't guarantee call order) — distinguished by which variable pattern each
+ *  query's `WHERE` clause opens with. */
+function mockResourcePageFetch(fixture: { outgoing?: SparqlBinding[]; incoming?: SparqlBinding[] } = {}) {
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		const q: string = body.query;
+		if (q.includes('?p ?o ?pLabel ?oLabel')) {
+			return new Response(
+				JSON.stringify({ head: { vars: ['p', 'o', 'pLabel', 'oLabel'] }, results: { bindings: fixture.outgoing ?? [] } }),
+				{ status: 200 }
+			);
+		}
+		if (q.includes('?s ?p ?sLabel ?pLabel')) {
+			return new Response(
+				JSON.stringify({ head: { vars: ['s', 'p', 'sLabel', 'pLabel'] }, results: { bindings: fixture.incoming ?? [] } }),
+				{ status: 200 }
+			);
+		}
+		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+	});
+	return { fn };
+}
+
+describe('SparqlConnector — fetchResourcePage (STORY-116)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personClass = classIri('Person');
+	const alice = individualIri(personClass, 'Alice');
+	const bob = individualIri(personClass, 'Bob');
+	const knows = propertyIri(personClass, 'knows');
+
+	it('validates the target IRI via assertSafeSparqlIri before issuing any request', async () => {
+		const { fn } = mockResourcePageFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchResourcePage('not a safe iri')).rejects.toThrow(/Invalid resource IRI/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('outgoing-only: every <iri> ?p ?o triple, predicate label resolved', async () => {
+		const { fn } = mockResourcePageFetch({
+			outgoing: [
+				{
+					p: { type: 'uri', value: knows },
+					pLabel: { type: 'literal', value: 'knows' },
+					o: { type: 'uri', value: bob }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.iri).toBe(alice);
+		expect(page.outgoing).toEqual([
+			{
+				predicateIri: knows,
+				predicateLabel: 'knows',
+				object: bob,
+				objectType: 'uri',
+				objectDatatype: undefined,
+				objectLabel: undefined
+			}
+		]);
+		expect(page.incoming).toEqual([]);
+	});
+
+	it('resolves a URI object\'s own rdfs:label, distinct from the predicate label', async () => {
+		const { fn } = mockResourcePageFetch({
+			outgoing: [
+				{
+					p: { type: 'uri', value: knows },
+					pLabel: { type: 'literal', value: 'knows' },
+					o: { type: 'uri', value: bob },
+					oLabel: { type: 'literal', value: 'Bob' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing[0].objectLabel).toBe('Bob');
+	});
+
+	it('leaves objectLabel undefined for a literal object, even if oLabel somehow binds', async () => {
+		const born = propertyIri(personClass, 'bornOn');
+		const { fn } = mockResourcePageFetch({
+			outgoing: [
+				{
+					p: { type: 'uri', value: born },
+					o: { type: 'literal', value: '1990-01-01', datatype: 'http://www.w3.org/2001/XMLSchema#date' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing[0].objectLabel).toBeUndefined();
+	});
+
+	it('incoming-only: every ?s ?p <iri> triple ("what links here"), subject + predicate labels resolved', async () => {
+		const { fn } = mockResourcePageFetch({
+			incoming: [
+				{
+					s: { type: 'uri', value: bob },
+					sLabel: { type: 'literal', value: 'Bob' },
+					p: { type: 'uri', value: knows },
+					pLabel: { type: 'literal', value: 'knows' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing).toEqual([]);
+		expect(page.incoming).toEqual([
+			{ subjectIri: bob, subjectLabel: 'Bob', predicateIri: knows, predicateLabel: 'knows' }
+		]);
+	});
+
+	it('both outgoing and incoming triples populate together in one call', async () => {
+		const { fn } = mockResourcePageFetch({
+			outgoing: [{ p: { type: 'uri', value: knows }, o: { type: 'uri', value: bob } }],
+			incoming: [{ s: { type: 'uri', value: bob }, p: { type: 'uri', value: knows } }]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing).toHaveLength(1);
+		expect(page.incoming).toHaveLength(1);
+	});
+
+	it('distinguishes literal vs. URI objects, carrying the datatype IRI for typed literals', async () => {
+		const born = propertyIri(personClass, 'bornOn');
+		const { fn } = mockResourcePageFetch({
+			outgoing: [
+				{
+					p: { type: 'uri', value: knows },
+					o: { type: 'uri', value: bob }
+				},
+				{
+					p: { type: 'uri', value: born },
+					o: { type: 'literal', value: '1990-01-01', datatype: 'http://www.w3.org/2001/XMLSchema#date' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing[0]).toMatchObject({ objectType: 'uri', objectDatatype: undefined });
+		expect(page.outgoing[1]).toMatchObject({
+			objectType: 'literal',
+			object: '1990-01-01',
+			objectDatatype: 'http://www.w3.org/2001/XMLSchema#date'
+		});
+	});
+
+	it('a predicate/subject with no rdfs:label falls back to extractLocalName, matching extractLabel semantics', async () => {
+		const { fn } = mockResourcePageFetch({
+			outgoing: [{ p: { type: 'uri', value: knows }, o: { type: 'uri', value: bob } }],
+			incoming: [{ s: { type: 'uri', value: bob }, p: { type: 'uri', value: knows } }]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing[0].predicateLabel).toBe(extractLocalName(knows));
+		expect(page.incoming[0].subjectLabel).toBe(extractLocalName(bob));
+	});
+
+	it('an IRI with zero outgoing and zero incoming triples returns empty arrays, not an error', async () => {
+		const { fn } = mockResourcePageFetch({ outgoing: [], incoming: [] });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page).toEqual({ iri: alice, outgoing: [], incoming: [] });
+	});
+});
+
+describe('SparqlConnector — buildResourcePageQuery', () => {
+	const personClass = classIri('Person');
+	const alice = individualIri(personClass, 'Alice');
+
+	it('validates the target IRI, throwing before building anything', () => {
+		const connector = new SparqlConnector('/api/sparql');
+		expect(() => connector.buildResourcePageQuery('not a safe iri')).toThrow(/Invalid resource IRI/);
+	});
+
+	it('returns a single UNION-merged, pasteable SELECT covering both outgoing and incoming triples', () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const query = connector.buildResourcePageQuery(alice);
+
+		expect(query.match(/\bSELECT\b/g)).toHaveLength(1);
+		expect(query).toContain('UNION');
+		expect(query).toContain('BIND("outgoing" AS ?direction)');
+		expect(query).toContain('BIND("incoming" AS ?direction)');
+		expect(query.split(`<${alice}>`).length - 1).toBe(2);
+	});
+});
+
+/** Mocks `fetchIdentityNeighborhood`'s two SELECT calls: a `VALUES ?i {...}` seed-info lookup and a
+ *  `UNION`-branched outgoing/incoming edge lookup, distinguished by the presence of `UNION`. */
+function mockNeighborhoodFetch(fixture: { seeds?: SparqlBinding[]; links?: SparqlBinding[] } = {}) {
+	const queries: string[] = [];
+	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+		const body = JSON.parse(opts.body);
+		const q: string = body.query;
+		queries.push(q);
+		if (q.includes('UNION')) {
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['source', 'predicate', 'target'] },
+					results: { bindings: fixture.links ?? [] }
+				}),
+				{ status: 200 }
+			);
+		}
+		return new Response(
+			JSON.stringify({ head: { vars: ['i', 'type', 'label', 'ig'] }, results: { bindings: fixture.seeds ?? [] } }),
+			{ status: 200 }
+		);
+	});
+	return { fn, queries };
+}
+
+describe('SparqlConnector — fetchIdentityNeighborhood (STORY-117)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personClass = classIri('Person');
+	const alice = individualIri(personClass, 'Alice');
+	const bob = individualIri(personClass, 'Bob');
+	const carol = individualIri(personClass, 'Carol');
+	const knows = propertyIri(personClass, 'knows');
+
+	it('depth <= 0 or an empty seed list short-circuits to an empty graph without any request', async () => {
+		const { fn } = mockNeighborhoodFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		expect(await connector.fetchIdentityNeighborhood([alice], 0)).toEqual({ nodes: [], links: [] });
+		expect(await connector.fetchIdentityNeighborhood([], 1)).toEqual({ nodes: [], links: [] });
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('validates every seed IRI via assertSafeSparqlIri before issuing any request', async () => {
+		const { fn } = mockNeighborhoodFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchIdentityNeighborhood([alice, 'not safe'], 1)).rejects.toThrow(/Invalid seed IRI/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('outgoing edges: seed as source, target resolved as a node with its own classIri', async () => {
+		const { fn, queries } = mockNeighborhoodFetch({
+			seeds: [
+				{
+					i: { type: 'uri', value: alice },
+					type: { type: 'uri', value: personClass },
+					label: { type: 'literal', value: 'Alice' },
+					ig: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+				}
+			],
+			links: [
+				{
+					source: { type: 'uri', value: alice },
+					predicate: { type: 'uri', value: knows },
+					target: { type: 'uri', value: bob },
+					targetLabel: { type: 'literal', value: 'Bob' },
+					targetType: { type: 'uri', value: personClass },
+					targetTypeGraph: { type: 'uri', value: DEFAULT_GRAPHS.instances },
+					predicateLabel: { type: 'literal', value: 'knows' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const graph = await connector.fetchIdentityNeighborhood([alice], 1);
+
+		expect(graph.links).toEqual([{ source: alice, target: bob, predicateIri: knows, predicateLabel: 'knows' }]);
+		expect(graph.nodes).toEqual(
+			expect.arrayContaining([
+				{ iri: alice, label: 'Alice', classIri: personClass, namespaceBaseIri: DEFAULT_GRAPHS.instances },
+				{ iri: bob, label: 'Bob', classIri: personClass, namespaceBaseIri: DEFAULT_GRAPHS.instances }
+			])
+		);
+		expect(queries.some((q) => q.includes(`VALUES ?source { <${alice}> }`))).toBe(true);
+	});
+
+	it('incoming edges: seed as target, source resolved as a node', async () => {
+		const { fn } = mockNeighborhoodFetch({
+			seeds: [
+				{
+					i: { type: 'uri', value: alice },
+					type: { type: 'uri', value: personClass },
+					label: { type: 'literal', value: 'Alice' },
+					ig: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+				}
+			],
+			links: [
+				{
+					source: { type: 'uri', value: carol },
+					predicate: { type: 'uri', value: knows },
+					target: { type: 'uri', value: alice },
+					sourceLabel: { type: 'literal', value: 'Carol' },
+					sourceType: { type: 'uri', value: personClass },
+					sourceTypeGraph: { type: 'uri', value: DEFAULT_GRAPHS.instances },
+					predicateLabel: { type: 'literal', value: 'knows' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const graph = await connector.fetchIdentityNeighborhood([alice], 1);
+
+		expect(graph.links).toEqual([
+			{ source: carol, target: alice, predicateIri: knows, predicateLabel: 'knows' }
+		]);
+		expect(graph.nodes).toEqual(
+			expect.arrayContaining([
+				{ iri: carol, label: 'Carol', classIri: personClass, namespaceBaseIri: DEFAULT_GRAPHS.instances }
+			])
+		);
+	});
+
+	it('both outgoing and incoming edges of the seed are fetched in one call', async () => {
+		const { fn } = mockNeighborhoodFetch({
+			seeds: [
+				{
+					i: { type: 'uri', value: alice },
+					type: { type: 'uri', value: personClass },
+					ig: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+				}
+			],
+			links: [
+				{
+					source: { type: 'uri', value: alice },
+					predicate: { type: 'uri', value: knows },
+					target: { type: 'uri', value: bob },
+					targetType: { type: 'uri', value: personClass },
+					targetTypeGraph: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+				},
+				{
+					source: { type: 'uri', value: carol },
+					predicate: { type: 'uri', value: knows },
+					target: { type: 'uri', value: alice },
+					sourceType: { type: 'uri', value: personClass },
+					sourceTypeGraph: { type: 'uri', value: DEFAULT_GRAPHS.instances }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const graph = await connector.fetchIdentityNeighborhood([alice], 1);
+
+		expect(graph.links).toHaveLength(2);
+		expect(fn).toHaveBeenCalledTimes(2); // one seed-info call, one edge call
+	});
+
+	it('the query requires each endpoint to carry a type that is itself a declared owl:Class, plus Note/Workspace exclusion and VOCAB_FILTER — excluding classes/properties/shapes from node results', async () => {
+		const { fn, queries } = mockNeighborhoodFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchIdentityNeighborhood([alice], 1);
+
+		const seedQuery = queries.find((q) => !q.includes('UNION'))!;
+		expect(seedQuery).toContain('GRAPH ?classGraph { ?type a owl:Class }');
+		expect(seedQuery).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+
+		const linkQuery = queries.find((q) => q.includes('UNION'))!;
+		expect(linkQuery).toContain('GRAPH ?sourceClassGraph { ?sourceType a owl:Class }');
+		expect(linkQuery).toContain('GRAPH ?targetClassGraph { ?targetType a owl:Class }');
+		expect(linkQuery).toContain(`FILTER(?sourceType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(linkQuery).toContain(`FILTER(?targetType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(linkQuery).toContain('FILTER(isBlank(?source)');
+		expect(linkQuery).toContain('FILTER(isBlank(?target)');
+	});
+
+	it('excludes structural/ontology predicates (rdf:type, rdfs:subClassOf, skos:broader/inScheme/topConceptOf) from edges', async () => {
+		const { fn, queries } = mockNeighborhoodFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchIdentityNeighborhood([alice], 1);
+
+		const linkQuery = queries.find((q) => q.includes('UNION'))!;
+		expect(linkQuery).toContain(`?predicate != <${RDF.type}>`);
+		expect(linkQuery).toContain(`?predicate != <${RDFS.subClassOf}>`);
+		expect(linkQuery).toContain('?predicate != <http://www.w3.org/2004/02/skos/core#broader>');
+		expect(linkQuery).toContain('?predicate != <http://www.w3.org/2004/02/skos/core#inScheme>');
+		expect(linkQuery).toContain('?predicate != <http://www.w3.org/2004/02/skos/core#topConceptOf>');
+	});
+
+	it('caps the edge query with an explicit LIMIT so one highly-connected node cannot return an unbounded neighborhood', async () => {
+		const { fn, queries } = mockNeighborhoodFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.fetchIdentityNeighborhood([alice], 1);
+
+		const linkQuery = queries.find((q) => q.includes('UNION'))!;
+		expect(linkQuery).toContain('LIMIT 500');
 	});
 });

@@ -17,6 +17,7 @@
 		"@sveltejs/adapter-auto": "^7.0.1",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@types/d3": "^7.4.3",
 		"@types/n3": "^1.26.1",
 		"@types/node": "^26.2.0",
 		"svelte": "^5.56.1",
@@ -27,6 +28,7 @@
 	},
 	"dependencies": {
 		"@xyflow/svelte": "^1.6.3",
+		"d3": "^7.9.0",
 		"html-to-image": "^1.11.13",
 		"mode-watcher": "^1.1.0",
 		"n3": "1.26.0"
