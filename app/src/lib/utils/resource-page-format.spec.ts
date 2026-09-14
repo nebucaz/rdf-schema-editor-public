@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	buildPropertyRows,
 	deriveResourceHeader,
 	displayLabel,
 	formatLiteralValue,
@@ -110,5 +111,59 @@ describe('splitOutgoingTriples', () => {
 
 	it('returns two empty arrays for an empty input', () => {
 		expect(splitOutgoingTriples([])).toEqual({ literalTriples: [], uriTriples: [] });
+	});
+});
+
+describe('buildPropertyRows', () => {
+	it('keeps one row per triple when neither marker is set, even for a repeated predicate', () => {
+		const triples = [
+			triple({ predicateIri: 'http://ex.org#tags', object: 'go' }),
+			triple({ predicateIri: 'http://ex.org#tags', object: 'postgresql' })
+		];
+		expect(buildPropertyRows(triples)).toEqual([
+			{ predicateIri: 'http://ex.org#tags', predicateLabel: 'prop', values: ['go'], displayAsChips: false },
+			{ predicateIri: 'http://ex.org#tags', predicateLabel: 'prop', values: ['postgresql'], displayAsChips: false }
+		]);
+	});
+
+	it('merges a groupOnOneLine-marked predicate into one row', () => {
+		const triples = [
+			triple({ predicateIri: 'http://ex.org#tags', object: 'go', predicateGroupOnOneLine: true }),
+			triple({ predicateIri: 'http://ex.org#tags', object: 'postgresql', predicateGroupOnOneLine: true })
+		];
+		expect(buildPropertyRows(triples)).toEqual([
+			{
+				predicateIri: 'http://ex.org#tags',
+				predicateLabel: 'prop',
+				values: ['go', 'postgresql'],
+				displayAsChips: false
+			}
+		]);
+	});
+
+	it('merges a displayAsChips-marked predicate into one row and sets displayAsChips', () => {
+		const triples = [
+			triple({ predicateIri: 'http://ex.org#tags', object: 'go', predicateDisplayAsChips: true }),
+			triple({ predicateIri: 'http://ex.org#tags', object: 'postgresql', predicateDisplayAsChips: true })
+		];
+		expect(buildPropertyRows(triples)).toEqual([
+			{
+				predicateIri: 'http://ex.org#tags',
+				predicateLabel: 'prop',
+				values: ['go', 'postgresql'],
+				displayAsChips: true
+			}
+		]);
+	});
+
+	it('does not merge unrelated predicates into each other', () => {
+		const triples = [
+			triple({ predicateIri: 'http://ex.org#tags', object: 'go', predicateGroupOnOneLine: true }),
+			triple({ predicateIri: 'http://ex.org#owner', object: 'alice' })
+		];
+		expect(buildPropertyRows(triples)).toEqual([
+			{ predicateIri: 'http://ex.org#tags', predicateLabel: 'prop', values: ['go'], displayAsChips: false },
+			{ predicateIri: 'http://ex.org#owner', predicateLabel: 'prop', values: ['alice'], displayAsChips: false }
+		]);
 	});
 });

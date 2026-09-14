@@ -97,3 +97,52 @@ export function splitOutgoingTriples(outgoing: ResourcePageTriple[]): SplitOutgo
 		uriTriples: rest.filter((t) => t.objectType === 'uri')
 	};
 }
+
+/** One Properties-section display row — either a single triple's value, or (when the predicate is
+ *  marker-gated, see below) every value from a repeated predicate merged into one row. */
+export interface PropertyRow {
+	predicateIri: string;
+	predicateLabel: string;
+	/** Already display-formatted (`formatLiteralValue` applied) — one entry unless grouped. */
+	values: string[];
+	/** `true` when `values.length` may be >1 and should render as a chip per value rather than
+	 *  comma-joined text. */
+	displayAsChips: boolean;
+}
+
+/** Groups `literalTriples` into `PropertyRow`s for the Properties section, gated entirely by the
+ *  `GROUP_ON_ONE_LINE_PREDICATE_IRI`/`DISPLAY_AS_CHIPS_PREDICATE_IRI` markers `fetchResourcePage`
+ *  resolves onto each triple's predicate (`utils/iri.ts`) — never inferred from a predicate simply
+ *  repeating on this individual. A predicate with neither marker set keeps today's one-row-per-triple
+ *  behavior even if it has several triples; only a marked predicate's triples are merged, in
+ *  encounter order, into a single row with all its values. `displayAsChips` alone (without
+ *  `groupOnOneLine`) still merges — chips only make sense grouped. */
+export function buildPropertyRows(literalTriples: ResourcePageTriple[]): PropertyRow[] {
+	const rows: PropertyRow[] = [];
+	const groupedRowIndex = new Map<string, number>();
+
+	for (const t of literalTriples) {
+		const value = formatLiteralValue(t.object, t.objectDatatype);
+		const grouped = t.predicateGroupOnOneLine === true || t.predicateDisplayAsChips === true;
+
+		if (grouped) {
+			const existingIndex = groupedRowIndex.get(t.predicateIri);
+			if (existingIndex !== undefined) {
+				rows[existingIndex].values.push(value);
+				continue;
+			}
+			groupedRowIndex.set(t.predicateIri, rows.length);
+			rows.push({
+				predicateIri: t.predicateIri,
+				predicateLabel: t.predicateLabel,
+				values: [value],
+				displayAsChips: t.predicateDisplayAsChips === true
+			});
+			continue;
+		}
+
+		rows.push({ predicateIri: t.predicateIri, predicateLabel: t.predicateLabel, values: [value], displayAsChips: false });
+	}
+
+	return rows;
+}

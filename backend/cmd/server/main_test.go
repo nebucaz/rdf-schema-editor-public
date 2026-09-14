@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/config"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/handler"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/jwtauth"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/sync"
@@ -16,7 +17,7 @@ import (
 // with no Authorization header at all, matching docker-compose.yml's wget-based healthcheck.
 func TestNewRouter_HealthExemptFromAuth(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "test-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil))
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})))
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -33,7 +34,7 @@ func TestNewRouter_HealthExemptFromAuth(t *testing.T) {
 func TestNewRouter_ProtectedRoutesRequireAuth(t *testing.T) {
 	secret := "test-secret"
 	cfg := config.Config{AuthJWTSecret: secret}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil))
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})))
 
 	routes := []struct {
 		method string
@@ -43,6 +44,7 @@ func TestNewRouter_ProtectedRoutesRequireAuth(t *testing.T) {
 		{http.MethodPost, "/sparql/update"},
 		{http.MethodGet, "/sources/backstage/discover"},
 		{http.MethodPost, "/sources/backstage/sync"},
+		{http.MethodGet, "/validation/report"},
 	}
 
 	for _, route := range routes {

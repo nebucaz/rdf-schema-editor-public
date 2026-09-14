@@ -29,7 +29,8 @@
 
 	// See RelationEdge.svelte: `data` is optional on the base Edge type, but every attributed-link
 	// edge this app creates always sets it — see `handleCreateAssociation` in the editor page.
-	const data = rawData as AttributedLinkEdgeData;
+	// `$derived`, not a plain `const` — see RelationEdge.svelte's comment on why.
+	const data = $derived(rawData as AttributedLinkEdgeData);
 
 	// See RelationEdge.svelte: source/target node ids never change after edge creation, but
 	// wrapping in $derived keeps svelte-check happy about referencing the props.

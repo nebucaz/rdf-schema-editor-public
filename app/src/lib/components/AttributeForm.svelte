@@ -13,6 +13,11 @@
 		/** The property's current `rse:sourceField` mapping information (STORY-102), empty when
 		 *  unset. */
 		initialSourceField?: string;
+		/** Whether repeated values of this property should be merged into one Properties-page row
+		 *  (`GROUP_ON_ONE_LINE_PREDICATE_IRI`/`DISPLAY_AS_CHIPS_PREDICATE_IRI`, `utils/iri.ts`),
+		 *  comma-joined or as chips respectively. */
+		initialGroupOnOneLine?: boolean;
+		initialDisplayAsChips?: boolean;
 		submitLabel: string;
 		onSubmit: (
 			name: string,
@@ -20,7 +25,9 @@
 			required: boolean,
 			repeatable: boolean,
 			sourceField: string,
-			requiredForSubclasses: boolean
+			requiredForSubclasses: boolean,
+			groupOnOneLine: boolean,
+			displayAsChips: boolean
 		) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -32,6 +39,8 @@
 		initialRepeatable = false,
 		initialRequiredForSubclasses = false,
 		initialSourceField = '',
+		initialGroupOnOneLine = false,
+		initialDisplayAsChips = false,
 		submitLabel,
 		onSubmit,
 		onCancel
@@ -43,6 +52,8 @@
 	let repeatable = $state(initialRepeatable);
 	let requiredForSubclasses = $state(initialRequiredForSubclasses);
 	let sourceField = $state(initialSourceField);
+	let groupOnOneLine = $state(initialGroupOnOneLine);
+	let displayAsChips = $state(initialDisplayAsChips);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
@@ -55,7 +66,16 @@
 		error = null;
 		submitting = true;
 		try {
-			await onSubmit(name.trim(), datatype, required, repeatable, sourceField.trim(), requiredForSubclasses);
+			await onSubmit(
+				name.trim(),
+				datatype,
+				required,
+				repeatable,
+				sourceField.trim(),
+				requiredForSubclasses,
+				repeatable && groupOnOneLine,
+				repeatable && displayAsChips
+			);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
 		} finally {
@@ -85,6 +105,21 @@
 		<input type="checkbox" bind:checked={repeatable} />
 		Repeatable (allows multiple values)
 	</label>
+	{#if repeatable}
+		<label class="checkbox">
+			<input type="checkbox" bind:checked={groupOnOneLine} />
+			Group values on one line (comma-separated)
+		</label>
+		<label class="checkbox">
+			<input type="checkbox" bind:checked={displayAsChips} />
+			Display values as chips
+		</label>
+		<p class="hint">
+			Applies to the Identities resource page's Properties table. With neither checked, each value
+			shows as its own row. "Display as chips" also groups the values, even without "Group values on
+			one line" checked.
+		</p>
+	{/if}
 	<label class="checkbox">
 		<input type="checkbox" bind:checked={requiredForSubclasses} />
 		Required for direct subclasses

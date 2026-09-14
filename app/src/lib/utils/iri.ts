@@ -148,6 +148,22 @@ export const SOURCE_RELATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sourceRelation`
 export const GENERATED_REVERSE_OF_PREDICATE_IRI = `${SCHEMA_NAMESPACE}generatedReverseOf`;
 
 /**
+ * `rse:groupOnOneLine`/`rse:displayAsChips`: declared on an already-existing `owl:DatatypeProperty`
+ * — `<propIri> rse:groupOnOneLine true` / `<propIri> rse:displayAsChips true` — opting a repeatable
+ * attribute (e.g. a Backstage-synced `Tags` property landing as multiple same-predicate triples on
+ * one individual) into being shown as a single grouped row on the identity resource page instead of
+ * one row per triple. `groupOnOneLine` alone renders the merged values as comma-joined text;
+ * `displayAsChips` renders each value as its own chip and implies grouping even if
+ * `groupOnOneLine` wasn't also set (`buildPropertyRows`, `utils/resource-page-format.ts`, treats
+ * either flag as "grouped"). Deliberately opt-in, never inferred from a predicate merely repeating
+ * on an individual — a property with neither marker keeps today's one-row-per-triple rendering
+ * regardless of how many triples share its predicate. Purely a display concern, like
+ * `GENERATED_REVERSE_OF_PREDICATE_IRI` above this one is deliberately *not* mirrored on the Go side.
+ */
+export const GROUP_ON_ONE_LINE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}groupOnOneLine`;
+export const DISPLAY_AS_CHIPS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}displayAsChips`;
+
+/**
  * Namespace-management vocabulary (STORY-027): a namespace's own base IRI is the subject of its
  * own declaration triple, `<base> a <NAMESPACE_CLASS_IRI> ; <NAMESPACE_PREFIX_PREDICATE_IRI>
  * "prefix" ; rdfs:comment "..."`, stored in the default namespace's own `/schema` graph alongside

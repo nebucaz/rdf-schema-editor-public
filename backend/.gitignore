@@ -6,6 +6,7 @@
 # Build artifacts
 /bin/
 /server
+/cmd/cli/cli
 
 # OS
 .DS_Store

@@ -41,6 +41,8 @@ import {
 	SOURCE_FIELD_PREDICATE_IRI,
 	SOURCE_RELATION_PREDICATE_IRI,
 	GENERATED_REVERSE_OF_PREDICATE_IRI,
+	GROUP_ON_ONE_LINE_PREDICATE_IRI,
+	DISPLAY_AS_CHIPS_PREDICATE_IRI,
 	catalogIri,
 	datasetIri,
 	distributionIri,
@@ -166,6 +168,9 @@ function mockGraphFetch(
 		/** STORY-102: the property IRI's current `rse:sourceField` mapping, for
 		 *  `fetchAttributeSourceField`. */
 		sourceField?: string;
+		/** STORY-125 follow-up: the property IRI's current `rse:groupOnOneLine`/`rse:displayAsChips`
+		 *  markers, for `fetchAttributeDisplayMarkers`. */
+		displayMarkers?: { groupOnOneLine?: boolean; displayAsChips?: boolean };
 		/** STORY-107: the property IRI's current `rse:sourceRelation` mapping, for
 		 *  `fetchRelationSourceType`. */
 		sourceType?: string;
@@ -280,6 +285,15 @@ function mockGraphFetch(
 			return new Response(JSON.stringify({ head: { vars: ['path'] }, results: { bindings } }), {
 				status: 200
 			});
+		}
+		if (q.includes('groupOnOneLine')) {
+			const binding: Record<string, { type: string; value: string }> = {};
+			if (fixture.displayMarkers?.groupOnOneLine) binding.groupOnOneLine = { type: 'literal', value: 'true' };
+			if (fixture.displayMarkers?.displayAsChips) binding.displayAsChips = { type: 'literal', value: 'true' };
+			return new Response(
+				JSON.stringify({ head: { vars: ['groupOnOneLine', 'displayAsChips'] }, results: { bindings: [binding] } }),
+				{ status: 200 }
+			);
 		}
 		if (q.includes('authoritativeEntityClass')) {
 			const bindings = fixture.authoritativeEntityClassIri
@@ -1854,6 +1868,72 @@ describe('SparqlConnector — rse:sourceField annotation (Backstage-sync STORY-1
 		const set = mockGraphFetch({ sourceField: 'spec.type' });
 		vi.stubGlobal('fetch', set.fn);
 		await expect(connector.fetchAttributeSourceField(propIri)).resolves.toBe('spec.type');
+	});
+});
+
+describe('SparqlConnector — rse:groupOnOneLine/rse:displayAsChips display markers', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('updateAttributeDisplayMarkers inserts only the markers that are true', async () => {
+		const propIri = propertyIri(classIri('Component'), 'tags');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateAttributeDisplayMarkers(propIri, { groupOnOneLine: false, displayAsChips: true });
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain('DELETE');
+		expect(updates[0]).toContain(`<${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> ?oldGroup`);
+		expect(updates[0]).toContain(`<${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> ?oldChips`);
+		expect(updates[0]).toContain(`<${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> true .`);
+		expect(updates[0]).not.toContain(`<${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> true .`);
+	});
+
+	it('updateAttributeDisplayMarkers with both false clears both markers, inserting nothing', async () => {
+		const propIri = propertyIri(classIri('Component'), 'tags');
+		const { fn, updates } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateAttributeDisplayMarkers(propIri, { groupOnOneLine: false, displayAsChips: false });
+
+		expect(updates[0]).not.toContain(`<${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> true .`);
+		expect(updates[0]).not.toContain(`<${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> true .`);
+	});
+
+	it('updateAttributeDisplayMarkers validates the property IRI', async () => {
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.updateAttributeDisplayMarkers('not-a-safe-iri>', { groupOnOneLine: true, displayAsChips: false })
+		).rejects.toThrow();
+	});
+
+	it('fetchAttributeDisplayMarkers returns both flags false when unset', async () => {
+		const propIri = propertyIri(classIri('Component'), 'tags');
+		const { fn } = mockGraphFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchAttributeDisplayMarkers(propIri)).resolves.toEqual({
+			groupOnOneLine: false,
+			displayAsChips: false
+		});
+	});
+
+	it('fetchAttributeDisplayMarkers returns the current markers when set', async () => {
+		const propIri = propertyIri(classIri('Component'), 'tags');
+		const { fn } = mockGraphFetch({ displayMarkers: { groupOnOneLine: true, displayAsChips: true } });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.fetchAttributeDisplayMarkers(propIri)).resolves.toEqual({
+			groupOnOneLine: true,
+			displayAsChips: true
+		});
 	});
 });
 
@@ -8747,7 +8827,9 @@ describe('SparqlConnector — fetchResourcePage (STORY-116)', () => {
 				object: bob,
 				objectType: 'uri',
 				objectDatatype: undefined,
-				objectLabel: undefined
+				objectLabel: undefined,
+				predicateGroupOnOneLine: false,
+				predicateDisplayAsChips: false
 			}
 		]);
 		expect(page.incoming).toEqual([]);
@@ -8788,6 +8870,27 @@ describe('SparqlConnector — fetchResourcePage (STORY-116)', () => {
 		const page = await connector.fetchResourcePage(alice);
 
 		expect(page.outgoing[0].objectLabel).toBeUndefined();
+	});
+
+	it('resolves the groupOnOneLine/displayAsChips markers per predicate when asserted', async () => {
+		const tags = propertyIri(personClass, 'tags');
+		const { fn } = mockResourcePageFetch({
+			outgoing: [
+				{
+					p: { type: 'uri', value: tags },
+					o: { type: 'literal', value: 'go' },
+					pGroupOnOneLine: { type: 'literal', value: 'true' },
+					pDisplayAsChips: { type: 'literal', value: 'true' }
+				}
+			]
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.fetchResourcePage(alice);
+
+		expect(page.outgoing[0].predicateGroupOnOneLine).toBe(true);
+		expect(page.outgoing[0].predicateDisplayAsChips).toBe(true);
 	});
 
 	it('incoming-only: every ?s ?p <iri> triple ("what links here"), subject + predicate labels resolved', async () => {

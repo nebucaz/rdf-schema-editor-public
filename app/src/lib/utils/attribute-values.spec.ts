@@ -38,6 +38,18 @@ describe('mergeAttributeFormValues', () => {
 		const values = mergeAttributeFormValues([attr('a', { repeatable: true })], { a: 'Al' });
 		expect(values).toEqual({ a: ['Al'] });
 	});
+
+	it('never reuses the fetched array reference for a repeatable attribute', () => {
+		// Regression: `MemberForm.svelte` runs `structuredClone` on this function's return value, and
+		// the caller's array may be a Svelte 5 `$state` reactive proxy (e.g.
+		// `IdentityResourcePage.svelte`'s `editAttributeValues`) — reusing that reference instead of
+		// copying it used to leak the proxy through and throw `DataCloneError` for any repeatable
+		// attribute with an existing value.
+		const fetchedTags = ['go', 'postgresql'];
+		const values = mergeAttributeFormValues([attr('a', { repeatable: true })], { a: fetchedTags });
+		expect(values.a).toEqual(fetchedTags);
+		expect(values.a).not.toBe(fetchedTags);
+	});
 });
 
 describe('validateRequiredAttributes', () => {

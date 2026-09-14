@@ -264,7 +264,7 @@ func entityTargetRef(e entityEnvelope) string {
 }
 
 // flattenFields produces `sync.Entity`'s dotted-key field maps from one decoded envelope —
-// `"metadata.description"`, `"metadata.labels.environment"`,
+// `"metadata.name"`, `"metadata.description"`, `"metadata.labels.environment"`,
 // `"metadata.annotations.enterprise.catalog.iri"`, `"spec.lifecycle"`, ... in fields (single-valued);
 // `"metadata.tags"`, an array-valued `spec.*` key, ... in fieldLists (multi-valued, preserved as a
 // slice rather than string-joined so Story 101's merge-write can turn each element into its own
@@ -275,6 +275,9 @@ func flattenFields(e entityEnvelope) (fields map[string]string, fieldLists map[s
 	fields = make(map[string]string)
 	fieldLists = make(map[string][]string)
 
+	if e.Metadata.Name != "" {
+		fields["metadata.name"] = e.Metadata.Name
+	}
 	if e.Metadata.Description != "" {
 		fields["metadata.description"] = e.Metadata.Description
 	}

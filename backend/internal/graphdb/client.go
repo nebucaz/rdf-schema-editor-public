@@ -36,10 +36,15 @@ func NewClient(cfg config.Config) *Client {
 	}
 }
 
-// Binding is one SPARQL-JSON binding value (e.g. {"type":"uri","value":"..."}).
+// Binding is one SPARQL-JSON binding value (e.g. {"type":"uri","value":"..."}, or
+// {"type":"literal","value":"...","datatype":"..."}). Datatype is empty for a plain/language-tagged
+// literal or a uri/bnode binding — callers that need RDF's implicit `xsd:string` default for a
+// datatype-less literal (internal/validation's snapshot loader) apply that default themselves
+// rather than this struct silently inventing an IRI no GraphDB response actually sent.
 type Binding struct {
-	Type  string `json:"type"`
-	Value string `json:"value"`
+	Type     string `json:"type"`
+	Value    string `json:"value"`
+	Datatype string `json:"datatype"`
 }
 
 // SelectResult is a parsed sparql-results+json SELECT response.

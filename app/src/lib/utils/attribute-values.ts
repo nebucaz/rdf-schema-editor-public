@@ -66,7 +66,13 @@ export function mergeAttributeFormValues(
 		const value = fetched[attr.iri];
 		if (value === undefined) continue;
 		if (attr.repeatable) {
-			values[attr.iri] = Array.isArray(value) ? value : [value];
+			// Spread rather than reuse the array reference: `fetched` may be a Svelte 5 `$state` proxy
+			// (e.g. `IdentityResourcePage.svelte`'s `editAttributeValues`), whose nested arrays are
+			// themselves reactive proxies — passing one through unchanged used to leak into
+			// `MemberForm.svelte`'s `structuredClone(originalAttributeValues)` and throw
+			// `DataCloneError` for any repeatable attribute with an existing value (e.g. a
+			// Backstage-synced `Tags` property).
+			values[attr.iri] = Array.isArray(value) ? [...value] : [value];
 		} else if (!Array.isArray(value)) {
 			values[attr.iri] = value;
 		}

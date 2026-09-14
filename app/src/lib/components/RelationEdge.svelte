@@ -42,7 +42,11 @@
 
 	// `data` is typed optional on the base Edge (not all edges carry data), but every relation
 	// edge this app creates always sets it — see `makeRelationEdgeData` in the editor page.
-	const data = rawData as RelationEdgeData;
+	// `$derived`, not a plain `const`: Svelte Flow reuses this same component instance across
+	// re-renders (keyed by edge id), so a plain `const` would freeze `data` at mount and never
+	// pick up a post-edit prop update (e.g. toggling "required"/"repeatable" in the edit modal) —
+	// the label would only refresh after a full page reload.
+	const data = $derived(rawData as RelationEdgeData);
 
 	// An edge's source/target node ids never change after creation (edges are deleted and
 	// recreated, never rewired), so re-deriving on every render isn't needed, but wrapping in

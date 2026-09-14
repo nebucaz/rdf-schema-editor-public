@@ -624,15 +624,24 @@
 			onAddAttribute: () => {
 				attributeModal = { classIri: classIriValue };
 				attributeSourceField = '';
+				attributeGroupOnOneLine = false;
+				attributeDisplayAsChips = false;
 				attributeSourceFieldLoaded = true;
 			},
 			onEditAttribute: (attribute: EntityAttributeVM) => {
 				attributeModal = { classIri: classIriValue, attribute };
 				attributeSourceFieldLoaded = false;
 				attributeSourceField = '';
+				attributeGroupOnOneLine = false;
+				attributeDisplayAsChips = false;
 				const namespaceBaseIri = nodeNamespaces.get(classIriValue) ?? activeNamespaceBaseIri();
-				void sparqlConnector.fetchAttributeSourceField(attribute.iri, namespaceBaseIri).then((sourceField) => {
+				void Promise.all([
+					sparqlConnector.fetchAttributeSourceField(attribute.iri, namespaceBaseIri),
+					sparqlConnector.fetchAttributeDisplayMarkers(attribute.iri, namespaceBaseIri)
+				]).then(([sourceField, displayMarkers]) => {
 					attributeSourceField = sourceField ?? '';
+					attributeGroupOnOneLine = displayMarkers.groupOnOneLine;
+					attributeDisplayAsChips = displayMarkers.displayAsChips;
 					attributeSourceFieldLoaded = true;
 				});
 			},
@@ -865,6 +874,10 @@
 	 *  opened — fetched asynchronously (`onEditAttribute` above), so `attributeSourceFieldLoaded`
 	 *  gates rendering the form until it resolves, mirroring `editEntityBackstageKindLoaded`. */
 	let attributeSourceField = $state('');
+	/** STORY-125 follow-up: the attribute's `rse:groupOnOneLine`/`rse:displayAsChips` display markers
+	 *  as of when the Edit Attribute dialog opened, fetched alongside `attributeSourceField`. */
+	let attributeGroupOnOneLine = $state(false);
+	let attributeDisplayAsChips = $state(false);
 	let attributeSourceFieldLoaded = $state(true);
 	let deleteAttributeTarget = $state<{ classIri: string; attribute: EntityAttributeVM } | null>(null);
 	let deleteAttributeBusy = $state(false);
@@ -875,7 +888,9 @@
 		required: boolean,
 		repeatable: boolean,
 		sourceField: string,
-		requiredForSubclasses: boolean
+		requiredForSubclasses: boolean,
+		groupOnOneLine: boolean,
+		displayAsChips: boolean
 	) {
 		if (!attributeModal) return;
 		const node = findEntityNode(attributeModal.classIri);
@@ -901,6 +916,11 @@
 				attrNamespaceBaseIri
 			);
 			await sparqlConnector.updateAttributeSourceField(editingAttribute.iri, sourceField || null, attrNamespaceBaseIri);
+			await sparqlConnector.updateAttributeDisplayMarkers(
+				editingAttribute.iri,
+				{ groupOnOneLine, displayAsChips },
+				attrNamespaceBaseIri
+			);
 			updateNodeData(node.id, (d) => ({
 				...d,
 				attributes: d.attributes.map((a: EntityAttributeVM) =>
@@ -920,6 +940,9 @@
 				requiredForSubclasses
 			);
 			if (sourceField) await sparqlConnector.updateAttributeSourceField(iri, sourceField, attrNamespaceBaseIri);
+			if (groupOnOneLine || displayAsChips) {
+				await sparqlConnector.updateAttributeDisplayMarkers(iri, { groupOnOneLine, displayAsChips }, attrNamespaceBaseIri);
+			}
 			updateNodeData(node.id, (d) => ({
 				...d,
 				attributes: [
@@ -3381,6 +3404,8 @@
 			initialRepeatable={attributeModal.attribute?.repeatable}
 			initialRequiredForSubclasses={attributeModal.attribute?.requiredForSubclasses}
 			initialSourceField={attributeSourceField}
+			initialGroupOnOneLine={attributeGroupOnOneLine}
+			initialDisplayAsChips={attributeDisplayAsChips}
 			submitLabel={attributeModal.attribute ? 'Save' : 'Add'}
 			onCancel={() => (attributeModal = null)}
 			onSubmit={handleAttributeSubmit}

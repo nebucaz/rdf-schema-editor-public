@@ -141,6 +141,9 @@ func TestClient_FetchEntities_WidenedMetadataAndRelations(t *testing.T) {
 	}
 	got := entities[0]
 
+	if got.Fields["metadata.name"] != "my-service" {
+		t.Errorf("metadata.name = %q", got.Fields["metadata.name"])
+	}
 	if got.Fields["metadata.description"] != "A payments service" {
 		t.Errorf("metadata.description = %q", got.Fields["metadata.description"])
 	}

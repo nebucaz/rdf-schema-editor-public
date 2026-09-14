@@ -34,7 +34,8 @@
 
 	// See RelationEdge.svelte: `data` is optional on the base Edge type, but every isMasterFor edge
 	// this app creates always sets it — see `createIsMasterForEdge` in the editor page.
-	const data = rawData as IsMasterForEdgeData;
+	// `$derived`, not a plain `const` — see RelationEdge.svelte's comment on why.
+	const data = $derived(rawData as IsMasterForEdgeData);
 
 	const sourceNode = $derived(useInternalNode(source));
 	const targetNode = $derived(useInternalNode(target));

@@ -27,6 +27,7 @@
 	import { SchemaValidationError } from '$lib/services/validation';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
+	import { validationReportFilterStore } from '$lib/stores/validation-report-filter-store.svelte';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import { downloadFile } from '$lib/utils/download';
@@ -58,6 +59,14 @@
 	 *  hamburger-menu actions (reload, triples, SVG export, workspace import) operate on
 	 *  canvas-only state that isn't even mounted on this route. */
 	const isIdentitiesView = $derived(page.url.pathname.startsWith('/identities'));
+	/** STORY-133: same plain-link pattern as `isIdentitiesView` — the Validation Report is its own
+	 *  route, not a modal, so its hamburger-menu entry needs the same "already here" disabled state. */
+	const isValidationView = $derived(page.url.pathname.startsWith('/validation'));
+	/** True only on the canvas ("/") route — neither Identities nor Validation. Distinct from
+	 *  `!isIdentitiesView` (which is also true on `/validation`): canvas-only menu items (View
+	 *  Triples, Export SVG, Import Workspace) and the "Schema Editor" link's own "already here"
+	 *  disabled state must key off actually being on the canvas, not just off of Identities. */
+	const isCanvasView = $derived(!isIdentitiesView && !isValidationView);
 
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
@@ -166,7 +175,7 @@
 	<header class="app-header">
 		<a href="/" class="app-title">RDF Schema Editor</a>
 		<div class="app-header-actions">
-			{#if !isIdentitiesView}
+			{#if isCanvasView}
 				{#if namespaceStore.namespaces.length > 0}
 					<select
 						class="namespace-select"
@@ -205,6 +214,12 @@
 					hiddenNamespaces={workbenchActions.hiddenNamespaces}
 					onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
 				/>
+			{:else if isValidationView}
+				<NamespaceFilter
+					namespaces={filterListedNamespaces(namespaceStore.namespaces)}
+					hiddenNamespaces={validationReportFilterStore.hiddenNamespaces}
+					onToggle={(baseIri) => validationReportFilterStore.toggle(baseIri)}
+				/>
 			{/if}
 			<HamburgerMenu>
 				{#snippet children()}
@@ -221,12 +236,22 @@
 					<a
 						href="/"
 						class="menu-item menu-link"
-						aria-disabled={!isIdentitiesView}
+						aria-disabled={isCanvasView}
 						onclick={(e) => {
-							if (!isIdentitiesView) e.preventDefault();
+							if (isCanvasView) e.preventDefault();
 						}}
 					>
 						Schema Editor
+					</a>
+					<a
+						href="/validation"
+						class="menu-item menu-link"
+						aria-disabled={isValidationView}
+						onclick={(e) => {
+							if (isValidationView) e.preventDefault();
+						}}
+					>
+						Validation Report
 					</a>
 					<button type="button" class="menu-item" onclick={() => (showNamespaceManagement = true)}>
 						Namespaces
@@ -259,6 +284,8 @@
 						>
 							{workbenchActions.loading ? 'Loading…' : '⟳ Reload from GraphDB'}
 						</button>
+					{/if}
+					{#if isCanvasView}
 						<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
 							{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
 						</button>
@@ -288,7 +315,7 @@
 					>
 						{importing ? 'Importing…' : 'Import Turtle…'}
 					</button>
-					{#if !isIdentitiesView}
+					{#if isCanvasView}
 						<button
 							type="button"
 							class="menu-item"

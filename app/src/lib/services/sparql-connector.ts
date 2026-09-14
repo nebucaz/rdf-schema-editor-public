@@ -18,6 +18,8 @@ import {
 	SOURCE_FIELD_PREDICATE_IRI,
 	SOURCE_RELATION_PREDICATE_IRI,
 	GENERATED_REVERSE_OF_PREDICATE_IRI,
+	GROUP_ON_ONE_LINE_PREDICATE_IRI,
+	DISPLAY_AS_CHIPS_PREDICATE_IRI,
 	SYNC_SOURCE_PREDICATE_IRI,
 	SYNC_STATUS_PREDICATE_IRI,
 	NAMESPACE_CLASS_IRI,
@@ -401,6 +403,15 @@ export interface ResourcePageTriple {
 	 *  handled elsewhere (`labelOrPrettify`, not a server-side fallback here, since the caller already
 	 *  has `object` to prettify from). */
 	objectLabel?: string;
+	/** `<predicateIri> rse:groupOnOneLine true` on the predicate itself (`GROUP_ON_ONE_LINE_PREDICATE_IRI`,
+	 *  `utils/iri.ts`) — `true` only when explicitly asserted; `undefined` otherwise. Consumed by
+	 *  `buildPropertyRows` (`utils/resource-page-format.ts`) to merge every triple sharing this
+	 *  predicate into one display row instead of one row per triple. */
+	predicateGroupOnOneLine?: boolean;
+	/** `<predicateIri> rse:displayAsChips true` on the predicate itself (`DISPLAY_AS_CHIPS_PREDICATE_IRI`,
+	 *  `utils/iri.ts`) — same grouping effect as `predicateGroupOnOneLine`, but each merged value
+	 *  renders as its own chip instead of comma-joined text. */
+	predicateDisplayAsChips?: boolean;
 }
 
 /** One incoming `?s ?p <iri>` triple (STORY-116) — `fetchResourcePage`'s "what links here" half. */
@@ -2739,6 +2750,65 @@ export class SparqlConnector {
 			} LIMIT 1
 		`);
 		return results.results.bindings[0]?.path?.value ?? null;
+	}
+
+	// -- rse:groupOnOneLine / rse:displayAsChips display markers --------------------------------
+	// Purely a display concern for the Identities resource page (`buildPropertyRows`,
+	// `utils/resource-page-format.ts`) — never read by the Go sync engine, unlike `rse:sourceField`
+	// above. Both flags live on the same `owl:DatatypeProperty` and are always updated/read together
+	// since they're offered as one pair of checkboxes in `AttributeForm`.
+
+	/** Sets/clears `propIri`'s `rse:groupOnOneLine`/`rse:displayAsChips` display markers together —
+	 *  mirrors `updateAttributeSourceField`'s DELETE/INSERT/WHERE-with-OPTIONAL shape, except each
+	 *  flag is only ever asserted as `true`; a `false` value deletes the triple entirely rather than
+	 *  asserting `false` (presence, not value, is the signal — same convention as
+	 *  `REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`). Written into the property's own namespace's
+	 *  `/schema` graph. */
+	async updateAttributeDisplayMarkers(
+		propIri: string,
+		markers: { groupOnOneLine: boolean; displayAsChips: boolean },
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const groupInsert = markers.groupOnOneLine ? `<${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> true .` : '';
+		const chipsInsert = markers.displayAsChips ? `<${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> true .` : '';
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE {
+				<${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> ?oldGroup ; <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> ?oldChips .
+			}
+			INSERT {
+				${groupInsert}
+				${chipsInsert}
+			}
+			WHERE {
+				OPTIONAL { <${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> ?oldGroup }
+				OPTIONAL { <${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> ?oldChips }
+			}
+		`);
+	}
+
+	/** Returns `propIri`'s current `rse:groupOnOneLine`/`rse:displayAsChips` flags, each `false` when
+	 *  unset. */
+	async fetchAttributeDisplayMarkers(
+		propIri: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<{ groupOnOneLine: boolean; displayAsChips: boolean }> {
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES} SELECT ?groupOnOneLine ?displayAsChips ${fromClause(graphs.schema)} WHERE {
+				OPTIONAL { <${propIri}> <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> ?groupOnOneLine }
+				OPTIONAL { <${propIri}> <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> ?displayAsChips }
+			} LIMIT 1
+		`);
+		const b = results.results.bindings[0];
+		return {
+			groupOnOneLine: b?.groupOnOneLine?.value === 'true',
+			displayAsChips: b?.displayAsChips?.value === 'true'
+		};
 	}
 
 	// -- rse:sourceRelation annotation (Backstage-sync STORY-106/107) --------------------------
@@ -5508,7 +5578,9 @@ export class SparqlConnector {
 			object: b.o.value,
 			objectType: b.o.type === 'uri' ? ('uri' as const) : ('literal' as const),
 			objectDatatype: b.o.type === 'uri' ? undefined : b.o.datatype,
-			objectLabel: b.o.type === 'uri' ? b.oLabel?.value : undefined
+			objectLabel: b.o.type === 'uri' ? b.oLabel?.value : undefined,
+			predicateGroupOnOneLine: b.pGroupOnOneLine?.value === 'true',
+			predicateDisplayAsChips: b.pDisplayAsChips?.value === 'true'
 		}));
 
 		const incoming: ResourcePageIncomingTriple[] = incomingResults.results.bindings.map((b) => ({
@@ -5528,10 +5600,12 @@ export class SparqlConnector {
 		return {
 			outgoing: `
 				${PREFIXES}
-				SELECT ?p ?o ?pLabel ?oLabel WHERE {
+				SELECT ?p ?o ?pLabel ?oLabel ?pGroupOnOneLine ?pDisplayAsChips WHERE {
 					<${iri}> ?p ?o .
 					OPTIONAL { ?p rdfs:label ?pLabel }
 					OPTIONAL { ?o rdfs:label ?oLabel }
+					OPTIONAL { ?p <${GROUP_ON_ONE_LINE_PREDICATE_IRI}> ?pGroupOnOneLine }
+					OPTIONAL { ?p <${DISPLAY_AS_CHIPS_PREDICATE_IRI}> ?pDisplayAsChips }
 				}
 			`,
 			incoming: `

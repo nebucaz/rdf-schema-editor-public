@@ -15,9 +15,9 @@
 		type ResourcePage
 	} from '$lib/services/sparql-connector';
 	import {
+		buildPropertyRows,
 		deriveResourceHeader,
 		displayLabel,
-		formatLiteralValue,
 		labelOrPrettify,
 		splitOutgoingTriples
 	} from '$lib/utils/resource-page-format';
@@ -244,6 +244,7 @@
 
 	const header = $derived(page ? deriveResourceHeader(iri, page.outgoing) : null);
 	const split = $derived(page ? splitOutgoingTriples(page.outgoing) : null);
+	const propertyRows = $derived(split ? buildPropertyRows(split.literalTriples) : []);
 
 	// -- STORY-124: Edit identity ------------------------------------------------------------------
 	// Mirrors `identities/+page.svelte`'s "Add identity" (STORY-123) load-gate/relation-target-option
@@ -473,10 +474,20 @@
 					<p class="muted">No properties.</p>
 				{:else}
 					<ul class="property-list">
-						{#each split.literalTriples as t (t.predicateIri + t.object)}
+						{#each propertyRows as row (row.predicateIri + '|' + row.values.join('|'))}
 							<li class="property-row">
-								<span class="property-label" title={t.predicateIri}>{displayLabel(t.predicateLabel)}</span>
-								<span class="property-value">{formatLiteralValue(t.object, t.objectDatatype)}</span>
+								<span class="property-label" title={row.predicateIri}>{displayLabel(row.predicateLabel)}</span>
+								<span class="property-value">
+									{#if row.displayAsChips}
+										<span class="chip-list">
+											{#each row.values as value (value)}
+												<span class="chip">{value}</span>
+											{/each}
+										</span>
+									{:else}
+										{row.values.join(', ')}
+									{/if}
+								</span>
 							</li>
 						{/each}
 					</ul>
@@ -491,33 +502,37 @@
 					<ul class="connection-list">
 						{#each split.uriTriples as t (t.predicateIri + t.object)}
 							<li class="connection-row">
-								<button
-									type="button"
-									class="link-btn"
-									onclick={() => onNavigate({ iri: t.object, label: labelOrPrettify(t.objectLabel, t.object) })}
-								>
+								<span class="predicate-cell" title={t.predicateIri}>
 									<span class="direction" aria-hidden="true">→</span>
 									<span class="visually-hidden">out</span>
-									<span class="predicate" title={t.predicateIri}>{displayLabel(t.predicateLabel)}</span>
-									<span class="connected-label">{labelOrPrettify(t.objectLabel, t.object)}</span>
-								</button>
-								<button
-									type="button"
-									class="trash-btn"
-									aria-label="Delete relation"
-									title="Delete relation"
-									onclick={() =>
-										openRelationDeleteConfirm({
-											direction: 'out',
-											subjectIri: iri,
-											predicateIri: t.predicateIri,
-											objectIri: t.object,
-											predicateLabel: t.predicateLabel,
-											connectedLabel: labelOrPrettify(t.objectLabel, t.object)
-										})}
-								>
-									{@render trashIcon()}
-								</button>
+									{displayLabel(t.predicateLabel)}
+								</span>
+								<span class="value-cell">
+									<button
+										type="button"
+										class="link-btn"
+										onclick={() => onNavigate({ iri: t.object, label: labelOrPrettify(t.objectLabel, t.object) })}
+									>
+										<span class="connected-label">{labelOrPrettify(t.objectLabel, t.object)}</span>
+									</button>
+									<button
+										type="button"
+										class="trash-btn"
+										aria-label="Delete relation"
+										title="Delete relation"
+										onclick={() =>
+											openRelationDeleteConfirm({
+												direction: 'out',
+												subjectIri: iri,
+												predicateIri: t.predicateIri,
+												objectIri: t.object,
+												predicateLabel: t.predicateLabel,
+												connectedLabel: labelOrPrettify(t.objectLabel, t.object)
+											})}
+									>
+										{@render trashIcon()}
+									</button>
+								</span>
 							</li>
 						{/each}
 					</ul>
@@ -532,33 +547,37 @@
 					<ul class="connection-list">
 						{#each page.incoming as t (t.subjectIri + t.predicateIri)}
 							<li class="connection-row">
-								<button
-									type="button"
-									class="link-btn"
-									onclick={() => onNavigate({ iri: t.subjectIri, label: t.subjectLabel })}
-								>
+								<span class="predicate-cell" title={t.predicateIri}>
 									<span class="direction" aria-hidden="true">←</span>
 									<span class="visually-hidden">in</span>
-									<span class="predicate" title={t.predicateIri}>{displayLabel(t.predicateLabel)}</span>
-									<span class="connected-label">{displayLabel(t.subjectLabel)}</span>
-								</button>
-								<button
-									type="button"
-									class="trash-btn"
-									aria-label="Delete relation"
-									title="Delete relation"
-									onclick={() =>
-										openRelationDeleteConfirm({
-											direction: 'in',
-											subjectIri: t.subjectIri,
-											predicateIri: t.predicateIri,
-											objectIri: iri,
-											predicateLabel: t.predicateLabel,
-											connectedLabel: displayLabel(t.subjectLabel)
-										})}
-								>
-									{@render trashIcon()}
-								</button>
+									{displayLabel(t.predicateLabel)}
+								</span>
+								<span class="value-cell">
+									<button
+										type="button"
+										class="link-btn"
+										onclick={() => onNavigate({ iri: t.subjectIri, label: t.subjectLabel })}
+									>
+										<span class="connected-label">{displayLabel(t.subjectLabel)}</span>
+									</button>
+									<button
+										type="button"
+										class="trash-btn"
+										aria-label="Delete relation"
+										title="Delete relation"
+										onclick={() =>
+											openRelationDeleteConfirm({
+												direction: 'in',
+												subjectIri: t.subjectIri,
+												predicateIri: t.predicateIri,
+												objectIri: iri,
+												predicateLabel: t.predicateLabel,
+												connectedLabel: displayLabel(t.subjectLabel)
+											})}
+									>
+										{@render trashIcon()}
+									</button>
+								</span>
 							</li>
 						{/each}
 					</ul>
@@ -923,63 +942,81 @@
 
 	.property-list,
 	.connection-list {
+		display: grid;
+		grid-template-columns: minmax(140px, max-content) 1fr;
+		column-gap: 0.75rem;
 		margin: 0;
 		padding: 0;
 		list-style: none;
 	}
 
-	.property-row {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		gap: 0.75rem;
-		padding: 0.35rem 0;
-		border-bottom: 1px solid var(--color-border);
+	.property-row,
+	.connection-row {
+		display: contents;
 	}
 
-	.property-row:last-child {
+	.property-label,
+	.property-value,
+	.predicate-cell,
+	.value-cell {
+		display: flex;
+		align-items: center;
+		padding: 0.35rem 0;
+		border-bottom: 1px solid var(--color-border);
+		text-align: left;
+	}
+
+	.property-row:last-child > .property-label,
+	.property-row:last-child > .property-value,
+	.connection-row:last-child > .predicate-cell,
+	.connection-row:last-child > .value-cell {
 		border-bottom: none;
 	}
 
-	.property-label {
+	.property-label,
+	.predicate-cell {
 		color: var(--color-text-muted);
 		font-weight: 500;
-		flex-shrink: 0;
 	}
 
 	.property-value {
 		color: var(--color-text);
-		text-align: right;
 	}
 
-	.connection-list li {
-		margin: 0.25rem 0;
-	}
-
-	.connection-row {
+	.chip-list {
 		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-		border-bottom: 1px solid var(--color-border);
+		flex-wrap: wrap;
+		gap: 0.35rem;
 	}
 
-	.connection-list li.connection-row:last-child {
-		border-bottom: none;
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		padding: 0.15rem 0.6rem;
+		border-radius: 999px;
+		background: var(--color-bg-alt);
+		border: 1px solid var(--color-border);
+		font-size: 0.85rem;
+		color: var(--color-text);
+	}
+
+	.value-cell {
+		justify-content: space-between;
+		gap: 0.5rem;
+		min-width: 0;
 	}
 
 	.link-btn {
-		display: flex;
+		display: inline-flex;
 		align-items: center;
-		gap: 0.5rem;
-		flex: 1;
 		min-width: 0;
 		text-align: left;
 		color: var(--color-accent);
 		cursor: pointer;
-		padding: 0.35rem 0;
 		border: 0;
 		background: transparent;
 		font: inherit;
+		padding: 0;
 	}
 
 	.link-btn:hover {
@@ -1007,11 +1044,7 @@
 	.direction {
 		color: var(--color-text-muted);
 		flex-shrink: 0;
-	}
-
-	.predicate {
-		color: var(--color-text-muted);
-		flex-shrink: 0;
+		margin-right: 0.35rem;
 	}
 
 	.connected-label {

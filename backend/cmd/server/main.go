@@ -56,8 +56,9 @@ func main() {
 		SyncSourceRefPredicateIRI:     cfg.SyncSourceRefPredicateIRI(),
 	})
 	sourceHandler := handler.NewSourceHandler(sourceRegistry, gdbClient, cfg.BackstageKindPredicateIRI(), syncEngine)
+	validationHandler := handler.NewValidationHandler(gdbClient)
 
-	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler)
+	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler)
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -96,7 +97,7 @@ func main() {
 // healthcheck can't attach a header, and the route discloses nothing sensitive), every other route
 // requires a validly-signed, unexpired bearer JWT (STORY-002) verified against cfg.AuthJWTSecret.
 // Extracted from main() so it's testable without starting a real listener.
-func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler) chi.Router {
+func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler) chi.Router {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
@@ -110,6 +111,7 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 		r.Get("/sources/{source}/discover", sourceHandler.Discover)
 		r.Get("/sources/{source}/raw/{kind}", sourceHandler.Raw)
 		r.Post("/sources/{source}/sync", sourceHandler.Sync)
+		r.Get("/validation/report", validationHandler.Report)
 	})
 
 	return r
