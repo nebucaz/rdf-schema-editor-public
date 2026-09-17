@@ -5,6 +5,7 @@
 	import '../app.css';
 	import { ModeWatcher, toggleMode, mode } from 'mode-watcher';
 	import HamburgerMenu from '$lib/components/HamburgerMenu.svelte';
+	import HamburgerSubmenuGroup from '$lib/components/HamburgerSubmenuGroup.svelte';
 	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
 	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
 	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
@@ -18,6 +19,7 @@
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
 	import SettingsView from '$lib/components/SettingsView.svelte';
+	import DocumentationPanel from '$lib/components/DocumentationPanel.svelte';
 	import {
 		sparqlConnector,
 		type ImportSummary,
@@ -42,6 +44,7 @@
 	let showQueryConsole = $state(false);
 	let showMissingConcepts = $state(false);
 	let showSettings = $state(false);
+	let showDocumentation = $state(false);
 	let exportingQuads = $state(false);
 
 	let importFileInput = $state<HTMLInputElement | undefined>();
@@ -253,28 +256,77 @@
 					>
 						Validation Report
 					</a>
-					<button type="button" class="menu-item" onclick={() => (showNamespaceManagement = true)}>
-						Namespaces
-					</button>
-					{#if !isIdentitiesView}
-						<button type="button" class="menu-item" onclick={() => (showWorkspaceManagement = true)}>
-							Workspaces
-						</button>
-					{/if}
-					<button type="button" class="menu-item" onclick={() => (showExternalVocabManagement = true)}>
-						External Vocabularies
-					</button>
-					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
-						Queries
-					</button>
-					{#if !isIdentitiesView}
-						<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
-							Missing Concepts
-						</button>
-					{/if}
-					<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
-						Settings
-					</button>
+					<hr class="menu-divider" />
+					<HamburgerSubmenuGroup label="Manage">
+						{#snippet children()}
+							<button
+								type="button"
+								class="menu-item"
+								onclick={() => (showNamespaceManagement = true)}
+							>
+								Namespaces
+							</button>
+							{#if !isIdentitiesView}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => (showWorkspaceManagement = true)}
+								>
+									Workspaces
+								</button>
+							{/if}
+							<button
+								type="button"
+								class="menu-item"
+								onclick={() => (showExternalVocabManagement = true)}
+							>
+								External Vocabularies
+							</button>
+						{/snippet}
+					</HamburgerSubmenuGroup>
+					<HamburgerSubmenuGroup label="Import / Export">
+						{#snippet children()}
+							<button
+								type="button"
+								class="menu-item"
+								onclick={() => void handleExportQuads()}
+								disabled={exportingQuads}
+							>
+								{exportingQuads ? 'Exporting…' : 'Export quads'}
+							</button>
+							<button
+								type="button"
+								class="menu-item"
+								onclick={() => importFileInput?.click()}
+								disabled={importing}
+							>
+								{importing ? 'Importing…' : 'Import Turtle…'}
+							</button>
+							{#if isCanvasView}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => importWorkspaceFileInput?.click()}
+									disabled={importingWorkspace}
+									title="Merge a workspace-export bundle (STORY-090) — recreates the workspace, layout, and notes"
+								>
+									{importingWorkspace ? 'Importing…' : 'Import Workspace…'}
+								</button>
+							{/if}
+							{#if isCanvasView}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => workbenchActions.exportSvg()}
+									disabled={workbenchActions.exportingSvg}
+									title="Export the whole canvas as SVG — or, if any entities are selected, just the selection and the relations between them. The exported file embeds HTML (foreignObject) for node visuals, so it may not open correctly in every external vector/PDF tool."
+								>
+									{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
+								</button>
+							{/if}
+						{/snippet}
+					</HamburgerSubmenuGroup>
+					<hr class="menu-divider" />
 					{#if !isIdentitiesView}
 						<button
 							type="button"
@@ -289,43 +341,24 @@
 						<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
 							{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
 						</button>
-						<button
-							type="button"
-							class="menu-item"
-							onclick={() => workbenchActions.exportSvg()}
-							disabled={workbenchActions.exportingSvg}
-							title="Export the whole canvas as SVG — or, if any entities are selected, just the selection and the relations between them. The exported file embeds HTML (foreignObject) for node visuals, so it may not open correctly in every external vector/PDF tool."
-						>
-							{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
+					{/if}
+					<hr class="menu-divider" />
+					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
+						Queries
+					</button>
+					{#if !isIdentitiesView}
+						<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
+							Missing Concepts
 						</button>
 					{/if}
-					<button
-						type="button"
-						class="menu-item"
-						onclick={() => void handleExportQuads()}
-						disabled={exportingQuads}
-					>
-						{exportingQuads ? 'Exporting…' : 'Export quads'}
+					<hr class="menu-divider" />
+					<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
+						Settings
 					</button>
-					<button
-						type="button"
-						class="menu-item"
-						onclick={() => importFileInput?.click()}
-						disabled={importing}
-					>
-						{importing ? 'Importing…' : 'Import Turtle…'}
+					<button type="button" class="menu-item" onclick={() => (showDocumentation = true)}>
+						Documentation
 					</button>
-					{#if isCanvasView}
-						<button
-							type="button"
-							class="menu-item"
-							onclick={() => importWorkspaceFileInput?.click()}
-							disabled={importingWorkspace}
-							title="Merge a workspace-export bundle (STORY-090) — recreates the workspace, layout, and notes"
-						>
-							{importingWorkspace ? 'Importing…' : 'Import Workspace…'}
-						</button>
-					{/if}
+					<hr class="menu-divider" />
 					<button type="button" class="menu-item" onclick={toggleMode}>
 						{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 					</button>
@@ -351,6 +384,10 @@
 		{@render children()}
 	</main>
 </div>
+
+{#if showDocumentation}
+	<DocumentationPanel onClose={() => (showDocumentation = false)} />
+{/if}
 
 <Modal
 	isOpen={showNamespaceManagement}
@@ -528,6 +565,12 @@
 		opacity: 0.6;
 		cursor: default;
 		pointer-events: none;
+	}
+
+	.menu-divider {
+		border: none;
+		border-top: 1px solid var(--color-border);
+		margin: 0.4rem 0;
 	}
 
 	.app-main {
