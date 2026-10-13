@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
 	import { onMount } from 'svelte';
 	import { mode } from 'mode-watcher';
 	import {
@@ -33,6 +34,10 @@
 	import IsMasterForEdge, { type IsMasterForEdgeData } from '$lib/components/IsMasterForEdge.svelte';
 	import InstanceOfEdge from '$lib/components/InstanceOfEdge.svelte';
 	import Modal from '$lib/components/Modal.svelte';
+	import ExportErdDialog, { type ExportErdChoice } from '$lib/components/ExportErdDialog.svelte';
+	import { buildErdSvg } from '$lib/services/erd-export';
+	import { downloadBlob, downloadFile } from '$lib/utils/download';
+	import { svgToPngBlob } from '$lib/utils/svg-to-png';
 	import EntityForm from '$lib/components/EntityForm.svelte';
 	import AttributeForm from '$lib/components/AttributeForm.svelte';
 	import ManageMembersModal from '$lib/components/ManageMembersModal.svelte';
@@ -58,7 +63,7 @@
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
 	import { settingsStore } from '$lib/stores/settings-store.svelte';
-	import { buildCanvasModel, type CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
+	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
 	import {
 		GraphDbLayoutStore,
 		KeyedDebouncer,
@@ -168,18 +173,6 @@
 
 	let exportingSvg = $state(false);
 
-	/** Browser-native download — same Blob+`<a download>` pattern as `TriplesPanel`'s `downloadTurtle`
-	 *  (STORY-067 AC: no new download mechanism). */
-	function downloadFile(filename: string, text: string, mimeType: string) {
-		const blob = new Blob([text], { type: mimeType });
-		const url = URL.createObjectURL(blob);
-		const a = document.createElement('a');
-		a.href = url;
-		a.download = filename;
-		a.click();
-		URL.revokeObjectURL(url);
-	}
-
 	async function handleExportSvg() {
 		const viewportEl = canvasWrapEl?.querySelector<HTMLElement>('.svelte-flow__viewport');
 		if (!viewportEl) return;
@@ -194,6 +187,48 @@
 			errorMessage = err instanceof Error ? err.message : 'Failed to export SVG';
 		} finally {
 			exportingSvg = false;
+		}
+	}
+
+	// -- Export ERD (export-erd STORY-159) ----------------------------------------------------------
+
+	let showExportErd = $state(false);
+	let exportingErd = $state(false);
+
+	const selectedNodeIdSet = () => new Set(nodes.filter((n) => n.selected).map((n) => n.id));
+
+	async function handleExportErd(choice: ExportErdChoice) {
+		if (!lastCanvasModel) {
+			errorMessage = 'Nothing to export yet — the schema has not loaded.';
+			return;
+		}
+		exportingErd = true;
+		errorMessage = null;
+		try {
+			const selection = choice.selectionOnly ? selectedNodeIdSet() : undefined;
+			const svg = buildErdSvg({
+				canvas: lastCanvasModel,
+				memberIris: workspaceMembers,
+				positionOf: (iri) => graphDbLayoutStore.getPosition(iri),
+				namespaceColors: new Map(
+					namespaceStore.namespaces.flatMap((ns) => (ns.color ? [[ns.baseIri, ns.color] as const] : []))
+				),
+				notation: choice.notation,
+				legend: choice.legend,
+				theme: mode.current === 'dark' ? 'dark' : 'light',
+				selection,
+				hiddenNamespaces,
+				showReverseRelations,
+				sourceMarker: erdSourceMarkerStore.getSourceMarker()
+			});
+			const base = `${selection ? 'erd-selection' : 'erd'}-${choice.notation}`;
+			if (choice.format === 'png') downloadBlob(`${base}.png`, await svgToPngBlob(svg));
+			else downloadFile(`${base}.svg`, svg, 'image/svg+xml');
+			showExportErd = false;
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to export ERD';
+		} finally {
+			exportingErd = false;
 		}
 	}
 
@@ -1668,6 +1703,8 @@
 	/** Classes currently carrying the `AttributedRelationship` marker (STORY-020) — read directly
 	 *  off `buildCanvasModel`'s output, itself derived from the persisted `rdfs:subClassOf` triple. */
 	let lastAssociationClassIris = $state<Set<string>>(new Set());
+	/** Most recent unfiltered `buildCanvasModel` output — the Export ERD source (STORY-159). */
+	let lastCanvasModel: CanvasModel | null = null;
 
 	/** Classes currently carrying the `AuthoritativeEntity` marker (data-catalog Story 003) — same
 	 *  pattern as `lastAssociationClassIris`. */
@@ -2531,6 +2568,7 @@
 			viewMode,
 			authoritativeEntityClassIri: settingsStore.authoritativeEntityClassIri
 		});
+		lastCanvasModel = model;
 		lastAssociationClassIris = model.associationClassIris;
 		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
 		lastLabelRequiredClassIris = model.labelRequiredClassIris;
@@ -3034,6 +3072,7 @@
 			showTriplesPanel = !showTriplesPanel;
 		});
 		workbenchActions.registerExportSvg(() => void handleExportSvg());
+		workbenchActions.registerExportErd(() => (showExportErd = true));
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
 		workbenchActions.registerToggleReverseRelationsVisibility(toggleReverseRelationsVisibility);
 		workbenchActions.registerSetViewMode(handleViewModeChange);
@@ -3247,6 +3286,14 @@
 		if (event.key === 'Escape' && pendingConnectionContextMenu) pendingConnectionContextMenu = null;
 		if (event.key === 'Escape' && pendingCanvasContextMenu) pendingCanvasContextMenu = null;
 	}}
+/>
+
+<ExportErdDialog
+	isOpen={showExportErd}
+	busy={exportingErd}
+	selectionCount={showExportErd ? selectedNodeIdSet().size : 0}
+	onExport={(choice) => void handleExportErd(choice)}
+	onClose={() => (showExportErd = false)}
 />
 
 <Modal

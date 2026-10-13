@@ -11,6 +11,10 @@
 	--color-text: #1a1a1a;
 	--color-text-muted: #666666;
 	--color-border: #e0e0e0;
+	/* Workbench groups (workbench-columns, STORY-236): sit inside a `.region` (--color-bg-secondary),
+	   so they must differ from both it and --color-bg while keeping --color-text at AA. */
+	--color-group-bg: #e3e9f1;
+	--color-group-border: #b8c2d0;
 	--color-hover: rgba(0, 0, 0, 0.05);
 	--color-error: #d32f2f;
 	--color-error-bg: rgba(211, 47, 47, 0.1);
@@ -27,6 +31,30 @@
 	--ttl-string: #22863a;
 	--ttl-number: #e36209;
 	--ttl-bnode: #117864;
+
+	/* Column-rule palette (query workbench, STORY-196): background/foreground pairs, AA contrast */
+	--rule-green-bg: #d4edda;
+	--rule-green-fg: #14532d;
+	--rule-amber-bg: #fff0c2;
+	--rule-amber-fg: #6b4a00;
+	--rule-red-bg: #f8d7da;
+	--rule-red-fg: #7f1d1d;
+	--rule-blue-bg: #d6e8ff;
+	--rule-blue-fg: #0b3a75;
+	--rule-grey-bg: #e3e3e3;
+	--rule-grey-fg: #333333;
+
+	/* Chip variants (saturated, white/dark text at AA): a rule with "chip" draws the value as a pill. */
+	--rule-green-chip-bg: #2e7d32;
+	--rule-green-chip-fg: #ffffff;
+	--rule-amber-chip-bg: #f5c518;
+	--rule-amber-chip-fg: #2b2100;
+	--rule-red-chip-bg: #c62828;
+	--rule-red-chip-fg: #ffffff;
+	--rule-blue-chip-bg: #1565c0;
+	--rule-blue-chip-fg: #ffffff;
+	--rule-grey-chip-bg: #616161;
+	--rule-grey-chip-fg: #ffffff;
 }
 
 :root.dark {
@@ -40,6 +68,8 @@
 	--color-text: #e6e6e6;
 	--color-text-muted: #8b8b8b;
 	--color-border: #404040;
+	--color-group-bg: #3a3f47;
+	--color-group-border: #565d68;
 	--color-hover: rgba(255, 255, 255, 0.08);
 	--color-error: #f44336;
 	--color-error-bg: rgba(244, 67, 54, 0.15);
@@ -54,6 +84,29 @@
 	--ttl-string: #a5d6ff;
 	--ttl-number: #f2cc60;
 	--ttl-bnode: #56d4dd;
+
+	--rule-green-bg: #1f4a2c;
+	--rule-green-fg: #c8f0d2;
+	--rule-amber-bg: #5c4710;
+	--rule-amber-fg: #ffe9a8;
+	--rule-red-bg: #5c2327;
+	--rule-red-fg: #ffd0d3;
+	--rule-blue-bg: #1f3d63;
+	--rule-blue-fg: #cfe3ff;
+	--rule-grey-bg: #444444;
+	--rule-grey-fg: #e6e6e6;
+
+	/* Chip variants (saturated, white/dark text at AA): a rule with "chip" draws the value as a pill. */
+	--rule-green-chip-bg: #2e7d32;
+	--rule-green-chip-fg: #ffffff;
+	--rule-amber-chip-bg: #f5c518;
+	--rule-amber-chip-fg: #2b2100;
+	--rule-red-chip-bg: #c62828;
+	--rule-red-chip-fg: #ffffff;
+	--rule-blue-chip-bg: #1565c0;
+	--rule-blue-chip-fg: #ffffff;
+	--rule-grey-chip-bg: #616161;
+	--rule-grey-chip-fg: #ffffff;
 }
 
 * {
@@ -78,6 +131,57 @@ button {
 
 input {
 	font-family: inherit;
+}
+
+/* Query Workbench and report pages: every button reads as a primary-colour button at rest, not only
+   on hover. The page class carries the (0,1,0) specificity that beats the bare `button { background:
+   none; border: none }` reset above — wrapping the whole selector in `:where()` drops it to (0,0,0)
+   and the reset wins, so buttons would only fill on `:hover`. `:where(button)` keeps it from beating
+   components with deliberately different buttons (sort headers, badges, chips), whose scoped
+   `button.svelte-xyz` rules are (0,1,1). */
+.workbench-page :where(button, a.btn),
+.report-page :where(button, a.btn) {
+	padding: 0.35rem 0.85rem;
+	border: 1px solid var(--color-accent);
+	border-radius: 6px;
+	background: var(--color-accent);
+	color: #fff;
+	font-size: 0.85rem;
+	font-weight: 500;
+	line-height: 1.3;
+	cursor: pointer;
+	text-decoration: none;
+}
+
+.workbench-page :where(button, a.btn):hover:not(:disabled),
+.report-page :where(button, a.btn):hover:not(:disabled) {
+	background: var(--color-accent-hover);
+	border-color: var(--color-accent-hover);
+	text-decoration: none;
+}
+
+.workbench-page :where(button):disabled,
+.report-page :where(button):disabled {
+	opacity: 0.5;
+	cursor: not-allowed;
+}
+
+/* Workbench groups (STORY-236): filter group, column strip, aggregate & limit, show-query drawer, run
+   row, column rules and results share one contrasting background. Scoped to the page class so it
+   outranks nothing in components; print output keeps the plain page background. */
+.workbench-page .group {
+	padding: 0.6rem 0.75rem;
+	margin: 0.5rem 0;
+	border: 1px solid var(--color-group-border);
+	border-radius: 6px;
+	background: var(--color-group-bg);
+}
+
+@media print {
+	.workbench-page .group {
+		background: #fff;
+		border-color: #999;
+	}
 }
 
 a {

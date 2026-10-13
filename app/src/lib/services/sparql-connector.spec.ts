@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SparqlConnector, type SparqlBinding } from './sparql-connector';
+import {
+	SparqlConnector,
+	factKeyString,
+	ANNOTATION_MAX_TEXT_LENGTH,
+	type SparqlBinding
+} from './sparql-connector';
 import {
 	classIri,
 	propertyIri,
@@ -26,6 +31,18 @@ import {
 	workspaceMembershipIri,
 	SAVED_QUERY_CLASS_IRI,
 	SAVED_QUERY_TEXT_PREDICATE_IRI,
+	ANNOTATION_CLASS_IRI,
+	ANNOTATION_LABEL_CLASS_IRI,
+	SEED_ANNOTATION_LABELS,
+	ANNOTATES_PREDICATE_IRI,
+	ANNOTATION_TYPE_PREDICATE_IRI,
+	ANNOTATION_VALUE_PREDICATE_IRI,
+	ANNOTATED_BY_PREDICATE_IRI,
+	ANNOTATED_AT_PREDICATE_IRI,
+	SAVED_QUERY_MODEL_PREDICATE_IRI,
+	SAVED_QUERY_CREATED_BY_PREDICATE_IRI,
+	SAVED_QUERY_CREATED_AT_PREDICATE_IRI,
+	SAVED_QUERY_PUBLISHED_PREDICATE_IRI,
 	savedQueryIri,
 	NOTE_CLASS_IRI,
 	NOTE_WORKSPACE_PREDICATE_IRI,
@@ -2285,11 +2302,9 @@ describe('SparqlConnector — generalized individual→class relations (data-cat
 		const connector = new SparqlConnector('/api/sparql');
 		await connector.deleteIndividualClassRelation(architectureIri, predicateIri, applicationIri);
 
-		expect(updates).toEqual([
-			expect.stringContaining(
-				`DELETE WHERE { ${inGraph(`<${architectureIri}> <${predicateIri}> <${applicationIri}> .`, namespaceGraphs(NS_ADOIT).instances)} }`
-			)
-		]);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${namespaceGraphs(NS_ADOIT).instances}>`);
+		expect(updates[0]).toContain(`DELETE { <${architectureIri}> <${predicateIri}> <${applicationIri}> .`);
 	});
 
 	it('updateIndividualRelation renames the predicate and retargets the ground triple in one WITH-scoped update, with no reification to preserve', async () => {
@@ -2553,11 +2568,9 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 		const connector = new SparqlConnector('/api/sparql');
 		await connector.deleteAssertion(systemIri, predicateIri, attributeIri);
 
-		expect(updates).toEqual([
-			expect.stringContaining(
-				`DELETE WHERE { ${inGraph(`<${systemIri}> <${predicateIri}> <${attributeIri}> .`, namespaceGraphs(NS_ADOIT).instances)} }`
-			)
-		]);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${namespaceGraphs(NS_ADOIT).instances}>`);
+		expect(updates[0]).toContain(`DELETE { <${systemIri}> <${predicateIri}> <${attributeIri}> .`);
 	});
 
 	it('fetchAssertionsForIndividual returns labeled predicate/object pairs, excluding rdf:type/rdfs:label', async () => {
@@ -4637,9 +4650,9 @@ describe('SparqlConnector — ABox literal attribute values on individuals (STOR
 
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.instances}>`);
-		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old }`);
-		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date }`);
-		expect(updates[0]).toContain(`WHERE { OPTIONAL { <${employeeIri}> <${birthDateIri}> ?old } }`);
+		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old .`);
+		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date .`);
+		expect(updates[0]).toContain(`OPTIONAL { <${employeeIri}> <${birthDateIri}> ?old }`);
 	});
 
 	it('setIndividualAttributeValue clears the value (DELETE-only) when value is null', async () => {
@@ -4649,7 +4662,7 @@ describe('SparqlConnector — ABox literal attribute values on individuals (STOR
 		await connector.setIndividualAttributeValue(employeeIri, birthDateIri, 'date', null);
 
 		expect(updates).toHaveLength(1);
-		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old }`);
+		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${birthDateIri}> ?old .`);
 		expect(updates[0]).not.toContain('INSERT {');
 	});
 
@@ -4672,11 +4685,9 @@ describe('SparqlConnector — ABox literal attribute values on individuals (STOR
 		const connector = new SparqlConnector('/api/sparql');
 		await connector.removeIndividualAttributeValue(employeeIri, nicknameIri, 'string', 'Al');
 
-		expect(updates).toEqual([
-			expect.stringContaining(
-				`DELETE WHERE { ${inGraph(`<${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`, DEFAULT_GRAPHS.instances)} }`
-			)
-		]);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`WITH <${DEFAULT_GRAPHS.instances}>`);
+		expect(updates[0]).toContain(`DELETE { <${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`);
 	});
 });
 
@@ -4704,7 +4715,7 @@ describe('SparqlConnector — applyAttributeSubmissions (STORY-111)', () => {
 			{ attributeIri: birthDateIri, datatype: 'date', repeatable: false, value: '1990-01-01' }
 		]);
 		expect(updates).toHaveLength(1);
-		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date }`);
+		expect(updates[0]).toContain(`INSERT { <${employeeIri}> <${birthDateIri}> "1990-01-01"^^xsd:date .`);
 	});
 
 	it('calls setIndividualAttributeValue (clear) for a single-valued submission with value: null', async () => {
@@ -4729,9 +4740,7 @@ describe('SparqlConnector — applyAttributeSubmissions (STORY-111)', () => {
 		expect(updates[0]).toContain(
 			inGraph(`<${employeeIri}> <${nicknameIri}> "Ally"^^xsd:string .`, DEFAULT_GRAPHS.instances)
 		);
-		expect(updates[1]).toContain(
-			`DELETE WHERE { ${inGraph(`<${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`, DEFAULT_GRAPHS.instances)} }`
-		);
+		expect(updates[1]).toContain(`DELETE { <${employeeIri}> <${nicknameIri}> "Al"^^xsd:string .`);
 	});
 
 	it('processes multiple submissions in order', async () => {
@@ -5959,7 +5968,8 @@ describe('SparqlConnector — SavedQuery CRUD (STORY-087)', () => {
 				iri: sq,
 				label: 'Undocumented Classes',
 				sparqlText: 'SELECT ?class WHERE { ?class a owl:Class }',
-				description: 'finds gaps'
+				description: 'finds gaps',
+				published: false
 			}
 		]);
 	});
@@ -5980,7 +5990,7 @@ describe('SparqlConnector — SavedQuery CRUD (STORY-087)', () => {
 		const connector = new SparqlConnector('/api/sparql');
 		const savedQueries = await connector.fetchSavedQueries();
 
-		expect(savedQueries).toEqual([{ iri: sq, label: '', sparqlText: '', description: '' }]);
+		expect(savedQueries).toEqual([{ iri: sq, label: '', sparqlText: '', description: '', published: false }]);
 	});
 
 	it('renameSavedQuery updates only rdfs:label — the saved query IRI is unchanged', async () => {
@@ -8747,7 +8757,7 @@ describe('SparqlConnector — searchIndividuals (STORY-115)', () => {
 		await connector.searchIndividuals({});
 
 		expect(queries[0]).toContain('GRAPH ?classGraph { ?type a owl:Class }');
-		expect(queries[0]).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(queries[0]).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>, <${ANNOTATION_CLASS_IRI}>, <${ANNOTATION_LABEL_CLASS_IRI}>))`);
 		expect(queries[0]).toContain('FILTER(isBlank(?i)');
 		expect(queries[0]).not.toMatch(/\bFROM\b/);
 	});
@@ -8760,6 +8770,146 @@ describe('SparqlConnector — searchIndividuals (STORY-115)', () => {
 		const page = await connector.searchIndividuals({});
 
 		expect(page.results[0].label).toBe(extractLocalName(alice));
+	});
+});
+
+describe('SparqlConnector — searchIndividuals all-strings mode (STORY-186)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personClass = classIri('Person');
+	const alice = individualIri(personClass, 'Alice');
+	const hostProp = `${DEFAULT_NAMESPACE_BASE_IRI}#hostname`;
+
+	function hitBinding(overrides: Partial<Record<string, { type: string; value: string }>> = {}): SparqlBinding {
+		return {
+			i: { type: 'uri', value: alice },
+			type: { type: 'uri', value: personClass },
+			label: { type: 'literal', value: 'Alice' },
+			ig: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI },
+			matchedProperty: { type: 'uri', value: hostProp },
+			matchedValue: { type: 'literal', value: 'sap-prod-01' },
+			...overrides
+		};
+	}
+
+	it('matches any literal object of the individual and reports the matched property/value', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([hitBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ query: 'sap', matchAllStringProperties: true });
+
+		expect(queries[0]).toContain('?i ?mp ?mv');
+		expect(queries[0]).toContain('isLiteral(?mv)');
+		expect(queries[0]).toContain('CONTAINS(LCASE(STR(?mv)), LCASE("sap"))');
+		expect(queries[0]).not.toContain('CONTAINS(LCASE(STR(?label))');
+		expect(page.results[0]).toMatchObject({
+			iri: alice,
+			matchedPropertyIri: hostProp,
+			matchedValue: 'sap-prod-01'
+		});
+	});
+
+	it('collapses multiple matching literals of one individual to one hit via GROUP BY/SAMPLE', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([hitBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ query: 'sap', matchAllStringProperties: true });
+
+		expect(queries[0]).toContain('(SAMPLE(?mp) AS ?matchedProperty)');
+		expect(queries[0]).toContain('GROUP BY');
+	});
+
+	it('keeps the same exclusions, never mixes FROM with GRAPH, and excludes rdf:Statement nodes', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([hitBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ query: 'sap', matchAllStringProperties: true });
+
+		expect(queries[0]).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>, <${ANNOTATION_CLASS_IRI}>, <${ANNOTATION_LABEL_CLASS_IRI}>))`);
+		expect(queries[0]).toContain('FILTER(?type != rdf:Statement)');
+		expect(queries[0]).not.toMatch(/\bFROM\b/);
+	});
+
+	it('escapes quotes, backslashes and newlines in the term', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ query: 'a"b\\c\nd', matchAllStringProperties: true });
+
+		expect(queries[0]).toContain('LCASE("a\\"b\\\\c\\nd")');
+	});
+
+	it('returns an empty page without querying for terms shorter than 2 characters', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([hitBinding()]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const page = await connector.searchIndividuals({ query: 's', matchAllStringProperties: true });
+
+		expect(queries).toHaveLength(0);
+		expect(page).toEqual({ results: [], hasMore: false });
+	});
+
+	it('default (label-only) mode is unchanged: no matched-property pattern', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ query: 'sap' });
+
+		expect(queries[0]).not.toContain('matchedProperty');
+		expect(queries[0]).not.toContain('GROUP BY');
+	});
+});
+
+describe('SparqlConnector — searchIndividualFacetCounts (STORY-186)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personClass = classIri('Person');
+
+	function mockFacetFetch() {
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const q: string = JSON.parse(opts.body).query;
+			queries.push(q);
+			const bindings = q.includes('GROUP BY ?type')
+				? [{ type: { type: 'uri', value: personClass }, count: { type: 'literal', value: '12' } }]
+				: [{ ig: { type: 'uri', value: DEFAULT_NAMESPACE_BASE_IRI }, count: { type: 'literal', value: '7' } }];
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+		});
+		return { fn, queries };
+	}
+
+	it('returns class and namespace counts for the whole match set, with no LIMIT/OFFSET', async () => {
+		const { fn, queries } = mockFacetFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const counts = await connector.searchIndividualFacetCounts({ query: 'sap' });
+
+		expect(counts.byClass).toEqual([{ classIri: personClass, count: 12 }]);
+		expect(counts.byNamespace).toEqual([{ namespaceBaseIri: DEFAULT_NAMESPACE_BASE_IRI, count: 7 }]);
+		for (const q of queries) {
+			expect(q).toContain('COUNT(DISTINCT ?i)');
+			expect(q).not.toMatch(/\bLIMIT\b|\bOFFSET\b/);
+			expect(q).not.toMatch(/\bFROM\b/);
+			expect(q).toContain('LCASE("sap")');
+		}
+	});
+
+	it('returns empty counts without querying for a too-short term', async () => {
+		const { fn, queries } = mockFacetFetch();
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		const counts = await connector.searchIndividualFacetCounts({ query: 'x' });
+
+		expect(queries).toHaveLength(0);
+		expect(counts).toEqual({ byClass: [], byNamespace: [] });
 	});
 });
 
@@ -9173,13 +9323,13 @@ describe('SparqlConnector — fetchIdentityNeighborhood (STORY-117)', () => {
 
 		const seedQuery = queries.find((q) => !q.includes('UNION'))!;
 		expect(seedQuery).toContain('GRAPH ?classGraph { ?type a owl:Class }');
-		expect(seedQuery).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(seedQuery).toContain(`FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>, <${ANNOTATION_CLASS_IRI}>, <${ANNOTATION_LABEL_CLASS_IRI}>))`);
 
 		const linkQuery = queries.find((q) => q.includes('UNION'))!;
 		expect(linkQuery).toContain('GRAPH ?sourceClassGraph { ?sourceType a owl:Class }');
 		expect(linkQuery).toContain('GRAPH ?targetClassGraph { ?targetType a owl:Class }');
-		expect(linkQuery).toContain(`FILTER(?sourceType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
-		expect(linkQuery).toContain(`FILTER(?targetType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))`);
+		expect(linkQuery).toContain(`FILTER(?sourceType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>, <${ANNOTATION_CLASS_IRI}>, <${ANNOTATION_LABEL_CLASS_IRI}>))`);
+		expect(linkQuery).toContain(`FILTER(?targetType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>, <${ANNOTATION_CLASS_IRI}>, <${ANNOTATION_LABEL_CLASS_IRI}>))`);
 		expect(linkQuery).toContain('FILTER(isBlank(?source)');
 		expect(linkQuery).toContain('FILTER(isBlank(?target)');
 	});
@@ -9208,5 +9358,707 @@ describe('SparqlConnector — fetchIdentityNeighborhood (STORY-117)', () => {
 
 		const linkQuery = queries.find((q) => q.includes('UNION'))!;
 		expect(linkQuery).toContain('LIMIT 500');
+	});
+});
+
+describe('SparqlConnector — fetchInConstraints (query-workbench STORY-174)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('groups sh:in values per class+property and keeps IRI/literal kind', async () => {
+		const fn = vi.fn(async (_url: string, _opts: { body: string }) =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['class', 'path', 'value'] },
+					results: {
+						bindings: [
+							{ class: { type: 'uri', value: 'urn:C' }, path: { type: 'uri', value: 'urn:p' }, value: { type: 'literal', value: 'A' } },
+							{ class: { type: 'uri', value: 'urn:C' }, path: { type: 'uri', value: 'urn:p' }, value: { type: 'uri', value: 'urn:m' } },
+							{ class: { type: 'uri', value: 'urn:C' }, path: { type: 'uri', value: 'urn:q' }, value: { type: 'literal', value: 'Z' } }
+						]
+					}
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.fetchInConstraints();
+		expect(result).toEqual([
+			{ classIri: 'urn:C', propertyIri: 'urn:p', values: [{ value: 'A', isIri: false }, { value: 'urn:m', isIri: true }] },
+			{ classIri: 'urn:C', propertyIri: 'urn:q', values: [{ value: 'Z', isIri: false }] }
+		]);
+		const body = decodeURIComponent(fn.mock.calls[0][1].body.replace(/\+/g, ' '));
+		expect(body).toContain('sh:in');
+		expect(body).toContain('/shapes');
+	});
+});
+
+describe('SparqlConnector — SavedQuery workbench fields (STORY-178)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const modelJson = '{"version":1,"note":"say \\"hi\\"\\n\\\\ done"}';
+
+	it('insertSavedQuery with a workbench model stores model, createdBy, createdAt and published=false in one update', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const iri = await connector.insertSavedQuery('Apps by owner', 'SELECT ?x WHERE { ?x a ?t }', undefined, {
+			queryModelJson: modelJson,
+			createdBy: 'alice',
+			createdAt: '2026-10-10T12:00:00.000Z'
+		});
+
+		expect(updates).toHaveLength(1);
+		const u = updates[0];
+		expect(u).toContain(`<${iri}> a <${SAVED_QUERY_CLASS_IRI}>`);
+		expect(u).toContain(`<${SAVED_QUERY_TEXT_PREDICATE_IRI}> "SELECT ?x WHERE { ?x a ?t }"`);
+		expect(u).toContain(`<${SAVED_QUERY_CREATED_BY_PREDICATE_IRI}> "alice"`);
+		expect(u).toContain(`<${SAVED_QUERY_CREATED_AT_PREDICATE_IRI}> "2026-10-10T12:00:00.000Z"^^xsd:dateTime`);
+		expect(u).toContain(`<${SAVED_QUERY_PUBLISHED_PREDICATE_IRI}> "false"^^xsd:boolean`);
+		expect(u).not.toContain('"true"^^xsd:boolean');
+		expect(u).toContain(`<${SAVED_QUERY_MODEL_PREDICATE_IRI}> `);
+	});
+
+	it('stores the model JSON as an escaped literal that unescapes byte-identical', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertSavedQuery('Escapes', 'SELECT 1', undefined, {
+			queryModelJson: modelJson, createdBy: 'a', createdAt: '2026-01-01T00:00:00.000Z'
+		});
+		const m = updates[0].match(new RegExp(`<${SAVED_QUERY_MODEL_PREDICATE_IRI}> "((?:[^"\\\\]|\\\\.)*)"`));
+		expect(m).not.toBeNull();
+		const unescaped = m![1].replace(/\\(["\\nr])/g, (_a, c) => (c === 'n' ? '\n' : c === 'r' ? '\r' : c));
+		expect(unescaped).toBe(modelJson);
+		expect(m![1]).not.toMatch(/[\n\r]/);
+	});
+
+	it('legacy insertSavedQuery writes none of the workbench predicates', async () => {
+		const { fn, updates } = mockSavedQueryFetch({ savedQueryClassExists: true, savedQueryExists: false });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.insertSavedQuery('Legacy', 'SELECT 1');
+		for (const p of [
+			SAVED_QUERY_MODEL_PREDICATE_IRI, SAVED_QUERY_CREATED_BY_PREDICATE_IRI,
+			SAVED_QUERY_CREATED_AT_PREDICATE_IRI, SAVED_QUERY_PUBLISHED_PREDICATE_IRI
+		]) expect(updates[0]).not.toContain(p);
+	});
+
+	it('updateSavedQueryModel rewrites model and compiled SPARQL in a single update', async () => {
+		const { fn, updates } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const iri = savedQueryIri('Apps by owner');
+		await connector.updateSavedQueryModel(iri, '{"version":1}', 'SELECT 2');
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?oldModel`);
+		expect(updates[0]).toContain(`<${SAVED_QUERY_MODEL_PREDICATE_IRI}> "{\\"version\\":1}"`);
+		expect(updates[0]).toContain(`<${SAVED_QUERY_TEXT_PREDICATE_IRI}> "SELECT 2"`);
+		expect(updates[0]).not.toContain(SAVED_QUERY_PUBLISHED_PREDICATE_IRI);
+	});
+
+	it('updateSavedQueryModel rejects empty text and unsafe IRIs without a request', async () => {
+		const { fn } = mockSavedQueryFetch();
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateSavedQueryModel(savedQueryIri('x'), '{}', '  ')).rejects.toThrow();
+		await expect(connector.updateSavedQueryModel('urn:bad>x', '{}', 'SELECT 1')).rejects.toThrow();
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('fetchSavedQueries maps new fields, defaulting published=false and leaving legacy model undefined', async () => {
+		const row = (iri: string, extra: Record<string, string> = {}) => ({
+			sq: { type: 'uri', value: iri },
+			label: { type: 'literal', value: 'L' },
+			text: { type: 'literal', value: 'SELECT 1' },
+			...Object.fromEntries(Object.entries(extra).map(([k, v]) => [k, { type: 'literal', value: v }]))
+		});
+		const fn = vi.fn(async () =>
+			new Response(JSON.stringify({
+				head: { vars: [] },
+				results: { bindings: [
+					row('urn:wb', { model: '{"version":1}', createdBy: 'alice', createdAt: '2026-01-01T00:00:00Z', published: 'false' }),
+					row('urn:legacy')
+				] }
+			}), { status: 200 })
+		);
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const [wb, legacy] = await connector.fetchSavedQueries();
+		expect(wb).toMatchObject({ queryModel: '{"version":1}', createdBy: 'alice', createdAt: '2026-01-01T00:00:00Z', published: false });
+		expect(legacy.queryModel).toBeUndefined();
+		expect(legacy.createdBy).toBeUndefined();
+		expect(legacy.published).toBe(false);
+		expect(legacy).toMatchObject({ iri: 'urn:legacy', label: 'L', sparqlText: 'SELECT 1', description: '' });
+	});
+});
+
+describe('SparqlConnector — annotation vocabulary (query-workbench STORY-180)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function mockAnnotationSeedFetch(fixture: { classes?: string[]; members?: string[] } = {}) {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			if (q.includes('ASK')) {
+				const hit = (fixture.classes ?? []).some((c) => q.includes(`<${c}> a owl:Class`));
+				return new Response(JSON.stringify({ head: {}, boolean: hit }), { status: 200 });
+			}
+			if (q.includes(`a <${ANNOTATION_LABEL_CLASS_IRI}>`)) {
+				return new Response(JSON.stringify({
+					head: { vars: ['m'] },
+					results: { bindings: (fixture.members ?? []).map((m) => ({ m: { type: 'uri', value: m } })) }
+				}), { status: 200 });
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates };
+	}
+
+	it('ensureAnnotationClasses declares both classes and seeds the four labels once', async () => {
+		const { fn, updates } = mockAnnotationSeedFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').ensureAnnotationClasses();
+		const all = updates.join('\n');
+		expect(all).toContain(`<${ANNOTATION_CLASS_IRI}> a owl:Class`);
+		expect(all).toContain(`<${ANNOTATION_LABEL_CLASS_IRI}> a owl:Class`);
+		for (const l of SEED_ANNOTATION_LABELS) expect(all).toContain(`rdfs:label "${l}"`);
+		expect(all.match(/a <http[^>]*AnnotationLabel>/g)).toHaveLength(4);
+	});
+
+	it('ensureAnnotationClasses is idempotent: a second call inserts nothing', async () => {
+		const first = mockAnnotationSeedFetch();
+		vi.stubGlobal('fetch', first.fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureAnnotationClasses();
+		const members = [...first.updates.join('\n').matchAll(/<([^>]+)> a <[^>]*AnnotationLabel>/g)].map((m) => m[1]);
+		expect(members).toHaveLength(4);
+
+		const second = mockAnnotationSeedFetch({
+			classes: [ANNOTATION_CLASS_IRI, ANNOTATION_LABEL_CLASS_IRI],
+			members
+		});
+		vi.stubGlobal('fetch', second.fn);
+		await connector.ensureAnnotationClasses();
+		expect(second.updates).toHaveLength(0);
+	});
+
+	it('seeds only the missing members', async () => {
+		const { fn, updates } = mockAnnotationSeedFetch({
+			classes: [ANNOTATION_CLASS_IRI, ANNOTATION_LABEL_CLASS_IRI],
+			members: []
+		});
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').ensureAnnotationClasses();
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).not.toContain(`<${ANNOTATION_CLASS_IRI}> a owl:Class`);
+	});
+
+	it.each([
+		['fetchAllIndividuals', (c: SparqlConnector) => c.fetchAllIndividuals()],
+		['searchIndividuals', (c: SparqlConnector) => c.searchIndividuals({ query: 'x' })]
+	])('%s excludes Annotation and AnnotationLabel typed nodes', async (_n, run) => {
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			queries.push(JSON.parse(opts.body).query as string);
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		await run(new SparqlConnector('/api/sparql'));
+		const main = queries.find((q) => q.includes('NOT IN'))!;
+		expect(main).toContain(`<${ANNOTATION_CLASS_IRI}>`);
+		expect(main).toContain(`<${ANNOTATION_LABEL_CLASS_IRI}>`);
+	});
+
+	it('fetchIdentityNeighborhood excludes them from seed and link type filters', async () => {
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			queries.push(JSON.parse(opts.body).query as string);
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').fetchIdentityNeighborhood(['urn:a']);
+		const withFilter = queries.filter((q) => q.includes('NOT IN'));
+		expect(withFilter.length).toBeGreaterThan(0);
+		for (const q of withFilter) {
+			expect(q).toContain(`<${ANNOTATION_CLASS_IRI}>`);
+			expect(q).toContain(`<${ANNOTATION_LABEL_CLASS_IRI}>`);
+		}
+	});
+});
+
+describe('SparqlConnector — literal-valued fact reification (query-workbench STORY-181)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS = 'https://example.com/facts';
+	const subjectIri = `${NS}#app1`;
+	const predicateIri = `${NS}#lifecycle`;
+	const XSD_INT = 'http://www.w3.org/2001/XMLSchema#integer';
+
+	/** `known` maps an exact `rdf:object` term (as written in the query) to its statement IRI. */
+	function mockFactFetch(known: Record<string, string> = {}) {
+		const updates: string[] = [];
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			queries.push(q);
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return new Response(
+					JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: NS } }] } }),
+					{ status: 200 }
+				);
+			}
+			const m = q.match(/rdf:object (.+?) \.\s*\n/);
+			if (m) {
+				const stmt = known[m[1]];
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['stmt'] },
+						results: { bindings: stmt ? [{ stmt: { type: 'uri', value: stmt } }] : [] }
+					}),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		return { fn, updates, queries };
+	}
+
+	it('reifies an IRI object exactly like ensureReifiedStatement', async () => {
+		const { fn, updates } = mockFactFetch();
+		vi.stubGlobal('fetch', fn);
+		const stmt = await new SparqlConnector('/api/sparql').ensureReifiedFact(subjectIri, predicateIri, {
+			kind: 'iri',
+			iri: `${NS}#Prod`
+		});
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(
+			`<${stmt}> a rdf:Statement ; rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${NS}#Prod> .`
+		);
+	});
+
+	it('reifies a plain literal object', async () => {
+		const { fn, updates } = mockFactFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').ensureReifiedFact(subjectIri, predicateIri, {
+			kind: 'literal',
+			value: 'Production'
+		});
+		expect(updates[0]).toContain('rdf:object "Production" .');
+	});
+
+	it('is idempotent: a second call returns the same statement IRI and writes nothing', async () => {
+		const { fn, updates } = mockFactFetch({ '"Production"': `${NS}#Statement1` });
+		vi.stubGlobal('fetch', fn);
+		const stmt = await new SparqlConnector('/api/sparql').ensureReifiedFact(subjectIri, predicateIri, {
+			kind: 'literal',
+			value: 'Production'
+		});
+		expect(stmt).toBe(`${NS}#Statement1`);
+		expect(updates).toEqual([]);
+	});
+
+	it('treats plain, typed and language-tagged literals as three distinct facts', async () => {
+		const { fn, updates } = mockFactFetch({ '"1"': `${NS}#StatementPlain` });
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		const plain = await c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'literal', value: '1' });
+		const typed = await c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'literal', value: '1', datatype: XSD_INT });
+		const lang = await c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'literal', value: '1', lang: 'en' });
+		expect(plain).toBe(`${NS}#StatementPlain`);
+		expect(typed).not.toBe(plain);
+		expect(lang).not.toBe(plain);
+		expect(updates).toHaveLength(2);
+		expect(updates[0]).toContain(`rdf:object "1"^^<${XSD_INT}> .`);
+		expect(updates[1]).toContain('rdf:object "1"@en .');
+	});
+
+	it('escapes quotes, backslashes and newlines in a literal', async () => {
+		const { fn, updates } = mockFactFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').ensureReifiedFact(subjectIri, predicateIri, {
+			kind: 'literal',
+			value: 'say "hi"\\ \nbye'
+		});
+		expect(updates[0]).toContain('rdf:object "say \\"hi\\"\\\\ \\nbye" .');
+		expect(updates[0]).not.toMatch(/"say[^"]*\n/);
+	});
+
+	it('rejects unsafe datatype IRIs, bad language tags and unsafe IRIs without a request', async () => {
+		const { fn } = mockFactFetch();
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		await expect(
+			c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'literal', value: 'x', datatype: 'http://x/>' })
+		).rejects.toThrow();
+		await expect(
+			c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'literal', value: 'x', lang: 'en" . } #' })
+		).rejects.toThrow();
+		await expect(c.ensureReifiedFact(subjectIri, predicateIri, { kind: 'iri', iri: 'urn:a>b' })).rejects.toThrow();
+		await expect(
+			c.fetchStatementIriForFact(subjectIri, 'urn:p>', { kind: 'literal', value: 'x' }, NS)
+		).rejects.toThrow();
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('the old IRI-only methods behave identically (thin wrappers)', async () => {
+		const a = mockFactFetch();
+		vi.stubGlobal('fetch', a.fn);
+		await new SparqlConnector('/api/sparql').ensureReifiedStatement(subjectIri, predicateIri, `${NS}#Prod`);
+		const b = mockFactFetch();
+		vi.stubGlobal('fetch', b.fn);
+		await new SparqlConnector('/api/sparql').ensureReifiedFact(subjectIri, predicateIri, {
+			kind: 'iri',
+			iri: `${NS}#Prod`
+		});
+		const strip = (u: string) => u.replace(/#Statement\d+/g, '#StatementX');
+		expect(a.updates.map(strip)).toEqual(b.updates.map(strip));
+		expect(a.queries).toEqual(b.queries);
+	});
+
+	it('fetchAllReifiedStatements labels a literal object with its own value', async () => {
+		const fn = vi.fn(async () =>
+			new Response(JSON.stringify({
+				head: { vars: [] },
+				results: { bindings: [{
+					stmt: { type: 'uri', value: `${NS}#Statement1` },
+					s: { type: 'uri', value: subjectIri },
+					p: { type: 'uri', value: predicateIri },
+					o: { type: 'literal', value: 'Production' }
+				}] }
+			}), { status: 200 })
+		);
+		vi.stubGlobal('fetch', fn);
+		const [e] = await new SparqlConnector('/api/sparql').fetchAllReifiedStatements();
+		expect(e.label).toBe('app1 lifecycle Production');
+	});
+});
+
+describe('SparqlConnector — annotation CRUD (query-workbench STORY-182)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS = 'https://example.com/annot';
+	const subject = `${NS}#app1`;
+	const predicate = `${NS}#lifecycle`;
+	const fact = { subjectIri: subject, predicateIri: predicate, object: { kind: 'literal' as const, value: 'Production' } };
+	const meta = { annotatedBy: 'alice', annotatedAt: '2026-10-10T12:00:00.000Z' };
+	const verified = `${NS}#VerifiedLabel`;
+
+	function mockAnnotationFetch(opts: { labelMember?: boolean } = {}) {
+		const updates: string[] = [];
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, o: { body: string }) => {
+			const body = JSON.parse(o.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			queries.push(q);
+			const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+			if (q.includes('ASK')) {
+				// Class marker checks and label membership
+				if (q.includes(`<${verified}> a <${ANNOTATION_LABEL_CLASS_IRI}>`)) {
+					return json({ head: {}, boolean: opts.labelMember ?? true });
+				}
+				return json({ head: {}, boolean: true });
+			}
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return json({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: NS } }] } });
+			}
+			return json({ head: { vars: [] }, results: { bindings: [] } });
+		});
+		return { fn, updates, queries };
+	}
+
+	it('addAnnotation writes a text annotation node into the statement graph and returns its IRI', async () => {
+		const { fn, updates } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		const iri = await new SparqlConnector('/api/sparql').addAnnotation(fact, { type: 'text', text: 'Check "this"' }, meta);
+		const insert = updates.find((u) => u.includes(`a <${ANNOTATION_CLASS_IRI}>`))!;
+		expect(insert).toContain(`<${iri}> a <${ANNOTATION_CLASS_IRI}>`);
+		expect(insert).toContain(`<${ANNOTATES_PREDICATE_IRI}> <${NS}#Statement`);
+		expect(insert).toContain(`<${ANNOTATION_TYPE_PREDICATE_IRI}> "text"`);
+		expect(insert).toContain(`<${ANNOTATION_VALUE_PREDICATE_IRI}> "Check \\"this\\""`);
+		expect(insert).toContain(`<${ANNOTATED_BY_PREDICATE_IRI}> "alice"`);
+		expect(insert).toContain(`<${ANNOTATED_AT_PREDICATE_IRI}> "2026-10-10T12:00:00.000Z"^^xsd:dateTime`);
+		expect(insert).toContain(`GRAPH <${NS}>`);
+		expect(iri.startsWith(`${NS}#Annotation`)).toBe(true);
+	});
+
+	it('addAnnotation writes a label annotation whose value is the member IRI', async () => {
+		const { fn, updates } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').addAnnotation(fact, { type: 'label', labelIri: verified }, meta);
+		const insert = updates.find((u) => u.includes(`a <${ANNOTATION_CLASS_IRI}>`))!;
+		expect(insert).toContain(`<${ANNOTATION_TYPE_PREDICATE_IRI}> "label"`);
+		expect(insert).toContain(`<${ANNOTATION_VALUE_PREDICATE_IRI}> <${verified}>`);
+	});
+
+	it('can put a text and a label annotation on the same fact (two distinct nodes)', async () => {
+		const { fn } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		const a = await c.addAnnotation(fact, { type: 'text', text: 'note' }, meta);
+		const b = await c.addAnnotation(fact, { type: 'label', labelIri: verified }, meta);
+		expect(a).not.toBe(b);
+	});
+
+	it.each([
+		['empty text', { type: 'text' as const, text: '   ' }],
+		['over-long text', { type: 'text' as const, text: 'x'.repeat(ANNOTATION_MAX_TEXT_LENGTH + 1) }],
+		['unsafe label IRI', { type: 'label' as const, labelIri: 'urn:x>y' }]
+	])('addAnnotation rejects %s before any update', async (_n, annotation) => {
+		const { fn, updates } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		await expect(new SparqlConnector('/api/sparql').addAnnotation(fact, annotation, meta)).rejects.toThrow();
+		expect(updates).toEqual([]);
+	});
+
+	it('addAnnotation rejects a labelIri that is not an AnnotationLabel member before any update', async () => {
+		const { fn, updates } = mockAnnotationFetch({ labelMember: false });
+		vi.stubGlobal('fetch', fn);
+		await expect(
+			new SparqlConnector('/api/sparql').addAnnotation(fact, { type: 'label', labelIri: verified }, meta)
+		).rejects.toThrow(/not an annotation label/i);
+		// Vocabulary seeding may run, but no statement or Annotation node is written.
+		expect(updates.some((u) => u.includes('rdf:Statement') || u.includes(`a <${ANNOTATION_CLASS_IRI}>`))).toBe(false);
+	});
+
+	it('addAnnotation rejects missing author/timestamp metadata', async () => {
+		const { fn, updates } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		await expect(c.addAnnotation(fact, { type: 'text', text: 'a' }, { annotatedBy: '', annotatedAt: meta.annotatedAt })).rejects.toThrow();
+		await expect(c.addAnnotation(fact, { type: 'text', text: 'a' }, { annotatedBy: 'a', annotatedAt: 'yesterday' })).rejects.toThrow();
+		expect(updates).toEqual([]);
+	});
+
+	it('fetchAnnotationsForFacts issues one query for N facts and returns [] for unannotated ones', async () => {
+		const queries: string[] = [];
+		const other = { subjectIri: `${NS}#app2`, predicateIri: predicate, object: { kind: 'iri' as const, iri: `${NS}#Prod` } };
+		const fn = vi.fn(async (_u: string, o: { body: string }) => {
+			queries.push(JSON.parse(o.body).query);
+			return new Response(JSON.stringify({
+				head: { vars: [] },
+				results: { bindings: [
+					{
+						s: { type: 'uri', value: subject }, p: { type: 'uri', value: predicate },
+						o: { type: 'literal', value: 'Production' },
+						ann: { type: 'uri', value: `${NS}#Annotation1` },
+						type: { type: 'literal', value: 'text' }, value: { type: 'literal', value: 'check' },
+						by: { type: 'literal', value: 'alice' },
+						at: { type: 'literal', value: '2026-10-10T12:00:00Z', datatype: 'http://www.w3.org/2001/XMLSchema#dateTime' }
+					},
+					{
+						s: { type: 'uri', value: subject }, p: { type: 'uri', value: predicate },
+						o: { type: 'literal', value: 'Production', datatype: 'http://www.w3.org/2001/XMLSchema#string' },
+						ann: { type: 'uri', value: `${NS}#Annotation2` },
+						type: { type: 'literal', value: 'label' }, value: { type: 'uri', value: verified },
+						labelText: { type: 'literal', value: 'Verified' },
+						by: { type: 'literal', value: 'bob' },
+						at: { type: 'literal', value: '2026-10-11T12:00:00Z' }
+					}
+				] }
+			}), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		const result = await c.fetchAnnotationsForFacts([fact, other]);
+
+		expect(queries).toHaveLength(1);
+		expect(queries[0]).toContain('VALUES (?s ?p ?o)');
+		expect(result.get(factKeyString(fact))).toEqual([
+			{ iri: `${NS}#Annotation1`, type: 'text', text: 'check', annotatedBy: 'alice', annotatedAt: '2026-10-10T12:00:00Z' },
+			{ iri: `${NS}#Annotation2`, type: 'label', labelIri: verified, labelText: 'Verified', annotatedBy: 'bob', annotatedAt: '2026-10-11T12:00:00Z' }
+		]);
+		expect(result.get(factKeyString(other))).toEqual([]);
+	});
+
+	it('fact keys canonicalise plain and xsd:string literals together but keep typed/lang literals apart', () => {
+		const lit = (extra: object) => ({ subjectIri: 's', predicateIri: 'p', object: { kind: 'literal' as const, value: '1', ...extra } });
+		expect(factKeyString(lit({}))).toBe(factKeyString(lit({ datatype: 'http://www.w3.org/2001/XMLSchema#string' })));
+		expect(factKeyString(lit({}))).not.toBe(factKeyString(lit({ datatype: 'http://www.w3.org/2001/XMLSchema#integer' })));
+		expect(factKeyString(lit({}))).not.toBe(factKeyString(lit({ lang: 'en' })));
+		expect(factKeyString({ subjectIri: 's', predicateIri: 'p', object: { kind: 'iri', iri: '1' } })).not.toBe(factKeyString(lit({})));
+	});
+
+	it('fetchAnnotationsForFacts makes no request for an empty list', async () => {
+		const { fn } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		const result = await new SparqlConnector('/api/sparql').fetchAnnotationsForFacts([]);
+		expect(result.size).toBe(0);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('fetchAnnotationsForFacts validates every IRI before querying', async () => {
+		const { fn } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		await expect(
+			new SparqlConnector('/api/sparql').fetchAnnotationsForFacts([{ ...fact, predicateIri: 'urn:p>' }])
+		).rejects.toThrow();
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('fetchAnnotationLabels returns the enumerated labels', async () => {
+		const fn = vi.fn(async () =>
+			new Response(JSON.stringify({
+				head: { vars: [] },
+				results: { bindings: [
+					{ m: { type: 'uri', value: verified }, label: { type: 'literal', value: 'Verified' } },
+					{ m: { type: 'uri', value: `${NS}#NoLabel` } }
+				] }
+			}), { status: 200 })
+		);
+		vi.stubGlobal('fetch', fn);
+		expect(await new SparqlConnector('/api/sparql').fetchAnnotationLabels()).toEqual([
+			{ iri: verified, label: 'Verified' },
+			{ iri: `${NS}#NoLabel`, label: 'NoLabel' }
+		]);
+	});
+
+	it('deleteAnnotation removes only the Annotation node, not the statement or ground triple', async () => {
+		const { fn, updates } = mockAnnotationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').deleteAnnotation(`${NS}#Annotation1`);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${NS}#Annotation1> a <${ANNOTATION_CLASS_IRI}>`);
+		expect(updates[0]).not.toContain('rdf:Statement');
+		expect(updates[0]).not.toContain('rdf:subject');
+		await expect(new SparqlConnector('/api/sparql').deleteAnnotation('urn:a>b')).rejects.toThrow();
+		expect(updates).toHaveLength(1);
+	});
+});
+
+describe('SparqlConnector — facts keep annotations consistent through edits and deletes (query-workbench STORY-184)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const NS = 'https://example.com/life';
+	const G = namespaceGraphs(NS).instances;
+	const subject = `${NS}#app1`;
+	const attr = `${NS}#lifecycle`;
+	const pred = `${NS}#hostedOn`;
+	const target = `${NS}#srv1`;
+
+	function mockMutationFetch() {
+		const updates: string[] = [];
+		const fn = vi.fn(async (_u: string, o: { body: string }) => {
+			const body = JSON.parse(o.body);
+			const json = (v: unknown) => new Response(JSON.stringify(v), { status: 200 });
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return json({ success: true });
+			}
+			const q: string = body.query;
+			if (q.includes('GRAPH ?g') && q.includes('a ?type')) {
+				return json({ head: { vars: ['g'] }, results: { bindings: [{ g: { type: 'uri', value: NS } }] } });
+			}
+			return json({ head: { vars: [] }, results: { bindings: [] } });
+		});
+		return { fn, updates };
+	}
+
+	const annotationCleanup = (u: string) => {
+		expect(u).toContain('?stmt ?sp ?so');
+		expect(u).toContain(`?ann <${ANNOTATES_PREDICATE_IRI}> ?stmt`);
+		expect(u).toContain('?ann ?ap ?ao');
+	};
+
+	it('editing an attribute value rewrites the statement rdf:object in the same single update', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').setIndividualAttributeValue(subject, attr, 'string', 'Retired', NS);
+		expect(updates).toHaveLength(1);
+		const u = updates[0];
+		expect(u).toContain(`WITH <${G}>`);
+		expect(u).toContain('DELETE { <' + subject + '> <' + attr + '> ?old . ?stmt rdf:object ?old . }');
+		expect(u).toContain('INSERT { <' + subject + '> <' + attr + '> "Retired"^^xsd:string . ?stmt rdf:object "Retired"^^xsd:string . }');
+		expect(u).toContain(`OPTIONAL { ?stmt rdf:subject <${subject}> ; rdf:predicate <${attr}> ; rdf:object ?old . }`);
+		// the statement is retargeted, never deleted, so its annotations stay attached
+		expect(u).not.toContain('?ann');
+	});
+
+	it('clearing an attribute value removes its statement and annotation nodes', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').setIndividualAttributeValue(subject, attr, 'string', null, NS);
+		expect(updates).toHaveLength(1);
+		annotationCleanup(updates[0]);
+		expect(updates[0]).not.toContain('INSERT');
+	});
+
+	it('removing one value of a multi-valued attribute is scoped to that value\'s statement only', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').removeIndividualAttributeValue(subject, attr, 'string', 'A', NS);
+		expect(updates).toHaveLength(1);
+		const u = updates[0];
+		annotationCleanup(u);
+		expect(u).toContain(`rdf:object "A"^^xsd:string .`);
+		expect(u).not.toContain('"B"');
+		expect(u).not.toMatch(/rdf:object \?[a-z]/); // never a wildcard object
+	});
+
+	it('every statement/annotation pattern is OPTIONAL, so unreified facts are unaffected', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').removeIndividualAttributeValue(subject, attr, 'string', 'A', NS);
+		const where = updates[0].slice(updates[0].indexOf('WHERE'));
+		expect(where).toMatch(/WHERE \{\s*OPTIONAL \{/);
+		expect(updates[0]).toContain(`DELETE { <${subject}> <${attr}> "A"^^xsd:string .`);
+	});
+
+	it('deleteAssertion removes the relation statement and its annotations', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').deleteAssertion(subject, pred, target);
+		expect(updates).toHaveLength(1);
+		annotationCleanup(updates[0]);
+		expect(updates[0]).toContain(`rdf:object <${target}> .`);
+	});
+
+	it('deleteIndividualClassRelation removes the relation statement and its annotations', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').deleteIndividualClassRelation(subject, pred, `${NS}#SomeClass`);
+		annotationCleanup(updates[0]);
+	});
+
+	it('deleteIndividual also removes statements whose subject is the individual, with their annotations', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').deleteIndividual(subject, NS);
+		expect(updates).toHaveLength(1);
+		const u = updates[0];
+		expect(u).toContain(`?stmt rdf:subject <${subject}> ; ?sp ?so .`);
+		annotationCleanup(u);
+		expect(u).toContain(`WITH <${G}>`);
+	});
+
+	it('updateIndividualRelation still retargets the existing statement (regression guard)', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').updateIndividualRelation(subject, pred, target, 'hostedOn', `${NS}#srv2`);
+		const u = updates.find((x) => x.includes('rdf:object'))!;
+		expect(u).toContain(`?stmt rdf:predicate <${pred}> ; rdf:object <${target}> .`);
+		expect(u).toContain('OPTIONAL');
+	});
+
+	it('addIndividualAttributeValue stays a plain insert (additive, nothing to retarget)', async () => {
+		const { fn, updates } = mockMutationFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').addIndividualAttributeValue(subject, attr, 'string', 'A', NS);
+		expect(updates[0]).toContain('INSERT DATA');
+		expect(updates[0]).not.toContain('?stmt');
 	});
 });

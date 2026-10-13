@@ -119,6 +119,9 @@ export interface RelationEdgeSpec {
 	name: string;
 	required: boolean;
 	repeatable: boolean;
+	/** Raw `sh:minCount`/`sh:maxCount` (see `FetchedProperty`), for the ERD export's cardinality. */
+	minCount?: number;
+	maxCount?: number;
 	/** 'generic' for a shared relation with no `rdfs:domain`/`rdfs:range` (STORY-051/052/054),
 	 *  reconstructed from the shapes graph rather than `rdfs:domain`/`rdfs:range` directly — needed
 	 *  so an edge reloaded from GraphDB still edits/deletes through the correct (reference-counted)
@@ -143,6 +146,8 @@ export interface AttributedLinkEdgeSpec {
 	propName: string;
 	required: boolean;
 	repeatable: boolean;
+	minCount?: number;
+	maxCount?: number;
 	/** See `RelationEdgeSpec.namespace` (STORY-033). */
 	namespace: string;
 }
@@ -511,6 +516,8 @@ export function buildCanvasModel(
 				propName: op.label,
 				required: op.required,
 				repeatable: op.repeatable,
+				minCount: op.minCount,
+				maxCount: op.maxCount,
 				namespace: op.namespaceBaseIri
 			});
 		} else {
@@ -522,6 +529,8 @@ export function buildCanvasModel(
 				name: op.label,
 				required: op.required,
 				repeatable: op.repeatable,
+				minCount: op.minCount,
+				maxCount: op.maxCount,
 				relationKind: op.relationKind,
 				namespace: op.namespaceBaseIri,
 				generatedReverseOf: op.generatedReverseOf

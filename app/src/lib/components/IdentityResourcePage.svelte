@@ -22,6 +22,7 @@
 		splitOutgoingTriples
 	} from '$lib/utils/resource-page-format';
 	import { resolveClassColor, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
+	import { contrastTextColor } from '$lib/utils/contrast';
 	import Modal from '$lib/components/Modal.svelte';
 	import IdentityNeighborhoodGraph from '$lib/components/IdentityNeighborhoodGraph.svelte';
 	import MemberForm from '$lib/components/MemberForm.svelte';
@@ -449,7 +450,9 @@
 						{@const color = typeBadgeColor(typeIri)}
 						<span
 							class="type-badge"
-							style={color ? `background: ${color}; border-color: ${color}; color: #fff;` : undefined}
+							style={color
+								? `background: ${color}; border-color: ${color}; color: ${contrastTextColor(color)};`
+								: undefined}
 						>
 							{typeBadgeLabel(typeIri)}
 						</span>

@@ -12,6 +12,10 @@ function createWorkbenchActionsStore() {
 	let loading = $state(false);
 	let triplesOpen = $state(false);
 	let externalVocabManagementOpen = $state(false);
+	let queryConsoleOpen = $state(false);
+	/** STORY-193: one-shot SPARQL text for the console to load when opened from the workbench. A fresh
+	 *  object per call so re-opening with identical text still re-fires the console's `$effect`. */
+	let consoleInitialQuery = $state<{ text: string } | null>(null);
 	let exportingSvg = $state(false);
 	let hiddenNamespaces = $state<Set<string>>(new Set());
 	let showReverseRelations = $state(false);
@@ -27,6 +31,7 @@ function createWorkbenchActionsStore() {
 	let onReload: () => void = () => {};
 	let onToggleTriples: () => void = () => {};
 	let onExportSvg: () => void = () => {};
+	let onExportErd: () => void = () => {};
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
 	let onToggleReverseRelationsVisibility: () => void = () => {};
 	let onSetViewMode: (mode: 'schema' | 'instances') => void = () => {};
@@ -51,6 +56,20 @@ function createWorkbenchActionsStore() {
 		},
 		set externalVocabManagementOpen(value: boolean) {
 			externalVocabManagementOpen = value;
+		},
+		/** STORY-185: lets the workbench route open the layout-owned Queries console modal —
+		 *  same cross-sibling bridge shape as `externalVocabManagementOpen`. */
+		get queryConsoleOpen() {
+			return queryConsoleOpen;
+		},
+		set queryConsoleOpen(value: boolean) {
+			queryConsoleOpen = value;
+		},
+		get consoleInitialQuery() {
+			return consoleInitialQuery;
+		},
+		set consoleInitialQuery(value: { text: string } | null) {
+			consoleInitialQuery = value;
 		},
 		/** STORY-067: mirrors `loading`/`triplesOpen` — `+page.svelte` owns the export (it needs the
 		 *  canvas's `nodes`/`edges`/DOM), the hamburger menu (`+layout.svelte`) triggers it. */
@@ -123,6 +142,9 @@ function createWorkbenchActionsStore() {
 		registerExportSvg(fn: () => void) {
 			onExportSvg = fn;
 		},
+		registerExportErd(fn: () => void) {
+			onExportErd = fn;
+		},
 		registerToggleNamespaceVisibility(fn: (baseIri: string) => void) {
 			onToggleNamespaceVisibility = fn;
 		},
@@ -147,6 +169,9 @@ function createWorkbenchActionsStore() {
 		exportSvg() {
 			onExportSvg();
 		},
+		exportErd() {
+			onExportErd();
+		},
 		toggleNamespaceVisibility(baseIri: string) {
 			onToggleNamespaceVisibility(baseIri);
 		},
@@ -161,6 +186,11 @@ function createWorkbenchActionsStore() {
 		},
 		setActiveNamespace(baseIri: string) {
 			onSetActiveNamespace(baseIri);
+		},
+		/** Opens the Queries console; with `initialQuery` it also loads that text (one-way, STORY-193). */
+		openQueryConsole(initialQuery?: string) {
+			if (initialQuery !== undefined) consoleInitialQuery = { text: initialQuery };
+			queryConsoleOpen = true;
 		},
 		openExternalVocabManagement() {
 			externalVocabManagementOpen = true;

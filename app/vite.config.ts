@@ -27,6 +27,18 @@ export default defineConfig({
 					include: ['src/**/*.{test,spec}.{js,ts}'],
 					exclude: ['src/**/*.svelte.{test,spec}.{js,ts}']
 				}
+			},
+			{
+				// Component tests (STORY-247): jsdom + @testing-library/svelte, mocked connector calls only —
+				// no live browser and no GraphDB. `browser` resolve condition so Svelte mounts client-side.
+				extends: './vite.config.ts',
+				resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
+				test: {
+					name: 'component',
+					environment: 'jsdom',
+					include: ['src/**/*.svelte.{test,spec}.{js,ts}'],
+					setupFiles: ['./vitest-component-setup.ts']
+				}
 			}
 		]
 	}

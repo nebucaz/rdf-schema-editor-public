@@ -4,6 +4,7 @@
 	import { settingsStore } from '$lib/stores/settings-store.svelte';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { extractLocalName } from '$lib/utils/iri';
+	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 
 	let loadError = $state<string | null>(null);
@@ -72,6 +73,22 @@
 	}
 </script>
 
+<div class="field">
+	<label class="checkbox">
+		<input
+			type="checkbox"
+			checked={erdSourceMarkerStore.getSourceMarker()}
+			onchange={(e) => erdSourceMarkerStore.setSourceMarker(e.currentTarget.checked)}
+		/>
+		Crow's Foot export: mark the source end of relations
+	</label>
+	<p class="hint">
+		Adds the standard <code>0..*</code> symbol (any number of sources may reference one target) at the
+		start of each relation line in exported Crow's Foot diagrams. Off by default — it adds visual noise.
+		Saved in this browser, immediately.
+	</p>
+</div>
+
 {#if loadError}
 	<p class="error">{loadError}</p>
 {:else if !schema || settingsStore.loading}
@@ -127,6 +144,12 @@
 		flex-direction: column;
 		gap: 0.35rem;
 		margin-bottom: 1rem;
+	}
+
+	label.checkbox {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 
 	label {

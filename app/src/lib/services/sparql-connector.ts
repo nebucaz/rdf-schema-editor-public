@@ -1,3 +1,4 @@
+import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
 	classIri,
 	propertyIri,
@@ -40,6 +41,19 @@ import {
 	workspaceMembershipIri,
 	SAVED_QUERY_CLASS_IRI,
 	SAVED_QUERY_TEXT_PREDICATE_IRI,
+	ANNOTATION_CLASS_IRI,
+	ANNOTATION_LABEL_CLASS_IRI,
+	SEED_ANNOTATION_LABELS,
+	ANNOTATES_PREDICATE_IRI,
+	ANNOTATION_TYPE_PREDICATE_IRI,
+	ANNOTATION_VALUE_PREDICATE_IRI,
+	ANNOTATED_BY_PREDICATE_IRI,
+	ANNOTATED_AT_PREDICATE_IRI,
+	annotationIri,
+	SAVED_QUERY_MODEL_PREDICATE_IRI,
+	SAVED_QUERY_CREATED_BY_PREDICATE_IRI,
+	SAVED_QUERY_CREATED_AT_PREDICATE_IRI,
+	SAVED_QUERY_PUBLISHED_PREDICATE_IRI,
 	savedQueryIri,
 	NOTE_CLASS_IRI,
 	NOTE_WORKSPACE_PREDICATE_IRI,
@@ -246,6 +260,11 @@ export interface FetchedPropertyBase {
 export interface FetchedProperty extends FetchedPropertyBase {
 	required: boolean;
 	repeatable: boolean;
+	/** The raw `sh:minCount`/`sh:maxCount` of the owning shape, when present — `required`/`repeatable`
+	 *  collapse them to booleans, but a hand-edited shape may say e.g. `2..5`. Optional so existing
+	 *  fixtures needn't set them. */
+	minCount?: number;
+	maxCount?: number;
 	/** Whether this attribute is required on direct subclasses of `domain` as a class-level value
 	 *  (`REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`), independent of `required`'s "required on
 	 *  instances" meaning — see that predicate's own doc comment in `utils/iri.ts`. Optional (like
@@ -364,8 +383,24 @@ export interface IndividualSearchParams {
 	syncSource?: string;
 	/** Exact match against the `rse:syncStatus` marker (currently only ever `"stale"`). */
 	syncStatus?: string;
+	/** query-workbench STORY-186: when true, `query` matches *any* literal-valued property of the
+	 *  individual (not just `rdfs:label`) and each result reports the property/value that matched.
+	 *  Off by default so `/identities` keeps its label-only behaviour. Terms shorter than
+	 *  `MIN_ALL_STRINGS_SEARCH_LENGTH` return an empty page without querying. */
+	matchAllStringProperties?: boolean;
 	limit?: number;
 	offset?: number;
+}
+
+/** Minimum term length for the all-strings search — a 1-character substring scan over every literal
+ *  in the store is never useful and expensive. */
+export const MIN_ALL_STRINGS_SEARCH_LENGTH = 2;
+
+/** `searchIndividualFacetCounts` result (query-workbench STORY-186): counts over the *whole* match set,
+ *  independent of any result page. */
+export interface IndividualFacetCounts {
+	byClass: { classIri: string; count: number }[];
+	byNamespace: { namespaceBaseIri: string; count: number }[];
 }
 
 /** One `searchIndividuals` row — same shape as `FetchedIndividual`, kept as its own type since a
@@ -378,6 +413,9 @@ export interface IndividualSearchResult {
 	namespaceBaseIri: string;
 	syncSource: string | null;
 	syncStatus: string | null;
+	/** Only set by `matchAllStringProperties` searches: the property and literal that matched. */
+	matchedPropertyIri?: string;
+	matchedValue?: string;
 }
 
 /** `searchIndividuals`' return shape — `hasMore` is computed by fetching one extra row past `limit`
@@ -508,6 +546,51 @@ export interface NameableEntity {
 	kind: NameableEntityKind;
 }
 
+/** The object of a fact (query-workbench STORY-181): an IRI (a relation) or a literal (an attribute
+ *  value). Literals match on value + datatype + language exactly, so `"1"`, `"1"^^xsd:integer` and
+ *  `"1"@en` are three distinct facts. */
+export type FactObject =
+	| { kind: 'iri'; iri: string }
+	| { kind: 'literal'; value: string; datatype?: string; lang?: string };
+
+/** One fact to annotate or look up (query-workbench STORY-182). */
+export interface FactKey {
+	subjectIri: string;
+	predicateIri: string;
+	object: FactObject;
+}
+
+/** Annotation text is capped so a report cell stays readable. */
+export const ANNOTATION_MAX_TEXT_LENGTH = 2000;
+
+export type AnnotationInput = { type: 'text'; text: string } | { type: 'label'; labelIri: string };
+
+export interface FetchedAnnotation {
+	iri: string;
+	type: 'text' | 'label';
+	text?: string;
+	labelIri?: string;
+	labelText?: string;
+	annotatedBy: string;
+	annotatedAt: string;
+}
+
+const XSD_STRING_IRI = 'http://www.w3.org/2001/XMLSchema#string';
+
+/**
+ * Canonical string key for a fact, used to index `fetchAnnotationsForFacts`' result. A plain literal
+ * and an `xsd:string` literal are the same RDF 1.1 term, so they share a key; typed and
+ * language-tagged literals stay distinct.
+ */
+export function factKeyString(fact: FactKey): string {
+	const o = fact.object;
+	const obj =
+		o.kind === 'iri'
+			? `iri:${o.iri}`
+			: `lit:${o.value}\u0001${o.datatype && o.datatype !== XSD_STRING_IRI ? o.datatype : ''}\u0001${o.lang?.toLowerCase() ?? ''}`;
+	return `${fact.subjectIri}\u0000${fact.predicateIri}\u0000${obj}`;
+}
+
 export interface FetchedSchema {
 	classes: FetchedClass[];
 	datatypeProperties: FetchedProperty[];
@@ -521,6 +604,17 @@ export interface FetchedSchema {
 	 *  updating; `buildCanvasModel` treats a missing field as an empty list. Always populated by
 	 *  `fetchFullSchema`. */
 	labelRequiredClassIris?: string[];
+	/** `sh:in` value lists on a class's `sh:property` shapes (query-workbench STORY-174) — optional
+	 *  for the same reason as `labelRequiredClassIris`. Always populated by `fetchFullSchema`. */
+	shapeInConstraints?: FetchedInConstraint[];
+}
+
+/** One `sh:property [ sh:path ?p ; sh:in (...) ]` list on `classIri`'s NodeShape. List order is not
+ *  preserved (the list is read by walking `rdf:rest` / `rdf:first`). */
+export interface FetchedInConstraint {
+	classIri: string;
+	propertyIri: string;
+	values: { value: string; isIri: boolean }[];
 }
 
 // -- Namespace management (STORY-027) -----------------------------------------------------------
@@ -573,6 +667,21 @@ export interface FetchedSavedQuery {
 	label: string;
 	sparqlText: string;
 	description: string;
+	/** Serialised `QueryModel` JSON (query-workbench STORY-178); `undefined` for a legacy raw-SPARQL query. */
+	queryModel?: string;
+	/** JWT `sub` of the creator (STORY-179); `undefined` for legacy queries. */
+	createdBy?: string;
+	createdAt?: string;
+	/** Reserved for the BI follow-up (research Q15) — always `false` in this iteration. */
+	published: boolean;
+}
+
+/** Workbench-only fields written together with a new SavedQuery (STORY-178). */
+export interface SavedQueryWorkbenchFields {
+	queryModelJson: string;
+	createdBy: string;
+	/** ISO timestamp; defaults to now. */
+	createdAt?: string;
 }
 
 /** A Workspace Note (STORY-083): `{iri, text, color, x, y, linkedElementIri}`, read from the
@@ -597,12 +706,22 @@ export interface FetchedExternalVocabulary {
 	builtIn: boolean;
 }
 
-/** Characters excluded from the SPARQL 1.1 IRIREF grammar production — see `assertSafeSparqlIri`. */
-const UNSAFE_SPARQL_IRI_CHARS = /[<>"{}|^`\\\x00-\x20]/;
+/* `isSafeSparqlIri`/`assertSafeSparqlIri`/`escapeSparqlString` live in `utils/sparql-safe.ts`, shared with
+   `query-compiler.ts`. */
 
-function isSafeSparqlIri(value: string): boolean {
-	return !UNSAFE_SPARQL_IRI_CHARS.test(value);
-}
+/** Types whose nodes are app bookkeeping, never browsable individuals: Notes, Workspaces and (query-workbench
+ *  STORY-180) annotation nodes and annotation-label members. Interpolated into `?type NOT IN (...)` filters. */
+const NON_INDIVIDUAL_TYPES = [
+	NOTE_CLASS_IRI,
+	WORKSPACE_CLASS_IRI,
+	ANNOTATION_CLASS_IRI,
+	ANNOTATION_LABEL_CLASS_IRI
+]
+	.map((iri) => `<${iri}>`)
+	.join(', ');
+
+/** Disambiguates statement IRIs minted within the same millisecond. */
+let statementCounter = 0;
 
 const PREFIXES = `
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
@@ -767,9 +886,16 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
  */
 export class SparqlConnector {
 	private apiUrl: string;
+	private fetchImpl: typeof fetch;
 
-	constructor(apiUrl: string = '/api/sparql') {
+	/**
+	 * `fetchImpl` lets server code pass SvelteKit's `event.fetch` (which resolves relative `/api/...`
+	 * URLs in-process); it defaults to a late-bound global `fetch` so browser use and test stubs
+	 * (`vi.stubGlobal('fetch', ...)`) are unaffected.
+	 */
+	constructor(apiUrl: string = '/api/sparql', fetchImpl?: typeof fetch) {
 		this.apiUrl = apiUrl;
+		this.fetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
 	}
 
 	/** Execute a raw SPARQL SELECT query, returning parsed SPARQL-JSON results. Pass
@@ -787,7 +913,7 @@ export class SparqlConnector {
 
 	/** Execute a raw SPARQL Update (INSERT DATA, DELETE DATA, DELETE/INSERT WHERE, etc.). */
 	async executeUpdate(update: string): Promise<void> {
-		const response = await fetch(`${this.apiUrl}/update`, {
+		const response = await this.fetchImpl(`${this.apiUrl}/update`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ update })
@@ -1164,6 +1290,12 @@ export class SparqlConnector {
 		await this.executeUpdate(`
 			${PREFIXES}
 			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.instances)} } ;
+			${withGraph(graphs.instances)}
+			DELETE { ?stmt ?sp ?so . ?ann ?ap ?ao . }
+			WHERE {
+				?stmt rdf:subject <${iri}> ; ?sp ?so .
+				OPTIONAL { ?ann <${ANNOTATES_PREDICATE_IRI}> ?stmt . ?ann ?ap ?ao }
+			} ;
 			${this.cascadeDeleteWorkspaceMembershipsClause(iri)} ;
 			${this.cascadeUnlinkNotesClause(iri)}
 		`);
@@ -1195,6 +1327,24 @@ export class SparqlConnector {
 			label: b.label?.value ?? extractLocalName(b.i.value),
 			namespaceBaseIri: b.g.value
 		}));
+	}
+
+	/**
+	 * Fragments that remove one fact's reified `rdf:Statement` **and** its `Annotation` nodes
+	 * (query-workbench STORY-184: annotations are removed with the fact, the audit trail is
+	 * intentionally lost). `template` goes into a `DELETE { ... }`, `where` into the matching `WHERE`;
+	 * everything is `OPTIONAL`, so an unreified fact is unaffected. Must run in the fact's own
+	 * instances graph (`WITH <graph>`), where statement and annotation nodes live.
+	 */
+	private factCleanup(subjectIri: string, predicateIri: string, objectTerm: string): { template: string; where: string } {
+		return {
+			template: '?stmt ?sp ?so . ?ann ?ap ?ao .',
+			where: `OPTIONAL {
+					?stmt rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object ${objectTerm} .
+					?stmt ?sp ?so .
+					OPTIONAL { ?ann <${ANNOTATES_PREDICATE_IRI}> ?stmt . ?ann ?ap ?ao }
+				}`
+		};
 	}
 
 	/** `"value"^^xsd:datatype` — the typed-literal shape every write below needs (STORY-110), matching
@@ -1271,17 +1421,30 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
-		const insertClause =
-			value === null
-				? ''
-				: `INSERT { <${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} }`;
+		const cleanup = this.factCleanup(individualIri, attributeIri, '?old');
 
+		// Editing keeps the reified statement (and so its annotations) attached by rewriting its
+		// `rdf:object`; clearing the value removes the statement and its annotations with the fact.
+		// Both use an OPTIONAL statement pattern, so an unreified value is unaffected.
+		if (value === null) {
+			await this.executeUpdate(`
+				${PREFIXES}
+				${withGraph(graphs.instances)}
+				DELETE { <${individualIri}> <${attributeIri}> ?old . ${cleanup.template} }
+				WHERE { OPTIONAL { <${individualIri}> <${attributeIri}> ?old } ${cleanup.where} }
+			`);
+			return;
+		}
+		const literal = this.formatTypedLiteral(datatype, value);
 		await this.executeUpdate(`
 			${PREFIXES}
 			${withGraph(graphs.instances)}
-			DELETE { <${individualIri}> <${attributeIri}> ?old }
-			${insertClause}
-			WHERE { OPTIONAL { <${individualIri}> <${attributeIri}> ?old } }
+			DELETE { <${individualIri}> <${attributeIri}> ?old . ?stmt rdf:object ?old . }
+			INSERT { <${individualIri}> <${attributeIri}> ${literal} . ?stmt rdf:object ${literal} . }
+			WHERE {
+				OPTIONAL { <${individualIri}> <${attributeIri}> ?old }
+				OPTIONAL { ?stmt rdf:subject <${individualIri}> ; rdf:predicate <${attributeIri}> ; rdf:object ?old . }
+			}
 		`);
 	}
 
@@ -1319,9 +1482,15 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
-		await this.executeUpdate(
-			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
-		);
+		// Only this value's statement and annotations go; other values of a multi-valued attribute keep theirs.
+		const literal = this.formatTypedLiteral(datatype, value);
+		const cleanup = this.factCleanup(individualIri, attributeIri, literal);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.instances)}
+			DELETE { <${individualIri}> <${attributeIri}> ${literal} . ${cleanup.template} }
+			WHERE { ${cleanup.where} }
+		`);
 	}
 
 	/**
@@ -3079,9 +3248,13 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(classIri, 'class IRI');
 		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
-		await this.executeUpdate(
-			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${predicateIri}> <${classIri}> .`, graphs.instances)} }`
-		);
+		const cleanup = this.factCleanup(individualIri, predicateIri, `<${classIri}>`);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.instances)}
+			DELETE { <${individualIri}> <${predicateIri}> <${classIri}> . ${cleanup.template} }
+			WHERE { ${cleanup.where} }
+		`);
 	}
 
 	/**
@@ -3148,21 +3321,63 @@ export class SparqlConnector {
 
 	/** Looks up the existing `rdf:Statement` reifying `<subjectIri> <predicateIri> <objectIri>`, if
 	 *  any (Story 008) — scoped to `namespaceBaseIri`'s own `graphs.instances`, matching where
-	 *  `ensureReifiedStatement` writes it. Returns `undefined` when the triple isn't reified yet. */
+	 *  `ensureReifiedStatement` writes it. Returns `undefined` when the triple isn't reified yet.
+	 *  IRI-only wrapper over `fetchStatementIriForFact`. */
 	async fetchStatementIriForTriple(
 		subjectIri: string,
 		predicateIri: string,
 		objectIri: string,
 		namespaceBaseIri: string
 	): Promise<string | undefined> {
+		return this.fetchStatementIriForFact(
+			subjectIri,
+			predicateIri,
+			{ kind: 'iri', iri: objectIri },
+			namespaceBaseIri
+		);
+	}
+
+	/**
+	 * Renders a `FactObject` as a SPARQL term, validating every IRI and language tag and escaping
+	 * the literal's lexical form — the only place a fact's object is interpolated into a query.
+	 */
+	private factObjectTerm(object: FactObject): string {
+		if (object.kind === 'iri') {
+			this.assertSafeSparqlIri(object.iri, 'object IRI');
+			return `<${object.iri}>`;
+		}
+		const lexical = `"${this.escapeString(object.value)}"`;
+		if (object.datatype !== undefined && object.lang !== undefined) {
+			throw new Error('A literal cannot have both a datatype and a language tag');
+		}
+		if (object.datatype !== undefined) {
+			this.assertSafeSparqlIri(object.datatype, 'datatype IRI');
+			return `${lexical}^^<${object.datatype}>`;
+		}
+		if (object.lang !== undefined) {
+			if (!/^[A-Za-z]+(-[A-Za-z0-9]+)*$/.test(object.lang)) {
+				throw new Error('Invalid language tag');
+			}
+			return `${lexical}@${object.lang}`;
+		}
+		return lexical;
+	}
+
+	/** Statement lookup for any fact — IRI or literal object (query-workbench STORY-181). */
+	async fetchStatementIriForFact(
+		subjectIri: string,
+		predicateIri: string,
+		object: FactObject,
+		namespaceBaseIri: string
+	): Promise<string | undefined> {
 		this.assertSafeSparqlIri(subjectIri, 'subject IRI');
 		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
-		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const term = this.factObjectTerm(object);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES} SELECT ?stmt WHERE {
 				GRAPH <${graphs.instances}> {
-					?stmt rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${objectIri}> .
+					?stmt rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object ${term} .
 				}
 			} LIMIT 1
 		`);
@@ -3172,25 +3387,32 @@ export class SparqlConnector {
 	/**
 	 * Ensures `<subjectIri> <predicateIri> <objectIri>` (a relation edge's own ground triple, already
 	 * written by `insertIndividualClassRelation`/`insertAssertion`) is reified, and returns its
-	 * statement IRI (Story 009) — reuses an existing reification (Story 008's
-	 * `fetchStatementIriForTriple`) if one already exists, otherwise mints one (`statementIri`) and
-	 * writes the four reification quads into the subject's own namespace's `graphs.instances`. Purely
-	 * additive metadata: never invents the ground triple itself, which the caller must already have
-	 * asserted.
+	 * statement IRI (Story 009). IRI-only wrapper over `ensureReifiedFact`.
 	 */
 	async ensureReifiedStatement(subjectIri: string, predicateIri: string, objectIri: string): Promise<string> {
+		return this.ensureReifiedFact(subjectIri, predicateIri, { kind: 'iri', iri: objectIri });
+	}
+
+	/**
+	 * Ensures a fact (`<subject> <predicate> <object>` with an IRI or literal object) is reified and
+	 * returns its statement IRI — reusing an existing reification if there is one, otherwise minting
+	 * one (`statementIri`) and writing the four reification quads into the subject's own namespace's
+	 * `graphs.instances`. Purely additive metadata: never invents the ground triple itself, which the
+	 * caller must already have asserted.
+	 */
+	async ensureReifiedFact(subjectIri: string, predicateIri: string, object: FactObject): Promise<string> {
 		this.assertSafeSparqlIri(subjectIri, 'subject IRI');
 		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
-		this.assertSafeSparqlIri(objectIri, 'object IRI');
+		const term = this.factObjectTerm(object);
 		const namespaceBaseIri = await this.findNamespaceOfIndividual(subjectIri);
-		const existing = await this.fetchStatementIriForTriple(subjectIri, predicateIri, objectIri, namespaceBaseIri);
+		const existing = await this.fetchStatementIriForFact(subjectIri, predicateIri, object, namespaceBaseIri);
 		if (existing) return existing;
-		const timestamp = new Date().toISOString().replace(/[^0-9]/g, '');
+		const timestamp = new Date().toISOString().replace(/[^0-9]/g, '') + (statementCounter++).toString(36);
 		const stmt = statementIri(namespaceBaseIri, timestamp);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		await this.executeUpdate(
 			`${PREFIXES} INSERT DATA { ${inGraph(
-				`<${stmt}> a rdf:Statement ; rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object <${objectIri}> .`,
+				`<${stmt}> a rdf:Statement ; rdf:subject <${subjectIri}> ; rdf:predicate <${predicateIri}> ; rdf:object ${term} .`,
 				graphs.instances
 			)} }`
 		);
@@ -3217,7 +3439,8 @@ export class SparqlConnector {
 		`);
 		return results.results.bindings.map((b) => ({
 			iri: b.stmt.value,
-			label: `${b.slabel?.value ?? extractLocalName(b.s.value)} ${b.plabel?.value ?? extractLocalName(b.p.value)} ${b.olabel?.value ?? extractLocalName(b.o.value)}`,
+			// A literal object (a reified attribute value) is its own display text, not an IRI to shorten.
+			label: `${b.slabel?.value ?? extractLocalName(b.s.value)} ${b.plabel?.value ?? extractLocalName(b.p.value)} ${b.olabel?.value ?? (b.o.type === 'literal' ? b.o.value : extractLocalName(b.o.value))}`,
 			kind: 'relationInstance' as const
 		}));
 	}
@@ -3321,9 +3544,13 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(objectIri, 'object IRI');
 		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
-		await this.executeUpdate(
-			`${PREFIXES} DELETE WHERE { ${inGraph(`<${individualIri}> <${predicateIri}> <${objectIri}> .`, graphs.instances)} }`
-		);
+		const cleanup = this.factCleanup(individualIri, predicateIri, `<${objectIri}>`);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.instances)}
+			DELETE { <${individualIri}> <${predicateIri}> <${objectIri}> . ${cleanup.template} }
+			WHERE { ${cleanup.where} }
+		`);
 	}
 
 	/**
@@ -4547,18 +4774,26 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?sq ?label ?text ?description ${fromClause(graphs.schema)} WHERE {
+			SELECT ?sq ?label ?text ?description ?model ?createdBy ?createdAt ?published ${fromClause(graphs.schema)} WHERE {
 				?sq a <${SAVED_QUERY_CLASS_IRI}> .
 				OPTIONAL { ?sq rdfs:label ?label }
 				OPTIONAL { ?sq <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?text }
 				OPTIONAL { ?sq rdfs:comment ?description }
+				OPTIONAL { ?sq <${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?model }
+				OPTIONAL { ?sq <${SAVED_QUERY_CREATED_BY_PREDICATE_IRI}> ?createdBy }
+				OPTIONAL { ?sq <${SAVED_QUERY_CREATED_AT_PREDICATE_IRI}> ?createdAt }
+				OPTIONAL { ?sq <${SAVED_QUERY_PUBLISHED_PREDICATE_IRI}> ?published }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			iri: b.sq.value,
 			label: b.label?.value ?? '',
 			sparqlText: b.text?.value ?? '',
-			description: b.description?.value ?? ''
+			description: b.description?.value ?? '',
+			queryModel: b.model?.value,
+			createdBy: b.createdBy?.value,
+			createdAt: b.createdAt?.value,
+			published: b.published?.value === 'true' || b.published?.value === '1'
 		}));
 	}
 
@@ -4567,7 +4802,12 @@ export class SparqlConnector {
 	 * ; <SAVED_QUERY_TEXT_PREDICATE_IRI> "<sparqlText>" [; rdfs:comment "<description>"]`, always in
 	 * the default namespace's `/schema` graph (Decision 4). Returns the minted IRI.
 	 */
-	async insertSavedQuery(name: string, sparqlText: string, description?: string): Promise<string> {
+	async insertSavedQuery(
+		name: string,
+		sparqlText: string,
+		description?: string,
+		workbench?: SavedQueryWorkbenchFields
+	): Promise<string> {
 		if (!name.trim()) throw new Error('Saved query name must not be empty');
 		if (!sparqlText.trim()) throw new Error('Saved query text must not be empty');
 		await this.ensureSavedQueryClass();
@@ -4588,9 +4828,18 @@ export class SparqlConnector {
 			? ` ; rdfs:comment "${this.escapeString(trimmedDescription)}"`
 			: '';
 
+		// Model, author and the reserved `published=false` flag go into the same INSERT DATA as the
+		// declaration, so a workbench query is never half-written.
+		const workbenchTriples = workbench
+			? ` ; <${SAVED_QUERY_MODEL_PREDICATE_IRI}> "${this.escapeString(workbench.queryModelJson)}"` +
+				` ; <${SAVED_QUERY_CREATED_BY_PREDICATE_IRI}> "${this.escapeString(workbench.createdBy)}"` +
+				` ; <${SAVED_QUERY_CREATED_AT_PREDICATE_IRI}> "${this.escapeString(workbench.createdAt ?? new Date().toISOString())}"^^xsd:dateTime` +
+				` ; <${SAVED_QUERY_PUBLISHED_PREDICATE_IRI}> "false"^^xsd:boolean`
+			: '';
+
 		await this.executeUpdate(
 			`${PREFIXES} INSERT DATA { ${inGraph(
-				`<${iri}> a <${SAVED_QUERY_CLASS_IRI}> ; rdfs:label "${escapedLabel}" ; <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${escapedText}"${descriptionTriple} .`,
+				`<${iri}> a <${SAVED_QUERY_CLASS_IRI}> ; rdfs:label "${escapedLabel}" ; <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${escapedText}"${descriptionTriple}${workbenchTriples} .`,
 				graphs.schema
 			)} }`
 		);
@@ -4628,6 +4877,39 @@ export class SparqlConnector {
 			DELETE { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?old }
 			INSERT { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${escaped}" }
 			WHERE { OPTIONAL { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/**
+	 * Replaces a workbench SavedQuery's model and its compiled `sparqlText` in one Modify operation
+	 * (STORY-178), so the two can never disagree.
+	 */
+	async updateSavedQueryModel(
+		savedQueryIriValue: string,
+		queryModelJson: string,
+		sparqlText: string
+	): Promise<void> {
+		if (!sparqlText.trim()) throw new Error('Saved query text must not be empty');
+		this.assertSafeSparqlIri(savedQueryIriValue, 'saved query IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const model = this.escapeString(queryModelJson);
+		const text = this.escapeString(sparqlText);
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE {
+				<${savedQueryIriValue}> <${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?oldModel .
+				<${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?oldText .
+			}
+			INSERT {
+				<${savedQueryIriValue}> <${SAVED_QUERY_MODEL_PREDICATE_IRI}> "${model}" .
+				<${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> "${text}" .
+			}
+			WHERE {
+				OPTIONAL { <${savedQueryIriValue}> <${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?oldModel }
+				OPTIONAL { <${savedQueryIriValue}> <${SAVED_QUERY_TEXT_PREDICATE_IRI}> ?oldText }
+			}
 		`);
 	}
 
@@ -4796,6 +5078,189 @@ export class SparqlConnector {
 				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> ?oldX }
 				OPTIONAL { <${membershipIri}> <${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> ?oldY }
 			}
+		`);
+	}
+
+	// -- Annotation vocabulary (query-workbench STORY-180) --------------------------------------
+
+	/**
+	 * Idempotently declares `Annotation` and `AnnotationLabel` (default namespace's `/schema` graph, like
+	 * `ensureNoteClass`) and seeds the label members (default namespace's instances graph) that are not
+	 * there yet — one `INSERT DATA` for everything missing, nothing at all on a second call.
+	 */
+	async ensureAnnotationClasses(): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const [hasAnnotation, hasLabel] = await Promise.all([
+			this.classExists(ANNOTATION_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI),
+			this.classExists(ANNOTATION_LABEL_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI)
+		]);
+		const existing = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?m ${fromClause(graphs.instances)} WHERE { ?m a <${ANNOTATION_LABEL_CLASS_IRI}> }
+		`);
+		const existingIris = new Set(existing.results.bindings.map((b) => b.m.value));
+
+		const triples: string[] = [];
+		if (!hasAnnotation) triples.push(inGraph(`<${ANNOTATION_CLASS_IRI}> a owl:Class ; rdfs:label "Annotation" .`, graphs.schema));
+		if (!hasLabel) {
+			triples.push(inGraph(`<${ANNOTATION_LABEL_CLASS_IRI}> a owl:Class ; rdfs:label "AnnotationLabel" .`, graphs.schema));
+		}
+		const members = SEED_ANNOTATION_LABELS.map((name) => ({
+			name,
+			iri: individualIri(ANNOTATION_LABEL_CLASS_IRI, name, graphs.instances)
+		})).filter((m) => !existingIris.has(m.iri));
+		if (members.length > 0) {
+			const body = members
+				.map((m) => `<${m.iri}> a <${ANNOTATION_LABEL_CLASS_IRI}> ; rdfs:label "${this.escapeString(m.name)}" .`)
+				.join(' ');
+			triples.push(inGraph(body, graphs.instances));
+		}
+		if (triples.length === 0) return;
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${triples.join(' ')} }`);
+	}
+
+	// -- Annotation CRUD (query-workbench STORY-182) ---------------------------------------------
+	// `annotatedBy`/`annotatedAt` are plain parameters here: this layer never reads identity. The only
+	// caller allowed to supply them is the server route (STORY-183), which stamps them itself.
+
+	/**
+	 * Adds one annotation (free text or an `AnnotationLabel` member) to a fact: ensures the vocabulary,
+	 * reifies the fact (`ensureReifiedFact`) and inserts a fresh `Annotation` node into the statement's
+	 * own instances graph. Validation (text length, label membership, author/timestamp) happens before
+	 * any update. Returns the annotation's IRI.
+	 */
+	async addAnnotation(
+		fact: FactKey,
+		annotation: AnnotationInput,
+		meta: { annotatedBy: string; annotatedAt: string }
+	): Promise<string> {
+		this.assertSafeSparqlIri(fact.subjectIri, 'subject IRI');
+		this.assertSafeSparqlIri(fact.predicateIri, 'predicate IRI');
+		if (!meta.annotatedBy.trim()) throw new Error('annotatedBy must not be empty');
+		if (Number.isNaN(Date.parse(meta.annotatedAt))) throw new Error('annotatedAt must be an ISO timestamp');
+
+		let valueTerm: string;
+		if (annotation.type === 'text') {
+			const text = annotation.text.trim();
+			if (!text) throw new Error('Annotation text must not be empty');
+			if (text.length > ANNOTATION_MAX_TEXT_LENGTH) {
+				throw new Error(`Annotation text must be at most ${ANNOTATION_MAX_TEXT_LENGTH} characters`);
+			}
+			valueTerm = `"${this.escapeString(text)}"`;
+		} else {
+			this.assertSafeSparqlIri(annotation.labelIri, 'annotation label IRI');
+			valueTerm = `<${annotation.labelIri}>`;
+		}
+		// Validate the fact object's term shape up front too (throws on unsafe IRIs / language tags).
+		this.factObjectTerm(fact.object);
+
+		await this.ensureAnnotationClasses();
+		if (annotation.type === 'label') {
+			const isMember = await this.askQuery(
+				`${PREFIXES} ASK { GRAPH ?g { <${annotation.labelIri}> a <${ANNOTATION_LABEL_CLASS_IRI}> } }`
+			);
+			if (!isMember) throw new Error('The given IRI is not an annotation label');
+		}
+
+		const statement = await this.ensureReifiedFact(fact.subjectIri, fact.predicateIri, fact.object);
+		const namespaceBaseIri = await this.findNamespaceOfIndividual(fact.subjectIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const iri = annotationIri(statement);
+		this.assertSafeSparqlIri(iri, 'annotation IRI');
+		const triples =
+			`<${iri}> a <${ANNOTATION_CLASS_IRI}> ; <${ANNOTATES_PREDICATE_IRI}> <${statement}> ; ` +
+			`<${ANNOTATION_TYPE_PREDICATE_IRI}> "${annotation.type}" ; <${ANNOTATION_VALUE_PREDICATE_IRI}> ${valueTerm} ; ` +
+			`<${ANNOTATED_BY_PREDICATE_IRI}> "${this.escapeString(meta.annotatedBy)}" ; ` +
+			`<${ANNOTATED_AT_PREDICATE_IRI}> "${this.escapeString(meta.annotatedAt)}"^^xsd:dateTime .`;
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(triples, graphs.instances)} }`);
+		return iri;
+	}
+
+	/**
+	 * Annotations for a page of facts in **one** query (a `VALUES (?s ?p ?o)` join), keyed by
+	 * `factKeyString`. Every requested fact is present in the result, with `[]` when unannotated.
+	 */
+	async fetchAnnotationsForFacts(facts: FactKey[]): Promise<Map<string, FetchedAnnotation[]>> {
+		const result = new Map<string, FetchedAnnotation[]>();
+		if (facts.length === 0) return result;
+
+		const rows: string[] = [];
+		for (const f of facts) {
+			this.assertSafeSparqlIri(f.subjectIri, 'subject IRI');
+			this.assertSafeSparqlIri(f.predicateIri, 'predicate IRI');
+			const term = this.factObjectTerm(f.object);
+			result.set(factKeyString(f), []);
+			rows.push(`(<${f.subjectIri}> <${f.predicateIri}> ${term})`);
+		}
+
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?s ?p ?o ?ann ?type ?value ?by ?at ?labelText WHERE {
+				VALUES (?s ?p ?o) { ${rows.join(' ')} }
+				GRAPH ?g {
+					?stmt rdf:subject ?s ; rdf:predicate ?p ; rdf:object ?o .
+					?ann <${ANNOTATES_PREDICATE_IRI}> ?stmt ;
+						<${ANNOTATION_TYPE_PREDICATE_IRI}> ?type ;
+						<${ANNOTATION_VALUE_PREDICATE_IRI}> ?value ;
+						<${ANNOTATED_BY_PREDICATE_IRI}> ?by ;
+						<${ANNOTATED_AT_PREDICATE_IRI}> ?at .
+				}
+				OPTIONAL { GRAPH ?lg { ?value rdfs:label ?labelText } }
+			}
+			ORDER BY ?at ?ann
+		`);
+
+		const seen = new Set<string>();
+		for (const b of results.results.bindings) {
+			const object: FactObject =
+				b.o.type === 'uri'
+					? { kind: 'iri', iri: b.o.value }
+					: { kind: 'literal', value: b.o.value, datatype: b.o.datatype, lang: b.o['xml:lang'] };
+			const key = factKeyString({ subjectIri: b.s.value, predicateIri: b.p.value, object });
+			const list = result.get(key);
+			if (!list) continue;
+			const dedupe = `${key}\u0002${b.ann.value}`;
+			if (seen.has(dedupe)) continue;
+			seen.add(dedupe);
+			const type = b.type.value === 'label' ? 'label' : 'text';
+			list.push({
+				iri: b.ann.value,
+				type,
+				...(type === 'text' ? { text: b.value.value } : { labelIri: b.value.value }),
+				...(type === 'label' && b.labelText ? { labelText: b.labelText.value } : {}),
+				annotatedBy: b.by.value,
+				annotatedAt: b.at.value
+			});
+		}
+		return result;
+	}
+
+	/** The enumerated annotation labels (members of `AnnotationLabel`), for the UI dropdown. */
+	async fetchAnnotationLabels(): Promise<{ iri: string; label: string }[]> {
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?m ?label WHERE {
+				GRAPH ?g { ?m a <${ANNOTATION_LABEL_CLASS_IRI}> . OPTIONAL { ?m rdfs:label ?label } }
+			}
+			ORDER BY ?label
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.m.value,
+			label: b.label?.value ?? extractLocalName(b.m.value)
+		}));
+	}
+
+	/**
+	 * Removes exactly one `Annotation` node's triples. The reified statement and ground triple are
+	 * untouched (the statement may carry relation-assertions) and nothing cascades; a non-annotation
+	 * IRI matches nothing, so this can never delete anything else.
+	 */
+	async deleteAnnotation(annotationIriValue: string): Promise<void> {
+		this.assertSafeSparqlIri(annotationIriValue, 'annotation IRI');
+		await this.executeUpdate(`
+			${PREFIXES}
+			DELETE { GRAPH ?g { <${annotationIriValue}> ?p ?o } }
+			WHERE { GRAPH ?g { <${annotationIriValue}> a <${ANNOTATION_CLASS_IRI}> ; ?p ?o } }
 		`);
 	}
 
@@ -5309,6 +5774,29 @@ export class SparqlConnector {
 			.map((b) => b.class.value);
 	}
 
+	/** `sh:in` value lists declared on a class's `sh:property` shapes (query-workbench STORY-174). */
+	async fetchInConstraints(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<FetchedInConstraint[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?class ?path ?value ${fromClause(graphs.shapes)} WHERE {
+				?shape sh:targetClass ?class ; sh:property ?ps .
+				?ps sh:path ?path ; sh:in/rdf:rest*/rdf:first ?value .
+			}
+		`);
+		const byKey = new Map<string, FetchedInConstraint>();
+		for (const b of results.results.bindings) {
+			const key = `${b.class.value}\u0000${b.path.value}`;
+			let c = byKey.get(key);
+			if (!c) {
+				c = { classIri: b.class.value, propertyIri: b.path.value, values: [] };
+				byKey.set(key, c);
+			}
+			c.values.push({ value: b.value.value, isIri: b.value.type === 'uri' });
+		}
+		return [...byKey.values()];
+	}
+
 	async fetchAllSubClassOf(
 		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
 	): Promise<FetchedSubClassOf[]> {
@@ -5371,7 +5859,7 @@ export class SparqlConnector {
 					OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
 				}
 				GRAPH ?classGraph { ?type a owl:Class }
-				FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+				FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
 				${VOCAB_FILTER('?i')}
 			}
 		`);
@@ -5403,7 +5891,8 @@ export class SparqlConnector {
 			genericObjectProperties,
 			individualClassRelations,
 			individualIndividualRelations,
-			labelRequiredClassIris
+			labelRequiredClassIris,
+			shapeInConstraints
 		] = await Promise.all([
 			this.fetchAllClasses(namespaceBaseIri),
 			this.fetchAllDatatypeProperties(namespaceBaseIri),
@@ -5414,7 +5903,8 @@ export class SparqlConnector {
 			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
 			this.fetchAllIndividualClassRelations(namespaceBaseIri),
 			this.fetchAllIndividualIndividualRelations(namespaceBaseIri),
-			this.fetchLabelRequiredClasses(namespaceBaseIri)
+			this.fetchLabelRequiredClasses(namespaceBaseIri),
+			this.fetchInConstraints(namespaceBaseIri)
 		]);
 
 		const constraintByPath = new Map(constraints.map((c) => [c.path, c]));
@@ -5425,6 +5915,8 @@ export class SparqlConnector {
 					...p,
 					required: (constraint?.minCount ?? 0) >= 1,
 					repeatable: constraint?.maxCount === undefined,
+					minCount: constraint?.minCount,
+					maxCount: constraint?.maxCount,
 					requiredForSubclasses: constraint?.requiredForSubclasses ?? false
 				};
 			});
@@ -5440,7 +5932,8 @@ export class SparqlConnector {
 			individuals,
 			individualClassRelations,
 			individualIndividualRelations,
-			labelRequiredClassIris
+			labelRequiredClassIris,
+			shapeInConstraints
 		};
 	}
 
@@ -5461,7 +5954,8 @@ export class SparqlConnector {
 			individuals: schemas.flatMap((s) => s.individuals),
 			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
 			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
-			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? [])
+			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
+			shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? [])
 		};
 	}
 
@@ -5494,6 +5988,11 @@ export class SparqlConnector {
 			params;
 		const limit = Math.max(1, Math.floor(params.limit ?? 50));
 		const offset = Math.max(0, Math.floor(params.offset ?? 0));
+		const matchAll = params.matchAllStringProperties === true;
+
+		if (matchAll && (query?.length ?? 0) < MIN_ALL_STRINGS_SEARCH_LENGTH) {
+			return { results: [], hasMore: false };
+		}
 
 		if (classIriFilter) this.assertSafeSparqlIri(classIriFilter, 'class IRI');
 		classIrisFilter?.forEach((c) => this.assertSafeSparqlIri(c, 'class IRI'));
@@ -5512,26 +6011,38 @@ export class SparqlConnector {
 		if (syncStatus !== undefined) {
 			filters.push(`FILTER(BOUND(?syncStatus) && STR(?syncStatus) = "${this.escapeString(syncStatus)}")`);
 		}
-		if (query) {
+		if (query && !matchAll) {
 			filters.push(
 				`FILTER(BOUND(?label) && CONTAINS(LCASE(STR(?label)), LCASE("${this.escapeString(query)}")))`
 			);
 		}
+		if (matchAll) filters.push('FILTER(?type != rdf:Statement)');
+
+		const matchPattern = matchAll
+			? `?i ?mp ?mv .
+					FILTER(isLiteral(?mv) && CONTAINS(LCASE(STR(?mv)), LCASE("${this.escapeString(query!)}")))`
+			: '';
+		const selectVars = matchAll
+			? `?i ?type ?label ?ig ?syncSource ?syncStatus (SAMPLE(?mp) AS ?matchedProperty) (SAMPLE(?mv) AS ?matchedValue)`
+			: '?i ?type ?label ?ig ?syncSource ?syncStatus';
+		const groupBy = matchAll ? 'GROUP BY ?i ?type ?label ?ig ?syncSource ?syncStatus' : '';
 
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?i ?type ?label ?ig ?syncSource ?syncStatus WHERE {
+			SELECT ${selectVars} WHERE {
 				GRAPH ?ig {
 					?i a ?type .
+					${matchPattern}
 					OPTIONAL { ?i rdfs:label ?label }
 					OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
 					OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
 				}
 				GRAPH ?classGraph { ?type a owl:Class }
-				FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+				FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
 				${VOCAB_FILTER('?i')}
 				${filters.join('\n\t\t\t\t')}
 			}
+			${groupBy}
 			ORDER BY ?label ?i
 			LIMIT ${limit + 1}
 			OFFSET ${offset}
@@ -5543,11 +6054,59 @@ export class SparqlConnector {
 			label: b.label?.value ?? extractLocalName(b.i.value),
 			namespaceBaseIri: b.ig.value,
 			syncSource: b.syncSource?.value ?? null,
-			syncStatus: b.syncStatus?.value ?? null
+			syncStatus: b.syncStatus?.value ?? null,
+			...(matchAll && b.matchedProperty && b.matchedValue
+				? { matchedPropertyIri: b.matchedProperty.value, matchedValue: b.matchedValue.value }
+				: {})
 		}));
 
 		const hasMore = rows.length > limit;
 		return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
+	}
+
+	/**
+	 * Facet counts for the all-strings search (query-workbench STORY-186): how many distinct matching
+	 * individuals fall under each class and each namespace, over the *entire* match set — never
+	 * limited by a result page. Uses the same graph structure, exclusions and term escaping as
+	 * `searchIndividuals({ matchAllStringProperties: true })`. Two small `COUNT ... GROUP BY` queries
+	 * (rather than one grouped by both) so a multi-typed individual isn't double-counted per namespace.
+	 */
+	async searchIndividualFacetCounts(params: { query: string }): Promise<IndividualFacetCounts> {
+		const { query } = params;
+		if ((query?.length ?? 0) < MIN_ALL_STRINGS_SEARCH_LENGTH) return { byClass: [], byNamespace: [] };
+		const term = this.escapeString(query);
+
+		const build = (groupVar: '?type' | '?ig') => `
+			${PREFIXES}
+			SELECT ${groupVar} (COUNT(DISTINCT ?i) AS ?count) WHERE {
+				GRAPH ?ig {
+					?i a ?type .
+					?i ?mp ?mv .
+					FILTER(isLiteral(?mv) && CONTAINS(LCASE(STR(?mv)), LCASE("${term}")))
+				}
+				GRAPH ?classGraph { ?type a owl:Class }
+				FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
+				FILTER(?type != rdf:Statement)
+				${VOCAB_FILTER('?i')}
+			}
+			GROUP BY ${groupVar}
+			ORDER BY DESC(?count)
+		`;
+
+		const [byClass, byNamespace] = await Promise.all([
+			this.selectQuery(build('?type')),
+			this.selectQuery(build('?ig'))
+		]);
+		return {
+			byClass: byClass.results.bindings.map((b) => ({
+				classIri: b.type.value,
+				count: Number(b.count.value)
+			})),
+			byNamespace: byNamespace.results.bindings.map((b) => ({
+				namespaceBaseIri: b.ig.value,
+				count: Number(b.count.value)
+			}))
+		};
 	}
 
 	/**
@@ -5724,7 +6283,7 @@ export class SparqlConnector {
 						OPTIONAL { ?i rdfs:label ?label }
 					}
 					GRAPH ?classGraph { ?type a owl:Class }
-					FILTER(?type NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+					FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
 				}
 			`),
 			this.selectQuery(`
@@ -5746,8 +6305,8 @@ export class SparqlConnector {
 					GRAPH ?sourceClassGraph { ?sourceType a owl:Class }
 					GRAPH ?targetTypeGraph { ?target a ?targetType }
 					GRAPH ?targetClassGraph { ?targetType a owl:Class }
-					FILTER(?sourceType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
-					FILTER(?targetType NOT IN (<${NOTE_CLASS_IRI}>, <${WORKSPACE_CLASS_IRI}>))
+					FILTER(?sourceType NOT IN (${NON_INDIVIDUAL_TYPES}))
+					FILTER(?targetType NOT IN (${NON_INDIVIDUAL_TYPES}))
 					${VOCAB_FILTER('?source')}
 					${VOCAB_FILTER('?target')}
 					OPTIONAL { ?source rdfs:label ?sourceLabel }
@@ -6786,6 +7345,8 @@ export class SparqlConnector {
 			namespaceBaseIri,
 			required: b.minCount !== undefined && parseInt(b.minCount.value, 10) >= 1,
 			repeatable: b.maxCount === undefined,
+			minCount: b.minCount !== undefined ? parseInt(b.minCount.value, 10) : undefined,
+			maxCount: b.maxCount !== undefined ? parseInt(b.maxCount.value, 10) : undefined,
 			relationKind: 'generic' as const
 		}));
 	}
@@ -6846,7 +7407,7 @@ export class SparqlConnector {
 	}
 
 	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
-		const response = await fetch(this.apiUrl, {
+		const response = await this.fetchImpl(this.apiUrl, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
@@ -6873,11 +7434,7 @@ export class SparqlConnector {
 	 * for the other characters are never re-escaped.
 	 */
 	private escapeString(str: string): string {
-		return str
-			.replace(/\\/g, '\\\\')
-			.replace(/"/g, '\\"')
-			.replace(/\n/g, '\\n')
-			.replace(/\r/g, '\\r');
+		return escapeSparqlString(str);
 	}
 
 	/**
@@ -6886,9 +7443,7 @@ export class SparqlConnector {
 	 * after the fact (see `semantic-crm`'s `sparql-connector.ts`, which uses the same check).
 	 */
 	private assertSafeSparqlIri(value: string, fieldName: string = 'IRI'): void {
-		if (!isSafeSparqlIri(value)) {
-			throw new Error(`Invalid ${fieldName}: contains characters not allowed in a SPARQL IRI`);
-		}
+		assertSafeSparqlIri(value, fieldName);
 	}
 }
 

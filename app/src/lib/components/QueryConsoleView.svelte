@@ -7,11 +7,22 @@
 	} from '$lib/services/sparql-connector';
 	import { detectQueryForm } from '$lib/utils/sparql-query-form';
 	import ResultsTable from './ResultsTable.svelte';
+	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 
 	/** Kept as `$state` (not local to a run function) so the saved-queries panel below can read
 	 *  from and write into it — "Run" loads a saved query's text then executes, "Edit" loads it
 	 *  without running. */
 	let queryText = $state('');
+
+	// Query Workbench hand-off (STORY-193): "Open in console" supplies SPARQL once; consume and clear
+	// it so a later plain open of the console keeps whatever the user last typed.
+	$effect(() => {
+		const initial = workbenchActions.consoleInitialQuery;
+		if (initial !== null) {
+			queryText = initial.text;
+			workbenchActions.consoleInitialQuery = null;
+		}
+	});
 
 	let running = $state(false);
 	let queryError = $state<string | null>(null);
@@ -482,7 +493,7 @@
 		font-size: 0.8rem;
 		color: var(--color-accent);
 		background: transparent;
-		border: none;
+		border: 1px solid var(--color-accent);
 		border-radius: 4px;
 	}
 

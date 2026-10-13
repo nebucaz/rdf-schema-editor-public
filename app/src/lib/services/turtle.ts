@@ -36,7 +36,8 @@ export const RDFS = {
 export const OWL = {
 	Class: `${OWL_NS}Class`,
 	DatatypeProperty: `${OWL_NS}DatatypeProperty`,
-	ObjectProperty: `${OWL_NS}ObjectProperty`
+	ObjectProperty: `${OWL_NS}ObjectProperty`,
+	AnnotationProperty: `${OWL_NS}AnnotationProperty`
 };
 export const SH = {
 	NodeShape: `${SH_NS}NodeShape`,

@@ -1,0 +1,192 @@
+# =============================================================================
+# SOC sample — schema (TBox): soc-schema.ttl
+#
+# Namespace prefix: soc
+# Namespace base IRI: http://ld.pageagent.com/example/soc
+#
+# Import with Import Turtle... while the `soc` namespace is the active namespace
+# (create it first in Namespaces: prefix `soc`, base IRI as above). Terms live in <base>/schema#.
+# =============================================================================
+
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix soc:  <http://ld.pageagent.com/example/soc/schema#> .
+
+# -- Classes ------------------------------------------------------------------
+
+soc:Server
+    a owl:Class ;
+    rdfs:label "Server" ;
+    rdfs:comment "A monitored host that produces log files." .
+
+soc:LogFile
+    a owl:Class ;
+    rdfs:label "Log file" ;
+    rdfs:comment "A log file on a server that records authentication events." .
+
+soc:AuthenticationEvent
+    a owl:Class ;
+    rdfs:label "Authentication event" ;
+    rdfs:comment "One login attempt, successful or not, recorded in a log file." .
+
+soc:DetectionRule
+    a owl:Class ;
+    rdfs:label "Detection rule" ;
+    rdfs:comment "A rule that raises alerts, mapped to a MITRE ATT&CK technique." .
+
+soc:Alert
+    a owl:Class ;
+    rdfs:label "Alert" ;
+    rdfs:comment "A finding raised by a detection rule from one or more authentication events." .
+
+soc:Severity
+    a owl:Class ;
+    rdfs:label "Severity" ;
+    rdfs:comment "Enumeration of alert severities (Low, Medium, High, Critical)." .
+
+soc:Outcome
+    a owl:Class ;
+    rdfs:label "Outcome" ;
+    rdfs:comment "Enumeration of authentication outcomes (Success, Failure)." .
+
+soc:AlertStatus
+    a owl:Class ;
+    rdfs:label "Alert status" ;
+    rdfs:comment "Enumeration of alert lifecycle states (Open, Investigating, Closed)." .
+
+soc:Criticality
+    a owl:Class ;
+    rdfs:label "Criticality" ;
+    rdfs:comment "Enumeration of server business criticality (Low, Medium, High)." .
+
+# -- Datatype properties --------------------------------------------------------
+
+soc:hostname a owl:DatatypeProperty ;
+    rdfs:label "hostname" ;
+    rdfs:comment "Fully qualified host name of the server." ;
+    rdfs:domain soc:Server ; rdfs:range xsd:string .
+
+soc:ipAddress a owl:DatatypeProperty ;
+    rdfs:label "ipAddress" ;
+    rdfs:comment "IPv4 address of the server." ;
+    rdfs:domain soc:Server ; rdfs:range xsd:string .
+
+soc:operatingSystem a owl:DatatypeProperty ;
+    rdfs:label "operatingSystem" ;
+    rdfs:comment "Operating system of the server." ;
+    rdfs:domain soc:Server ; rdfs:range xsd:string .
+
+soc:role a owl:DatatypeProperty ;
+    rdfs:label "role" ;
+    rdfs:comment "Function of the server, e.g. web, database, domain controller." ;
+    rdfs:domain soc:Server ; rdfs:range xsd:string .
+
+soc:path a owl:DatatypeProperty ;
+    rdfs:label "path" ;
+    rdfs:comment "File system path of the log file." ;
+    rdfs:domain soc:LogFile ; rdfs:range xsd:string .
+
+soc:format a owl:DatatypeProperty ;
+    rdfs:label "format" ;
+    rdfs:comment "Log format, e.g. sshd or Windows Security." ;
+    rdfs:domain soc:LogFile ; rdfs:range xsd:string .
+
+soc:timestamp a owl:DatatypeProperty ;
+    rdfs:label "timestamp" ;
+    rdfs:comment "When the authentication attempt happened." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range xsd:dateTime .
+
+soc:user a owl:DatatypeProperty ;
+    rdfs:label "user" ;
+    rdfs:comment "User name the attempt was made for." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range xsd:string .
+
+soc:sourceIp a owl:DatatypeProperty ;
+    rdfs:label "sourceIp" ;
+    rdfs:comment "Address the attempt came from." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range xsd:string .
+
+soc:method a owl:DatatypeProperty ;
+    rdfs:label "method" ;
+    rdfs:comment "Authentication method, e.g. password, publickey, rdp." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range xsd:string .
+
+soc:message a owl:DatatypeProperty ;
+    rdfs:label "message" ;
+    rdfs:comment "The log line as written." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range xsd:string .
+
+soc:ruleName a owl:DatatypeProperty ;
+    rdfs:label "ruleName" ;
+    rdfs:comment "Name of the detection rule." ;
+    rdfs:domain soc:DetectionRule ; rdfs:range xsd:string .
+
+soc:technique a owl:DatatypeProperty ;
+    rdfs:label "technique" ;
+    rdfs:comment "MITRE ATT&CK technique identifier, e.g. T1110.001." ;
+    rdfs:domain soc:DetectionRule ; rdfs:range xsd:string .
+
+soc:description a owl:DatatypeProperty ;
+    rdfs:label "description" ;
+    rdfs:comment "What the rule detects." ;
+    rdfs:domain soc:DetectionRule ; rdfs:range xsd:string .
+
+soc:alertId a owl:DatatypeProperty ;
+    rdfs:label "alertId" ;
+    rdfs:comment "Identifier of the alert, e.g. A-1001." ;
+    rdfs:domain soc:Alert ; rdfs:range xsd:string .
+
+soc:title a owl:DatatypeProperty ;
+    rdfs:label "title" ;
+    rdfs:comment "Short headline of the alert." ;
+    rdfs:domain soc:Alert ; rdfs:range xsd:string .
+
+soc:raisedAt a owl:DatatypeProperty ;
+    rdfs:label "raisedAt" ;
+    rdfs:comment "When the alert was raised." ;
+    rdfs:domain soc:Alert ; rdfs:range xsd:dateTime .
+
+# -- Object properties ------------------------------------------------------------
+# All relationships point forward along Alert -> AuthenticationEvent -> LogFile -> Server.
+# There is deliberately no Alert -> Server shortcut: the graph derives it.
+
+soc:criticality a owl:ObjectProperty ;
+    rdfs:label "criticality" ;
+    rdfs:comment "Business criticality of the server." ;
+    rdfs:domain soc:Server ; rdfs:range soc:Criticality .
+
+soc:hostedOn a owl:ObjectProperty ;
+    rdfs:label "hostedOn" ;
+    rdfs:comment "The server the log file lives on." ;
+    rdfs:domain soc:LogFile ; rdfs:range soc:Server .
+
+soc:recordedIn a owl:ObjectProperty ;
+    rdfs:label "recordedIn" ;
+    rdfs:comment "The log file the event was written to." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range soc:LogFile .
+
+soc:outcome a owl:ObjectProperty ;
+    rdfs:label "outcome" ;
+    rdfs:comment "Whether the attempt succeeded or failed." ;
+    rdfs:domain soc:AuthenticationEvent ; rdfs:range soc:Outcome .
+
+soc:severity a owl:ObjectProperty ;
+    rdfs:label "severity" ;
+    rdfs:comment "Severity of the alert." ;
+    rdfs:domain soc:Alert ; rdfs:range soc:Severity .
+
+soc:status a owl:ObjectProperty ;
+    rdfs:label "status" ;
+    rdfs:comment "Lifecycle state of the alert." ;
+    rdfs:domain soc:Alert ; rdfs:range soc:AlertStatus .
+
+soc:detectedBy a owl:ObjectProperty ;
+    rdfs:label "detectedBy" ;
+    rdfs:comment "The detection rule that raised the alert." ;
+    rdfs:domain soc:Alert ; rdfs:range soc:DetectionRule .
+
+soc:triggeredBy a owl:ObjectProperty ;
+    rdfs:label "triggeredBy" ;
+    rdfs:comment "An authentication event that triggered the alert (repeatable)." ;
+    rdfs:domain soc:Alert ; rdfs:range soc:AuthenticationEvent .

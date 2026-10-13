@@ -256,6 +256,52 @@ export const SAVED_QUERY_CLASS_IRI = `${SCHEMA_NAMESPACE}SavedQuery`;
  *  `escapeString()` convention every other literal-bearing insert/update already uses). */
 export const SAVED_QUERY_TEXT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sparqlText`;
 
+/** Query Workbench (STORY-178): the serialised `QueryModel` JSON. Absent = legacy raw-SPARQL query. */
+export const SAVED_QUERY_MODEL_PREDICATE_IRI = `${SCHEMA_NAMESPACE}queryModelJson`;
+/** The creating user's JWT `sub` (STORY-179). */
+export const SAVED_QUERY_CREATED_BY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}createdBy`;
+/** `xsd:dateTime` of creation. */
+export const SAVED_QUERY_CREATED_AT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}createdAt`;
+/** Reserved for the BI follow-up (research Q15): written as `false`, never set to `true` nor read by the UI. */
+export const SAVED_QUERY_PUBLISHED_PREDICATE_IRI = `${SCHEMA_NAMESPACE}published`;
+
+/**
+ * Annotation vocabulary (query-workbench STORY-180, research Q4): a fact's `rdf:Statement`
+ * reification carries one `Annotation` node per annotation (free text and/or an enumerated label),
+ * stored in the statement's own instances graph. `AnnotationLabel` is an enumerated class (the app's
+ * convention: members are ordinary individuals of it), so labels can be added later without code.
+ */
+export const ANNOTATION_CLASS_IRI = `${SCHEMA_NAMESPACE}Annotation`;
+export const ANNOTATION_LABEL_CLASS_IRI = `${SCHEMA_NAMESPACE}AnnotationLabel`;
+/** Annotation → the reified `rdf:Statement` it is about. */
+export const ANNOTATES_PREDICATE_IRI = `${SCHEMA_NAMESPACE}annotates`;
+/** `"text"` | `"label"`. */
+export const ANNOTATION_TYPE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}annotationType`;
+/** Literal for a text annotation; the label member's IRI for a label annotation. */
+export const ANNOTATION_VALUE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}annotationValue`;
+/** The author's JWT `sub`, stamped server-side (STORY-183). */
+export const ANNOTATED_BY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}annotatedBy`;
+/** `xsd:dateTime`. */
+export const ANNOTATED_AT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}annotatedAt`;
+
+/** Label members seeded (idempotently) by `ensureAnnotationClasses`. */
+export const SEED_ANNOTATION_LABELS = ['Verified', 'Investigate', 'Approved', 'Deprecated'] as const;
+
+let annotationCounter = 0;
+
+/**
+ * Fresh `Annotation` node IRI for one annotation on `statementIriValue`'s fact — intentionally
+ * **not** deterministic (compare `statementIri`): a fact may carry several annotations. Minted in
+ * the statement's own namespace (everything before its `#`), so it lands in the same instances
+ * graph. Uniqueness comes from a millisecond timestamp, a process-wide counter and a random suffix.
+ */
+export function annotationIri(statementIriValue: string): string {
+	const hash = statementIriValue.indexOf('#');
+	const base = hash === -1 ? statementIriValue : statementIriValue.slice(0, hash);
+	const token = `${Date.now().toString(36)}${(annotationCounter++).toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+	return `${base}#Annotation${token}`;
+}
+
 /**
  * Note vocabulary (STORY-083, `spec/sparql/story-083-workspace-notes.md`): a free-text sticky note
  * on a Workspace's canvas, optionally pointing at a specific class/individual. Unlike

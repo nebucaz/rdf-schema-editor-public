@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { existsSync, readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { render } from 'svelte/server';
 import SvelteMarkdown from '@humanspeak/svelte-markdown';
 import { docSections } from './manifest';
@@ -102,6 +104,56 @@ describe('STORY-137: panels, management views & Identities sections', () => {
 			expect(section?.category).toBe('Panels & Views');
 			expect(section?.content.trim().length).toBeGreaterThan(0);
 		}
+	});
+});
+
+describe('STORY-202: Query Workbench section', () => {
+	it('registers a non-empty Query Workbench section under Panels & Views', () => {
+		const section = docSections.find((s) => s.id === 'query-workbench');
+		expect(section).toBeDefined();
+		expect(section?.category).toBe('Panels & Views');
+		for (const topic of ['Annotations', 'Reports', 'CSV', 'Power BI', 'Result link']) expect(section?.content).toContain(topic);
+	});
+});
+
+describe('STORY-210: SOC demo section', () => {
+	const section = docSections.find((s) => s.id === 'soc-demo');
+	const repoFile = (rel: string) => fileURLToPath(new URL(`../../../../../${rel}`, import.meta.url));
+
+	it('registers a non-empty SOC demo section under Panels & Views', () => {
+		expect(section).toBeDefined();
+		expect(section?.category).toBe('Panels & Views');
+		expect(section?.content.trim().length).toBeGreaterThan(0);
+	});
+
+	it('states the import order and points at the runbook', () => {
+		const text = section?.content ?? '';
+		const schema = text.indexOf('soc-schema.ttl');
+		const shapes = text.indexOf('soc-shapes.ttl');
+		const data = text.indexOf('soc-data.ttl');
+		expect(schema).toBeGreaterThan(-1);
+		expect(shapes).toBeGreaterThan(schema);
+		expect(data).toBeGreaterThan(shapes);
+		expect(text).toContain('examples/soc/RUNBOOK.md');
+		expect(existsSync(repoFile('examples/soc/RUNBOOK.md'))).toBe(true);
+	});
+
+	it('describes SPL input and lists only the remaining limits (STORY-223)', () => {
+		const text = section?.content ?? '';
+		expect(text).toContain('SPL');
+		expect(text).not.toContain('takes free text, not SPL');
+		expect(text).toMatch(/inverse traversal/);
+		expect(text).toMatch(/OR groups/);
+		expect(text).toMatch(/relative time/);
+		const wb = docSections.find((s) => s.id === 'query-workbench')?.content ?? '';
+		expect(wb).not.toContain('The SPL view is read-only.\n');
+		expect(wb).toContain('SPL** mode');
+	});
+
+	it('has an examples README listing the soc sample', () => {
+		const readme = repoFile('examples/README.md');
+		expect(existsSync(readme)).toBe(true);
+		expect(readFileSync(readme, 'utf8')).toContain('soc/');
 	});
 });
 

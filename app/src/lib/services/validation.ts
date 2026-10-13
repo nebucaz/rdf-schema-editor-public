@@ -185,6 +185,7 @@ export function checkStructural(
 		OWL.Class,
 		OWL.DatatypeProperty,
 		OWL.ObjectProperty,
+		OWL.AnnotationProperty,
 		SH.NodeShape,
 		RDF.Statement
 	]);

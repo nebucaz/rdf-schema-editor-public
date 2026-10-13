@@ -16,6 +16,8 @@
 	import WorkspaceManagementView from '$lib/components/WorkspaceManagementView.svelte';
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
 	import ImportResultView from '$lib/components/ImportResultView.svelte';
+	import ImportTurtleDialog from '$lib/components/ImportTurtleDialog.svelte';
+	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
 	import SettingsView from '$lib/components/SettingsView.svelte';
@@ -32,6 +34,7 @@
 	import { validationReportFilterStore } from '$lib/stores/validation-report-filter-store.svelte';
 	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
 	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import { resolveRouteView } from '$lib/utils/route-views';
 	import { downloadFile } from '$lib/utils/download';
 	import { filterListedNamespaces } from '$lib/utils/visibility';
 	import WorkspaceImportResultView from '$lib/components/WorkspaceImportResultView.svelte';
@@ -47,7 +50,7 @@
 	let showDocumentation = $state(false);
 	let exportingQuads = $state(false);
 
-	let importFileInput = $state<HTMLInputElement | undefined>();
+	let showImportDialog = $state(false);
 	let importing = $state(false);
 	let importSummary = $state<ImportSummary | null>(null);
 	let importError = $state<string | null>(null);
@@ -61,15 +64,20 @@
 	 *  namespace/workspace selection, or canvas-visibility toggles apply there, and several
 	 *  hamburger-menu actions (reload, triples, SVG export, workspace import) operate on
 	 *  canvas-only state that isn't even mounted on this route. */
-	const isIdentitiesView = $derived(page.url.pathname.startsWith('/identities'));
+	const routeView = $derived(resolveRouteView(page.url.pathname));
+	const isIdentitiesView = $derived(routeView.isIdentitiesView);
 	/** STORY-133: same plain-link pattern as `isIdentitiesView` — the Validation Report is its own
 	 *  route, not a modal, so its hamburger-menu entry needs the same "already here" disabled state. */
-	const isValidationView = $derived(page.url.pathname.startsWith('/validation'));
-	/** True only on the canvas ("/") route — neither Identities nor Validation. Distinct from
-	 *  `!isIdentitiesView` (which is also true on `/validation`): canvas-only menu items (View
-	 *  Triples, Export SVG, Import Workspace) and the "Schema Editor" link's own "already here"
-	 *  disabled state must key off actually being on the canvas, not just off of Identities. */
-	const isCanvasView = $derived(!isIdentitiesView && !isValidationView);
+	const isValidationView = $derived(routeView.isValidationView);
+	/** STORY-185: the Query Workbench is its own route too, and — like Identities — has no canvas
+	 *  state mounted, so the same canvas-only menu items are hidden there. */
+	const isWorkbenchView = $derived(routeView.isWorkbenchView);
+	/** True only on the canvas ("/") route — none of Identities, Validation or Workbench. Canvas-only
+	 *  menu items (View Triples, Export SVG, Import Workspace) and the "Schema Editor" link's own
+	 *  "already here" disabled state must key off actually being on the canvas. */
+	const isCanvasView = $derived(routeView.isCanvasView);
+	/** Menu items that operate on canvas state and are hidden on both non-canvas "area" routes. */
+	const hideCanvasOnlyItems = $derived(isIdentitiesView || isWorkbenchView || routeView.isReportView);
 
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
@@ -99,24 +107,21 @@
 		});
 	}
 
-	/** STORY-045: reads the picked `.ttl` file client-side and merges it into the active namespace
-	 *  via STORY-044's `importTurtle`, never deleting anything. On success, reuses the existing
-	 *  "Reload from GraphDB" wiring (`workbenchActions.reload()`) and STORY-037's
-	 *  `namespaceStore.refresh()` so the merged content — and any namespace the import newly touched
-	 *  — show up immediately. Parse/validation failures surface as a specific error instead of being
-	 *  swallowed; STORY-044 guarantees zero writes happened in that case. */
-	async function handleImportFileSelected(event: Event) {
-		const input = event.currentTarget as HTMLInputElement;
-		const file = input.files?.[0];
-		input.value = ''; // allow re-selecting the same file later (no change-event otherwise)
-		if (!file) return;
-
+	/** STORY-045: reads the chosen `.ttl` file client-side and merges it into `namespaceBaseIri` — the
+	 *  target the Import dialog made the user pick explicitly — via STORY-044's `importTurtle`, never
+	 *  deleting anything. On success, reuses the existing "Reload from GraphDB" wiring
+	 *  (`workbenchActions.reload()`) and STORY-037's `namespaceStore.refresh()` so the merged content —
+	 *  and any namespace the import newly touched — show up immediately. Parse/validation failures
+	 *  surface as a specific error instead of being swallowed; STORY-044 guarantees zero writes
+	 *  happened in that case. */
+	async function handleImportFile(file: File, namespaceBaseIri: string) {
+		showImportDialog = false;
 		importing = true;
 		importSummary = null;
 		importError = null;
 		try {
 			const text = await readFileAsText(file);
-			const summary = await sparqlConnector.importTurtle(text, workbenchActions.activeNamespace ?? undefined);
+			const summary = await sparqlConnector.importTurtle(text, namespaceBaseIri);
 			importSummary = summary;
 			workbenchActions.reload();
 			void namespaceStore.refresh();
@@ -247,6 +252,16 @@
 						Schema Editor
 					</a>
 					<a
+						href="/workbench"
+						class="menu-item menu-link"
+						aria-disabled={isWorkbenchView}
+						onclick={(e) => {
+							if (isWorkbenchView) e.preventDefault();
+						}}
+					>
+						Query Workbench
+					</a>
+					<a
 						href="/validation"
 						class="menu-item menu-link"
 						aria-disabled={isValidationView}
@@ -266,7 +281,7 @@
 							>
 								Namespaces
 							</button>
-							{#if !isIdentitiesView}
+							{#if !hideCanvasOnlyItems}
 								<button
 									type="button"
 									class="menu-item"
@@ -297,7 +312,7 @@
 							<button
 								type="button"
 								class="menu-item"
-								onclick={() => importFileInput?.click()}
+								onclick={() => (showImportDialog = true)}
 								disabled={importing}
 							>
 								{importing ? 'Importing…' : 'Import Turtle…'}
@@ -323,11 +338,19 @@
 								>
 									{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
 								</button>
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => workbenchActions.exportErd()}
+									title="Export the workspace as a strict-SVG ERD in Crow's Foot, Chen or UML notation — opens cleanly in Inkscape, Illustrator and Figma."
+								>
+									Export ERD…
+								</button>
 							{/if}
 						{/snippet}
 					</HamburgerSubmenuGroup>
 					<hr class="menu-divider" />
-					{#if !isIdentitiesView}
+					{#if !hideCanvasOnlyItems}
 						<button
 							type="button"
 							class="menu-item"
@@ -346,7 +369,7 @@
 					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
 						Queries
 					</button>
-					{#if !isIdentitiesView}
+					{#if !hideCanvasOnlyItems}
 						<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
 							Missing Concepts
 						</button>
@@ -364,13 +387,6 @@
 					</button>
 				{/snippet}
 			</HamburgerMenu>
-			<input
-				bind:this={importFileInput}
-				type="file"
-				accept=".ttl"
-				class="import-file-input"
-				onchange={(e) => void handleImportFileSelected(e)}
-			/>
 			<input
 				bind:this={importWorkspaceFileInput}
 				type="file"
@@ -440,14 +456,27 @@
 </Modal>
 
 <Modal
-	isOpen={showQueryConsole}
+	isOpen={showQueryConsole || workbenchActions.queryConsoleOpen}
 	title="Queries"
 	maxWidth="900px"
-	onClose={() => (showQueryConsole = false)}
+	onClose={() => {
+		showQueryConsole = false;
+		workbenchActions.queryConsoleOpen = false;
+	}}
 	dismissible={false}
 >
 	<QueryConsoleView />
 </Modal>
+
+<ImportTurtleDialog
+	isOpen={showImportDialog}
+	namespaces={namespaceStore.namespaces}
+	activeNamespace={workbenchActions.activeNamespace}
+	excludeBaseIri={DEFAULT_NAMESPACE_BASE_IRI}
+	{importing}
+	onImport={(file, ns) => void handleImportFile(file, ns)}
+	onClose={() => (showImportDialog = false)}
+/>
 
 <Modal
 	isOpen={importSummary !== null || importError !== null}

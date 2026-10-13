@@ -136,6 +136,18 @@ describe('checkStructural (STORY-013)', () => {
 		).toBe(true);
 	});
 
+	it('accepts an owl:AnnotationProperty declaration (the app declares backstageKind this way)', () => {
+		const quads = parseTurtle(`
+			${PREFIXES}
+			<${BACKSTAGE_KIND_PREDICATE_IRI}> a owl:AnnotationProperty ; rdfs:label "backstageKind" .
+			<urn:Ghost2> a <urn:Ghost> .
+		`);
+		const issues = checkStructural(quads);
+		expect(issues.some((i) => i.message.includes(BACKSTAGE_KIND_PREDICATE_IRI))).toBe(false);
+		// ...without loosening the check for genuinely undeclared types
+		expect(issues.some((i) => /urn:Ghost>/.test(i.message))).toBe(true);
+	});
+
 	it('accepts a reified statement (`a rdf:Statement`) without requiring it declared as owl:Class (relation-assertions Story 003)', () => {
 		const quads = parseTurtle(`
 			${PREFIXES}

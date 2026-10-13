@@ -185,6 +185,29 @@ const sectionMetas: DocSectionMeta[] = [
 		file: 'identities-area.md'
 	},
 
+	// (Panels & Views continues)
+	{
+		id: 'query-workbench',
+		title: 'Query Workbench',
+		category: 'Panels & Views',
+		order: 120,
+		file: 'query-workbench.md'
+	},
+	{
+		id: 'spl-unsupported',
+		title: 'SPL in the Workbench',
+		category: 'Panels & Views',
+		order: 125,
+		file: 'spl-unsupported.md'
+	},
+	{
+		id: 'soc-demo',
+		title: 'SOC Demo',
+		category: 'Panels & Views',
+		order: 130,
+		file: 'soc-demo.md'
+	},
+
 	// Toggles & Concepts
 	{
 		id: 'view-mode-toggle',

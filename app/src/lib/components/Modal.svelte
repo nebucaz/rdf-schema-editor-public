@@ -21,6 +21,39 @@
 
 	let { isOpen, title, onClose, children, maxWidth = '500px', dismissible = true }: Props = $props();
 
+	let dialogEl = $state<HTMLDivElement | undefined>();
+
+	const FOCUSABLE =
+		'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+	// Focus moves into the dialog on open and returns to the opener on close; Tab stays inside.
+	$effect(() => {
+		if (!isOpen || !dialogEl) return;
+		const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+		if (!dialogEl.contains(document.activeElement)) {
+			dialogEl.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+		}
+		return () => {
+			if (opener?.isConnected) opener.focus();
+		};
+	});
+
+	function trapTab(event: KeyboardEvent) {
+		if (event.key !== 'Tab' || event.defaultPrevented || !dialogEl) return;
+		const items = [...dialogEl.querySelectorAll<HTMLElement>(FOCUSABLE)];
+		if (items.length === 0) return;
+		const first = items[0];
+		const last = items[items.length - 1];
+		const active = document.activeElement;
+		if (event.shiftKey && (active === first || !dialogEl.contains(active))) {
+			event.preventDefault();
+			last.focus();
+		} else if (!event.shiftKey && (active === last || !dialogEl.contains(active))) {
+			event.preventDefault();
+			first.focus();
+		}
+	}
+
 	function handleBackdropClick(event: MouseEvent) {
 		if (dismissible && event.target === event.currentTarget) {
 			onClose();
@@ -28,6 +61,7 @@
 	}
 
 	function handleKeydown(event: KeyboardEvent) {
+		trapTab(event);
 		if (dismissible && event.key === 'Escape') {
 			onClose();
 		}
@@ -39,7 +73,7 @@
 {#if isOpen}
 	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 	<div class="modal-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1">
-		<div class="modal-content" style:max-width={maxWidth}>
+		<div class="modal-content" style:max-width={maxWidth} bind:this={dialogEl}>
 			<div class="modal-header">
 				<h2 id="modal-title">{title}</h2>
 				<button class="close-button" onclick={onClose} aria-label="Close">

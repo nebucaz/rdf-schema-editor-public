@@ -90,8 +90,14 @@
 	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
 	import { descriptionVisibilityStore } from '$lib/stores/description-visibility-store.svelte';
 	import { inheritedAttributesVisibilityStore } from '$lib/stores/inherited-attributes-visibility-store.svelte';
+	import { contrastTextColor } from '$lib/utils/contrast';
 
 	let { data, selected }: NodeProps<EntityNodeType> = $props();
+
+	// Only the two user-picked colors need a computed foreground — the static theme accents
+	// (--color-accent/--color-accent-association) are developer-chosen and already legible.
+	const headerBg = $derived(data.color ?? data.namespaceColor);
+	const headerFg = $derived(headerBg ? contrastTextColor(headerBg) : undefined);
 
 	const showDescriptions = $derived(descriptionVisibilityStore.getShowDescriptions());
 	const showInheritedAttributes = $derived(inheritedAttributesVisibilityStore.getShowInheritedAttributes());
@@ -155,7 +161,7 @@
 <div
 	class="entity-node"
 	class:selected
-	style={`--node-header-bg: ${data.color ?? data.namespaceColor ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')}`}
+	style={`--node-header-bg: ${headerBg ?? (data.isAssociationClass ? 'var(--color-accent-association)' : 'var(--color-accent)')};${headerFg ? ` --node-header-fg: ${headerFg};` : ''}`}
 	title={!showDescriptions && data.description ? data.description : undefined}
 >
 	<!-- A source + target handle stacked at each side lets relations attach anywhere around the
@@ -269,7 +275,7 @@
 		justify-content: space-between;
 		gap: 0.5rem;
 		background: var(--node-header-bg, var(--color-accent));
-		color: #fff;
+		color: var(--node-header-fg, #fff);
 		font-weight: 600;
 		padding: 6px 8px;
 	}

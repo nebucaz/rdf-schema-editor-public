@@ -1,0 +1,169 @@
+# =============================================================================
+# SOC sample — SHACL shapes: soc-shapes.ttl
+#
+# Namespace prefix: soc
+# Namespace base IRI: http://ld.pageagent.com/example/soc
+#
+# Import with Import Turtle... while the `soc` namespace is the active namespace
+# (create it first in Namespaces: prefix `soc`, base IRI as above). Shapes live in <base>/shapes#; they target classes in soc-schema.ttl.
+# =============================================================================
+
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix soc:  <http://ld.pageagent.com/example/soc/schema#> .
+@prefix socsh: <http://ld.pageagent.com/example/soc/shapes#> .
+
+socsh:ServerShape
+    a sh:NodeShape ;
+    sh:targetClass soc:Server ;
+    sh:property [
+        sh:path soc:hostname ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:ipAddress ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:operatingSystem ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:role ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:criticality ;
+        sh:class soc:Criticality ;
+        sh:maxCount 1 ;
+    ] .
+
+socsh:LogFileShape
+    a sh:NodeShape ;
+    sh:targetClass soc:LogFile ;
+    sh:property [
+        sh:path soc:path ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:format ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:hostedOn ;
+        sh:class soc:Server ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] .
+
+socsh:AuthenticationEventShape
+    a sh:NodeShape ;
+    sh:targetClass soc:AuthenticationEvent ;
+    sh:property [
+        sh:path soc:timestamp ;
+        sh:datatype xsd:dateTime ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:user ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:sourceIp ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:method ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:message ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:recordedIn ;
+        sh:class soc:LogFile ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:outcome ;
+        sh:class soc:Outcome ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] .
+
+socsh:DetectionRuleShape
+    a sh:NodeShape ;
+    sh:targetClass soc:DetectionRule ;
+    sh:property [
+        sh:path soc:ruleName ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:technique ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:description ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] .
+
+socsh:AlertShape
+    a sh:NodeShape ;
+    sh:targetClass soc:Alert ;
+    sh:property [
+        sh:path soc:alertId ;
+        sh:datatype xsd:string ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:title ;
+        sh:datatype xsd:string ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:raisedAt ;
+        sh:datatype xsd:dateTime ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:severity ;
+        sh:class soc:Severity ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:status ;
+        sh:class soc:AlertStatus ;
+        sh:minCount 1 ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:detectedBy ;
+        sh:class soc:DetectionRule ;
+        sh:maxCount 1 ;
+    ] ;
+    sh:property [
+        sh:path soc:triggeredBy ;
+        sh:class soc:AuthenticationEvent ;
+        sh:minCount 1 ;
+    ] .

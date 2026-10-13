@@ -13,6 +13,16 @@ import {
 	datasetIri,
 	publicationActivityIri,
 	statementIri,
+	annotationIri,
+	ANNOTATION_CLASS_IRI,
+	ANNOTATION_LABEL_CLASS_IRI,
+	ANNOTATES_PREDICATE_IRI,
+	ANNOTATION_TYPE_PREDICATE_IRI,
+	ANNOTATION_VALUE_PREDICATE_IRI,
+	ANNOTATED_BY_PREDICATE_IRI,
+	ANNOTATED_AT_PREDICATE_IRI,
+	SEED_ANNOTATION_LABELS,
+	SCHEMA_NAMESPACE,
 	extractLocalName,
 	pascalCase,
 	camelCase,
@@ -20,7 +30,6 @@ import {
 	xsdDatatypeFromIri,
 	resolvePrefixedName,
 	iriToPrefixedName,
-	SCHEMA_NAMESPACE,
 	SHAPES_NAMESPACE,
 	BACKSTAGE_KIND_PREDICATE_IRI
 } from './iri';
@@ -380,5 +389,38 @@ describe('xsdDatatypeFromIri', () => {
 describe('BACKSTAGE_KIND_PREDICATE_IRI', () => {
 	it('is minted under SCHEMA_NAMESPACE with the expected local name', () => {
 		expect(BACKSTAGE_KIND_PREDICATE_IRI).toBe(`${SCHEMA_NAMESPACE}backstageKind`);
+	});
+});
+
+describe('annotation vocabulary (query-workbench STORY-180)', () => {
+	it('derives every constant from the schema namespace', () => {
+		for (const iri of [
+			ANNOTATION_CLASS_IRI, ANNOTATION_LABEL_CLASS_IRI, ANNOTATES_PREDICATE_IRI,
+			ANNOTATION_TYPE_PREDICATE_IRI, ANNOTATION_VALUE_PREDICATE_IRI, ANNOTATED_BY_PREDICATE_IRI,
+			ANNOTATED_AT_PREDICATE_IRI
+		]) {
+			expect(iri.startsWith(SCHEMA_NAMESPACE)).toBe(true);
+		}
+		expect(new Set([ANNOTATION_CLASS_IRI, ANNOTATION_LABEL_CLASS_IRI, ANNOTATES_PREDICATE_IRI,
+			ANNOTATION_TYPE_PREDICATE_IRI, ANNOTATION_VALUE_PREDICATE_IRI, ANNOTATED_BY_PREDICATE_IRI,
+			ANNOTATED_AT_PREDICATE_IRI]).size).toBe(7);
+	});
+
+	it('seeds the four label members', () => {
+		expect([...SEED_ANNOTATION_LABELS]).toEqual(['Verified', 'Investigate', 'Approved', 'Deprecated']);
+	});
+
+	it('annotationIri is unique per call and stays inside the statement namespace', () => {
+		const st = statementIri('http://example.org/gov', '20260827000000');
+		const ids = new Set(Array.from({ length: 50 }, () => annotationIri(st)));
+		expect(ids.size).toBe(50);
+		for (const id of ids) {
+			expect(id.startsWith('http://example.org/gov#Annotation')).toBe(true);
+			expect(id).toMatch(/^[^<>"{}|^`\\\s]+$/);
+		}
+	});
+
+	it('annotationIri works for a statement IRI without a fragment-less base', () => {
+		expect(annotationIri('http://example.org/a/b#Statement1')).toMatch(/^http:\/\/example\.org\/a\/b#Annotation/);
 	});
 });

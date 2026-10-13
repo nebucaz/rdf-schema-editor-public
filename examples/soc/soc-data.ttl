@@ -1,0 +1,949 @@
+# =============================================================================
+# SOC sample — instance data: soc-data.ttl
+#
+# Namespace prefix: soc
+# Namespace base IRI: http://ld.pageagent.com/example/soc
+#
+# Import with Import Turtle... while the `soc` namespace is the active namespace,
+# after soc-schema.ttl and soc-shapes.ttl. Individuals live in <base>#.
+#
+# All data is synthetic: addresses come from the RFC 5737 documentation ranges
+# (192.0.2.0/24, 198.51.100.0/24, 203.0.113.0/24) and hostnames from example.com.
+# =============================================================================
+
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix socs: <http://ld.pageagent.com/example/soc/schema#> .
+@prefix soc:  <http://ld.pageagent.com/example/soc#> .
+
+# -- Enumeration members ------------------------------------------------------
+
+soc:severityLow a socs:Severity ; rdfs:label "Low" .
+soc:severityMedium a socs:Severity ; rdfs:label "Medium" .
+soc:severityHigh a socs:Severity ; rdfs:label "High" .
+soc:severityCritical a socs:Severity ; rdfs:label "Critical" .
+
+soc:outcomeSuccess a socs:Outcome ; rdfs:label "Success" .
+soc:outcomeFailure a socs:Outcome ; rdfs:label "Failure" .
+
+soc:alertStatusOpen a socs:AlertStatus ; rdfs:label "Open" .
+soc:alertStatusInvestigating a socs:AlertStatus ; rdfs:label "Investigating" .
+soc:alertStatusClosed a socs:AlertStatus ; rdfs:label "Closed" .
+
+soc:criticalityLow a socs:Criticality ; rdfs:label "Low" .
+soc:criticalityMedium a socs:Criticality ; rdfs:label "Medium" .
+soc:criticalityHigh a socs:Criticality ; rdfs:label "High" .
+
+# -- Servers ------------------------------------------------------------------
+
+soc:web-01 a socs:Server ;
+    rdfs:label "web-01" ;
+    socs:hostname "web-01.example.com" ;
+    socs:ipAddress "198.51.100.101" ;
+    socs:operatingSystem "Ubuntu 22.04" ;
+    socs:role "web" ;
+    socs:criticality soc:criticalityMedium .
+
+soc:web-02 a socs:Server ;
+    rdfs:label "web-02" ;
+    socs:hostname "web-02.example.com" ;
+    socs:ipAddress "198.51.100.102" ;
+    socs:operatingSystem "Ubuntu 22.04" ;
+    socs:role "web" ;
+    socs:criticality soc:criticalityMedium .
+
+soc:app-01 a socs:Server ;
+    rdfs:label "app-01" ;
+    socs:hostname "app-01.example.com" ;
+    socs:ipAddress "198.51.100.103" ;
+    socs:operatingSystem "Debian 12" ;
+    socs:role "app" ;
+    socs:criticality soc:criticalityHigh .
+
+soc:db-01 a socs:Server ;
+    rdfs:label "db-01" ;
+    socs:hostname "db-01.example.com" ;
+    socs:ipAddress "198.51.100.104" ;
+    socs:operatingSystem "Debian 12" ;
+    socs:role "database" ;
+    socs:criticality soc:criticalityHigh .
+
+soc:bastion-01 a socs:Server ;
+    rdfs:label "bastion-01" ;
+    socs:hostname "bastion-01.example.com" ;
+    socs:ipAddress "198.51.100.105" ;
+    socs:operatingSystem "Ubuntu 22.04" ;
+    socs:role "bastion" ;
+    socs:criticality soc:criticalityHigh .
+
+soc:dc-01 a socs:Server ;
+    rdfs:label "dc-01" ;
+    socs:hostname "dc-01.example.com" ;
+    socs:ipAddress "198.51.100.106" ;
+    socs:operatingSystem "Windows Server 2022" ;
+    socs:role "domain controller" ;
+    socs:criticality soc:criticalityHigh .
+
+# -- Log files ----------------------------------------------------------------
+# Only the auth logs (and Security.evtx) record authentication events; the others are noise.
+
+soc:web-01-auth-log a socs:LogFile ;
+    rdfs:label "web-01 auth.log" ;
+    socs:path "/var/log/auth.log" ;
+    socs:format "sshd" ;
+    socs:hostedOn soc:web-01 .
+
+soc:web-02-auth-log a socs:LogFile ;
+    rdfs:label "web-02 auth.log" ;
+    socs:path "/var/log/auth.log" ;
+    socs:format "sshd" ;
+    socs:hostedOn soc:web-02 .
+
+soc:app-01-auth-log a socs:LogFile ;
+    rdfs:label "app-01 auth.log" ;
+    socs:path "/var/log/auth.log" ;
+    socs:format "sshd" ;
+    socs:hostedOn soc:app-01 .
+
+soc:db-01-auth-log a socs:LogFile ;
+    rdfs:label "db-01 auth.log" ;
+    socs:path "/var/log/auth.log" ;
+    socs:format "sshd" ;
+    socs:hostedOn soc:db-01 .
+
+soc:bastion-01-auth-log a socs:LogFile ;
+    rdfs:label "bastion-01 auth.log" ;
+    socs:path "/var/log/auth.log" ;
+    socs:format "sshd" ;
+    socs:hostedOn soc:bastion-01 .
+
+soc:dc-01-security-evtx a socs:LogFile ;
+    rdfs:label "dc-01 Security.evtx" ;
+    socs:path "C:\\Windows\\System32\\winevt\\Logs\\Security.evtx" ;
+    socs:format "Windows Security" ;
+    socs:hostedOn soc:dc-01 .
+
+soc:web-01-access-log a socs:LogFile ;
+    rdfs:label "web-01 access.log" ;
+    socs:path "/var/log/nginx/access.log" ;
+    socs:format "nginx" ;
+    socs:hostedOn soc:web-01 .
+
+soc:db-01-postgresql-log a socs:LogFile ;
+    rdfs:label "db-01 postgresql.log" ;
+    socs:path "/var/log/postgresql/postgresql.log" ;
+    socs:format "postgresql" ;
+    socs:hostedOn soc:db-01 .
+
+soc:app-01-app-log a socs:LogFile ;
+    rdfs:label "app-01 app.log" ;
+    socs:path "/var/log/app/app.log" ;
+    socs:format "application" ;
+    socs:hostedOn soc:app-01 .
+
+# -- Detection rules ----------------------------------------------------------
+
+soc:ruleSshBruteForce a socs:DetectionRule ;
+    rdfs:label "SSH brute force" ;
+    socs:ruleName "SSH brute force" ;
+    socs:technique "T1110.001" ;
+    socs:description "Many failed SSH logins from one source, optionally followed by a success." .
+
+soc:rulePasswordSpray a socs:DetectionRule ;
+    rdfs:label "Password spray" ;
+    socs:ruleName "Password spray" ;
+    socs:technique "T1110.003" ;
+    socs:description "One source tries a few passwords against many accounts or hosts." .
+
+soc:ruleOffHoursPrivilegedLogin a socs:DetectionRule ;
+    rdfs:label "Off-hours privileged login" ;
+    socs:ruleName "Off-hours privileged login" ;
+    socs:technique "T1078" ;
+    socs:description "A privileged account logs in outside business hours." .
+
+# -- Authentication events ----------------------------------------------------
+
+# S1 SSH brute force then success (alert A-1001)
+
+soc:evt-001 a socs:AuthenticationEvent ;
+    rdfs:label "evt-001 failure root" ;
+    socs:timestamp "2026-03-14T02:11:05Z"^^xsd:dateTime ;
+    socs:user "root" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for root from 203.0.113.45 port 51500 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-002 a socs:AuthenticationEvent ;
+    rdfs:label "evt-002 failure admin" ;
+    socs:timestamp "2026-03-14T02:11:08Z"^^xsd:dateTime ;
+    socs:user "admin" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for admin from 203.0.113.45 port 51507 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-003 a socs:AuthenticationEvent ;
+    rdfs:label "evt-003 failure test" ;
+    socs:timestamp "2026-03-14T02:11:11Z"^^xsd:dateTime ;
+    socs:user "test" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user test from 203.0.113.45 port 51514 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-004 a socs:AuthenticationEvent ;
+    rdfs:label "evt-004 failure oracle" ;
+    socs:timestamp "2026-03-14T02:11:14Z"^^xsd:dateTime ;
+    socs:user "oracle" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user oracle from 203.0.113.45 port 51521 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-005 a socs:AuthenticationEvent ;
+    rdfs:label "evt-005 failure ubuntu" ;
+    socs:timestamp "2026-03-14T02:11:17Z"^^xsd:dateTime ;
+    socs:user "ubuntu" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for ubuntu from 203.0.113.45 port 51528 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-006 a socs:AuthenticationEvent ;
+    rdfs:label "evt-006 failure postgres" ;
+    socs:timestamp "2026-03-14T02:11:20Z"^^xsd:dateTime ;
+    socs:user "postgres" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for postgres from 203.0.113.45 port 51535 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-007 a socs:AuthenticationEvent ;
+    rdfs:label "evt-007 failure git" ;
+    socs:timestamp "2026-03-14T02:11:23Z"^^xsd:dateTime ;
+    socs:user "git" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for git from 203.0.113.45 port 51542 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-008 a socs:AuthenticationEvent ;
+    rdfs:label "evt-008 failure guest" ;
+    socs:timestamp "2026-03-14T02:11:26Z"^^xsd:dateTime ;
+    socs:user "guest" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user guest from 203.0.113.45 port 51549 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-009 a socs:AuthenticationEvent ;
+    rdfs:label "evt-009 failure user" ;
+    socs:timestamp "2026-03-14T02:11:29Z"^^xsd:dateTime ;
+    socs:user "user" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user user from 203.0.113.45 port 51556 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-010 a socs:AuthenticationEvent ;
+    rdfs:label "evt-010 failure ftp" ;
+    socs:timestamp "2026-03-14T02:11:32Z"^^xsd:dateTime ;
+    socs:user "ftp" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user ftp from 203.0.113.45 port 51563 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-011 a socs:AuthenticationEvent ;
+    rdfs:label "evt-011 failure nagios" ;
+    socs:timestamp "2026-03-14T02:11:35Z"^^xsd:dateTime ;
+    socs:user "nagios" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user nagios from 203.0.113.45 port 51570 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-012 a socs:AuthenticationEvent ;
+    rdfs:label "evt-012 failure jenkins" ;
+    socs:timestamp "2026-03-14T02:11:38Z"^^xsd:dateTime ;
+    socs:user "jenkins" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for invalid user jenkins from 203.0.113.45 port 51577 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-013 a socs:AuthenticationEvent ;
+    rdfs:label "evt-013 success deploy" ;
+    socs:timestamp "2026-03-14T02:14:20Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 203.0.113.45 port 51620 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+
+# S2 password spray across hosts (alert A-1002)
+
+soc:evt-014 a socs:AuthenticationEvent ;
+    rdfs:label "evt-014 failure alice" ;
+    socs:timestamp "2026-03-15T10:00:30Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for alice from 198.51.100.7 port 40100 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-015 a socs:AuthenticationEvent ;
+    rdfs:label "evt-015 failure bob" ;
+    socs:timestamp "2026-03-15T10:01:30Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for bob from 198.51.100.7 port 40111 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-016 a socs:AuthenticationEvent ;
+    rdfs:label "evt-016 failure carol" ;
+    socs:timestamp "2026-03-15T10:02:30Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for carol from 198.51.100.7 port 40122 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-017 a socs:AuthenticationEvent ;
+    rdfs:label "evt-017 failure dave" ;
+    socs:timestamp "2026-03-15T10:03:30Z"^^xsd:dateTime ;
+    socs:user "dave" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for dave from 198.51.100.7 port 40133 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-018 a socs:AuthenticationEvent ;
+    rdfs:label "evt-018 failure erin" ;
+    socs:timestamp "2026-03-15T10:04:30Z"^^xsd:dateTime ;
+    socs:user "erin" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for erin from 198.51.100.7 port 40144 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-019 a socs:AuthenticationEvent ;
+    rdfs:label "evt-019 failure frank" ;
+    socs:timestamp "2026-03-15T10:05:30Z"^^xsd:dateTime ;
+    socs:user "frank" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for frank from 198.51.100.7 port 40155 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-020 a socs:AuthenticationEvent ;
+    rdfs:label "evt-020 failure grace" ;
+    socs:timestamp "2026-03-15T10:06:30Z"^^xsd:dateTime ;
+    socs:user "grace" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for grace from 198.51.100.7 port 40166 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-021 a socs:AuthenticationEvent ;
+    rdfs:label "evt-021 failure heidi" ;
+    socs:timestamp "2026-03-15T10:07:30Z"^^xsd:dateTime ;
+    socs:user "heidi" ;
+    socs:sourceIp "198.51.100.7" ;
+    socs:method "password" ;
+    socs:message "Failed password for heidi from 198.51.100.7 port 40177 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+
+# S3 noisy service account (alert A-1003)
+
+soc:evt-022 a socs:AuthenticationEvent ;
+    rdfs:label "evt-022 failure svc-backup" ;
+    socs:timestamp "2026-03-09T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33000 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-023 a socs:AuthenticationEvent ;
+    rdfs:label "evt-023 failure svc-backup" ;
+    socs:timestamp "2026-03-10T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33013 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-024 a socs:AuthenticationEvent ;
+    rdfs:label "evt-024 failure svc-backup" ;
+    socs:timestamp "2026-03-11T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33026 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-025 a socs:AuthenticationEvent ;
+    rdfs:label "evt-025 failure svc-backup" ;
+    socs:timestamp "2026-03-12T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33039 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-026 a socs:AuthenticationEvent ;
+    rdfs:label "evt-026 failure svc-backup" ;
+    socs:timestamp "2026-03-13T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33052 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-027 a socs:AuthenticationEvent ;
+    rdfs:label "evt-027 failure svc-backup" ;
+    socs:timestamp "2026-03-14T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33065 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-028 a socs:AuthenticationEvent ;
+    rdfs:label "evt-028 failure svc-backup" ;
+    socs:timestamp "2026-03-15T01:00:04Z"^^xsd:dateTime ;
+    socs:user "svc-backup" ;
+    socs:sourceIp "192.0.2.10" ;
+    socs:method "password" ;
+    socs:message "Failed password for svc-backup from 192.0.2.10 port 33078 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+
+# S4 off-hours privileged login (alert A-1004)
+
+soc:evt-029 a socs:AuthenticationEvent ;
+    rdfs:label "evt-029 failure Administrator" ;
+    socs:timestamp "2026-03-16T03:11:48Z"^^xsd:dateTime ;
+    socs:user "Administrator" ;
+    socs:sourceIp "192.0.2.88" ;
+    socs:method "rdp" ;
+    socs:message "EventID 4625: An account failed to log on. Account Name: Administrator, Logon Type: 10, Source Network Address: 192.0.2.88" ;
+    socs:recordedIn soc:dc-01-security-evtx ;
+    socs:outcome soc:outcomeFailure .
+
+soc:evt-030 a socs:AuthenticationEvent ;
+    rdfs:label "evt-030 success Administrator" ;
+    socs:timestamp "2026-03-16T03:12:09Z"^^xsd:dateTime ;
+    socs:user "Administrator" ;
+    socs:sourceIp "192.0.2.88" ;
+    socs:method "rdp" ;
+    socs:message "EventID 4624: An account was successfully logged on. Account Name: Administrator, Logon Type: 10, Source Network Address: 192.0.2.88" ;
+    socs:recordedIn soc:dc-01-security-evtx ;
+    socs:outcome soc:outcomeSuccess .
+
+
+# S5 same source, second server (no alert)
+
+soc:evt-031 a socs:AuthenticationEvent ;
+    rdfs:label "evt-031 failure root" ;
+    socs:timestamp "2026-03-14T02:40:11Z"^^xsd:dateTime ;
+    socs:user "root" ;
+    socs:sourceIp "203.0.113.45" ;
+    socs:method "password" ;
+    socs:message "Failed password for root from 203.0.113.45 port 52044 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeFailure .
+
+
+# Baseline successful logins (no alert)
+
+soc:evt-032 a socs:AuthenticationEvent ;
+    rdfs:label "evt-032 success alice" ;
+    socs:timestamp "2026-03-10T08:00:00Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for alice from 192.0.2.21 port 42000 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-033 a socs:AuthenticationEvent ;
+    rdfs:label "evt-033 success bob" ;
+    socs:timestamp "2026-03-10T09:07:13Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42005 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-034 a socs:AuthenticationEvent ;
+    rdfs:label "evt-034 success carol" ;
+    socs:timestamp "2026-03-10T10:14:26Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42010 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-035 a socs:AuthenticationEvent ;
+    rdfs:label "evt-035 success deploy" ;
+    socs:timestamp "2026-03-10T11:21:39Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for deploy from 192.0.2.24 port 42015 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-036 a socs:AuthenticationEvent ;
+    rdfs:label "evt-036 success alice" ;
+    socs:timestamp "2026-03-10T12:28:52Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42020 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-037 a socs:AuthenticationEvent ;
+    rdfs:label "evt-037 success bob" ;
+    socs:timestamp "2026-03-10T13:35:05Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42025 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-038 a socs:AuthenticationEvent ;
+    rdfs:label "evt-038 success carol" ;
+    socs:timestamp "2026-03-10T14:42:18Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for carol from 192.0.2.23 port 42030 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-039 a socs:AuthenticationEvent ;
+    rdfs:label "evt-039 success deploy" ;
+    socs:timestamp "2026-03-10T15:49:31Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42035 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-040 a socs:AuthenticationEvent ;
+    rdfs:label "evt-040 success alice" ;
+    socs:timestamp "2026-03-10T16:56:44Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42040 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-041 a socs:AuthenticationEvent ;
+    rdfs:label "evt-041 success bob" ;
+    socs:timestamp "2026-03-10T17:03:57Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for bob from 192.0.2.22 port 42045 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-042 a socs:AuthenticationEvent ;
+    rdfs:label "evt-042 success carol" ;
+    socs:timestamp "2026-03-11T08:10:10Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42050 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-043 a socs:AuthenticationEvent ;
+    rdfs:label "evt-043 success deploy" ;
+    socs:timestamp "2026-03-11T09:17:23Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42055 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-044 a socs:AuthenticationEvent ;
+    rdfs:label "evt-044 success alice" ;
+    socs:timestamp "2026-03-11T10:24:36Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for alice from 192.0.2.21 port 42060 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-045 a socs:AuthenticationEvent ;
+    rdfs:label "evt-045 success bob" ;
+    socs:timestamp "2026-03-11T11:31:49Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42065 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-046 a socs:AuthenticationEvent ;
+    rdfs:label "evt-046 success carol" ;
+    socs:timestamp "2026-03-11T12:38:02Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42070 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-047 a socs:AuthenticationEvent ;
+    rdfs:label "evt-047 success deploy" ;
+    socs:timestamp "2026-03-11T13:45:15Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for deploy from 192.0.2.24 port 42075 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-048 a socs:AuthenticationEvent ;
+    rdfs:label "evt-048 success alice" ;
+    socs:timestamp "2026-03-11T14:52:28Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42080 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-049 a socs:AuthenticationEvent ;
+    rdfs:label "evt-049 success bob" ;
+    socs:timestamp "2026-03-11T15:59:41Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42085 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-050 a socs:AuthenticationEvent ;
+    rdfs:label "evt-050 success carol" ;
+    socs:timestamp "2026-03-11T16:06:54Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for carol from 192.0.2.23 port 42090 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-051 a socs:AuthenticationEvent ;
+    rdfs:label "evt-051 success deploy" ;
+    socs:timestamp "2026-03-11T17:13:07Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42095 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-052 a socs:AuthenticationEvent ;
+    rdfs:label "evt-052 success alice" ;
+    socs:timestamp "2026-03-12T08:20:20Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42100 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-053 a socs:AuthenticationEvent ;
+    rdfs:label "evt-053 success bob" ;
+    socs:timestamp "2026-03-12T09:27:33Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for bob from 192.0.2.22 port 42105 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-054 a socs:AuthenticationEvent ;
+    rdfs:label "evt-054 success carol" ;
+    socs:timestamp "2026-03-12T10:34:46Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42110 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-055 a socs:AuthenticationEvent ;
+    rdfs:label "evt-055 success deploy" ;
+    socs:timestamp "2026-03-12T11:41:59Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42115 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-056 a socs:AuthenticationEvent ;
+    rdfs:label "evt-056 success alice" ;
+    socs:timestamp "2026-03-12T12:48:12Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for alice from 192.0.2.21 port 42120 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-057 a socs:AuthenticationEvent ;
+    rdfs:label "evt-057 success bob" ;
+    socs:timestamp "2026-03-12T13:55:25Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42125 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-058 a socs:AuthenticationEvent ;
+    rdfs:label "evt-058 success carol" ;
+    socs:timestamp "2026-03-12T14:02:38Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42130 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-059 a socs:AuthenticationEvent ;
+    rdfs:label "evt-059 success deploy" ;
+    socs:timestamp "2026-03-12T15:09:51Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for deploy from 192.0.2.24 port 42135 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-060 a socs:AuthenticationEvent ;
+    rdfs:label "evt-060 success alice" ;
+    socs:timestamp "2026-03-12T16:16:04Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42140 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-061 a socs:AuthenticationEvent ;
+    rdfs:label "evt-061 success bob" ;
+    socs:timestamp "2026-03-12T17:23:17Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42145 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-062 a socs:AuthenticationEvent ;
+    rdfs:label "evt-062 success carol" ;
+    socs:timestamp "2026-03-13T08:30:30Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for carol from 192.0.2.23 port 42150 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-063 a socs:AuthenticationEvent ;
+    rdfs:label "evt-063 success deploy" ;
+    socs:timestamp "2026-03-13T09:37:43Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42155 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-064 a socs:AuthenticationEvent ;
+    rdfs:label "evt-064 success alice" ;
+    socs:timestamp "2026-03-13T10:44:56Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "password" ;
+    socs:message "Accepted password for alice from 192.0.2.21 port 42160 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-065 a socs:AuthenticationEvent ;
+    rdfs:label "evt-065 success bob" ;
+    socs:timestamp "2026-03-13T11:51:09Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for bob from 192.0.2.22 port 42165 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-066 a socs:AuthenticationEvent ;
+    rdfs:label "evt-066 success carol" ;
+    socs:timestamp "2026-03-13T12:58:22Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42170 ssh2" ;
+    socs:recordedIn soc:bastion-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-067 a socs:AuthenticationEvent ;
+    rdfs:label "evt-067 success deploy" ;
+    socs:timestamp "2026-03-13T13:05:35Z"^^xsd:dateTime ;
+    socs:user "deploy" ;
+    socs:sourceIp "192.0.2.24" ;
+    socs:method "password" ;
+    socs:message "Accepted password for deploy from 192.0.2.24 port 42175 ssh2" ;
+    socs:recordedIn soc:web-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-068 a socs:AuthenticationEvent ;
+    rdfs:label "evt-068 success alice" ;
+    socs:timestamp "2026-03-13T14:12:48Z"^^xsd:dateTime ;
+    socs:user "alice" ;
+    socs:sourceIp "192.0.2.21" ;
+    socs:method "publickey" ;
+    socs:message "Accepted publickey for alice from 192.0.2.21 port 42180 ssh2" ;
+    socs:recordedIn soc:web-02-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-069 a socs:AuthenticationEvent ;
+    rdfs:label "evt-069 success bob" ;
+    socs:timestamp "2026-03-13T15:19:01Z"^^xsd:dateTime ;
+    socs:user "bob" ;
+    socs:sourceIp "192.0.2.22" ;
+    socs:method "password" ;
+    socs:message "Accepted password for bob from 192.0.2.22 port 42185 ssh2" ;
+    socs:recordedIn soc:app-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+soc:evt-070 a socs:AuthenticationEvent ;
+    rdfs:label "evt-070 success carol" ;
+    socs:timestamp "2026-03-13T16:26:14Z"^^xsd:dateTime ;
+    socs:user "carol" ;
+    socs:sourceIp "192.0.2.23" ;
+    socs:method "password" ;
+    socs:message "Accepted password for carol from 192.0.2.23 port 42190 ssh2" ;
+    socs:recordedIn soc:db-01-auth-log ;
+    socs:outcome soc:outcomeSuccess .
+
+
+# -- Alerts -------------------------------------------------------------------
+
+soc:A-1001 a socs:Alert ;
+    rdfs:label "A-1001" ;
+    socs:alertId "A-1001" ;
+    socs:title "SSH brute force followed by a successful login" ;
+    socs:raisedAt "2026-03-14T02:15:00Z"^^xsd:dateTime ;
+    socs:severity soc:severityHigh ;
+    socs:status soc:alertStatusInvestigating ;
+    socs:detectedBy soc:ruleSshBruteForce ;
+    socs:triggeredBy soc:evt-001 ,
+        soc:evt-002 ,
+        soc:evt-003 ,
+        soc:evt-004 ,
+        soc:evt-005 ,
+        soc:evt-006 ,
+        soc:evt-007 ,
+        soc:evt-008 ,
+        soc:evt-009 ,
+        soc:evt-010 ,
+        soc:evt-011 ,
+        soc:evt-012 ,
+        soc:evt-013 .
+
+soc:A-1002 a socs:Alert ;
+    rdfs:label "A-1002" ;
+    socs:alertId "A-1002" ;
+    socs:title "Password spray across web and app servers" ;
+    socs:raisedAt "2026-03-15T10:20:00Z"^^xsd:dateTime ;
+    socs:severity soc:severityMedium ;
+    socs:status soc:alertStatusOpen ;
+    socs:detectedBy soc:rulePasswordSpray ;
+    socs:triggeredBy soc:evt-014 ,
+        soc:evt-015 ,
+        soc:evt-016 ,
+        soc:evt-017 ,
+        soc:evt-018 ,
+        soc:evt-019 ,
+        soc:evt-020 ,
+        soc:evt-021 .
+
+soc:A-1003 a socs:Alert ;
+    rdfs:label "A-1003" ;
+    socs:alertId "A-1003" ;
+    socs:title "Repeated failures of the backup service account" ;
+    socs:raisedAt "2026-03-16T01:05:00Z"^^xsd:dateTime ;
+    socs:severity soc:severityLow ;
+    socs:status soc:alertStatusClosed ;
+    socs:detectedBy soc:ruleSshBruteForce ;
+    socs:triggeredBy soc:evt-022 ,
+        soc:evt-023 ,
+        soc:evt-024 ,
+        soc:evt-025 ,
+        soc:evt-026 ,
+        soc:evt-027 ,
+        soc:evt-028 .
+
+soc:A-1004 a socs:Alert ;
+    rdfs:label "A-1004" ;
+    socs:alertId "A-1004" ;
+    socs:title "Administrator RDP login outside business hours" ;
+    socs:raisedAt "2026-03-16T03:15:00Z"^^xsd:dateTime ;
+    socs:severity soc:severityHigh ;
+    socs:status soc:alertStatusInvestigating ;
+    socs:detectedBy soc:ruleOffHoursPrivilegedLogin ;
+    socs:triggeredBy soc:evt-030 .

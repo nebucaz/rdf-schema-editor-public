@@ -36,6 +36,7 @@
 	} from '$lib/utils/resource-page-format';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { buildClassHierarchyIndex, resolveNodeColor, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
+	import { contrastTextColor } from '$lib/utils/contrast';
 
 	interface IdentityRef {
 		iri: string;
@@ -334,7 +335,8 @@
 			.attr('text-anchor', 'middle')
 			.attr('dy', '0.35em')
 			.attr('class', 'node-label')
-			.attr('pointer-events', 'none');
+			.attr('pointer-events', 'none')
+			.style('fill', (d) => (d.color ? contrastTextColor(d.color) : null));
 
 		nodeGroups.append('title').text((d) => `${d.label}\n${d.iri}`);
 
