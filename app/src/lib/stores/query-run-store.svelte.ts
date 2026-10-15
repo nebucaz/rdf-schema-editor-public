@@ -2,6 +2,7 @@ import { sparqlConnector, type SparqlSelectResults } from '$lib/services/sparql-
 import type { BuilderSchema } from '$lib/services/query-builder-schema';
 import { compileCountQuery, compileQuery, type CompiledQuery } from '$lib/services/query-compiler';
 import type { QueryModel } from '$lib/services/query-model';
+import { describeRelativeFilters, type ResolvedRelativeFilter } from '$lib/services/query-relative-time';
 import {
 	DEFAULT_PAGE_SIZE,
 	buildResultRows,
@@ -33,12 +34,19 @@ export class QueryRunStore {
 	pageSize = $state(DEFAULT_PAGE_SIZE);
 	running = $state(false);
 	error = $state<string | null>(null);
+	/** The clock reading the last successful run was compiled against ("as of"). */
+	asOf = $state<Date | null>(null);
+	/** The bounds that run's relative-time filters resolved to; empty when the model has none. */
+	timeWindow = $state<ResolvedRelativeFilter[]>([]);
 
 	private seq = 0;
 	private readonly executor: QueryExecutor;
+	private readonly clock: () => Date;
 
-	constructor(executor: QueryExecutor = sparqlConnector) {
+	/** `clock` is injectable so relative time is testable; the compiler itself never reads time. */
+	constructor(executor: QueryExecutor = sparqlConnector, clock: () => Date = () => new Date()) {
 		this.executor = executor;
+		this.clock = clock;
 	}
 
 	get info(): PageInfo | null {
@@ -80,12 +88,14 @@ export class QueryRunStore {
 		this.running = true;
 		this.error = null;
 		try {
-			const compiled = compileQuery(model, schema, { limit: this.pageSize, offset });
+			// One reading per run, so the page and its count query describe the same window.
+			const now = this.clock();
+			const compiled = compileQuery(model, schema, { limit: this.pageSize, offset }, { now });
 			const needCount = withCount || this.total === null;
 			const [page, count] = await Promise.all([
 				this.executor.selectQuery(compiled.sparql),
 				needCount
-					? this.executor.selectQuery(compileCountQuery(model, schema).sparql)
+					? this.executor.selectQuery(compileCountQuery(model, schema, { now }).sparql)
 					: Promise.resolve(null)
 			]);
 			if (mine !== this.seq) return;
@@ -93,6 +103,8 @@ export class QueryRunStore {
 			this.table = buildResultRows(model, compiled, page);
 			this.offset = offset;
 			this.rowLimit = model.limit;
+			this.asOf = now;
+			this.timeWindow = describeRelativeFilters(model, schema, now);
 			if (count) this.total = Number(count.results.bindings[0]?.total?.value ?? 0);
 		} catch (e) {
 			if (mine === this.seq) this.error = readableQueryError(e);

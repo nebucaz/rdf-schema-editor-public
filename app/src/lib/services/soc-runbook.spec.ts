@@ -56,11 +56,19 @@ describe('RUNBOOK.md structure', () => {
 		expect(c).toBeGreaterThan(b);
 	});
 
-	it('has a Limits section naming only inverse traversal, OR and relative time', () => {
+	it('has a Limits section naming only the genuinely remaining gaps', () => {
 		const limits = runbook.slice(runbook.search(/^## What the engine can't do yet/m));
 		expect(limits.length).toBeGreaterThan(0);
-		for (const gap of ['inverse', 'OR', 'relative']) expect(limits, gap).toContain(gap);
-		for (const gone of ['No SPL input', 'No measure filter', 'No date ranges']) expect(limits, gone).not.toContain(gone);
+		for (const gap of ['(a AND b) OR c', 'NOT', 'join', 'snapping']) expect(limits, gap).toContain(gap);
+		for (const gone of [
+			'No SPL input',
+			'No measure filter',
+			'No date ranges',
+			'No inverse traversal',
+			'No OR groups',
+			'No relative time'
+		])
+			expect(limits, gone).not.toContain(gone);
 		expect(limits).toContain('spec/query-workbench/plan.md');
 	});
 
@@ -76,7 +84,7 @@ describe('RUNBOOK.md structure', () => {
 });
 
 describe('RUNBOOK.md SPL blocks', () => {
-	it.each(['R3', 'R4', 'R5'] as const)('quotes the %s snapshot verbatim in a fenced block', (id) => {
+	it.each(['R3', 'R4', 'R5', 'R6', 'R7', 'R8'] as const)('quotes the %s snapshot verbatim in a fenced block', (id) => {
 		expect(runbook).toContain('```\n' + RUNBOOK_QUERIES[id].spl + '\n```');
 	});
 });
@@ -97,7 +105,8 @@ describe('RUNBOOK.md SPL fences parse to the tested models', () => {
 		if (!parsed.ok) throw new Error(`${parsed.error.message} @${parsed.error.start}`);
 		// Sugar (`top`) is one-way: the printer emits the canonical form of the same model.
 		expect(printSplPipeline(parsed.model, builder)).toBe(printSplPipeline(q!.model, builder));
-		expect(compileUnpagedQuery(parsed.model, builder)).toBe(compileUnpagedQuery(q!.model, builder));
+		const now = new Date('2026-03-16T12:00:00Z');
+		expect(compileUnpagedQuery(parsed.model, builder, { now })).toBe(compileUnpagedQuery(q!.model, builder, { now }));
 	});
 });
 
@@ -148,6 +157,42 @@ describe('RUNBOOK.md expected results match the data', () => {
 		]);
 		expect(runbook).toMatch(/web-01[^\n]*\b13\b[^\n]*\b13\b/);
 		expect(runbook).toMatch(/bastion-01[^\n]*\b1\b[^\n]*\b1\b/);
+	});
+
+	it('R6: web-01 was touched by A-1001 (13 events) and A-1002 (3 events), via backwards hops', () => {
+		const onWeb01 = events.filter((e) => label(hostOfEvent(e)) === 'web-01');
+		const perAlert = new Map<string, number>();
+		for (const a of alerts) {
+			const n = all(a, P('triggeredBy')).filter((e) => onWeb01.includes(e)).length;
+			if (n > 0) perAlert.set(one(a, P('alertId')), n);
+		}
+		expect([...perAlert].sort((x, y) => y[1] - x[1])).toEqual([
+			['A-1001', 13],
+			['A-1002', 3]
+		]);
+		expect(runbook).toMatch(/A-1001 \| 13/);
+		expect(runbook).toMatch(/A-1002 \| 3/);
+		const m = RUNBOOK_QUERIES.R6.model;
+		expect(m.hops.map((h) => h.direction)).toEqual(['inverse', 'inverse', 'inverse']);
+	});
+
+	it('R7: High or Medium alerts raised since 2026-03-15T03:15:00Z are A-1002 and A-1004', () => {
+		const since = '2026-03-15T03:15:00Z';
+		const hits = alerts
+			.filter((a) => ['severityHigh', 'severityMedium'].includes(local(one(a, P('severity')))))
+			.filter((a) => one(a, P('raisedAt')) >= since)
+			.map((a) => one(a, P('alertId')))
+			.sort();
+		expect(hits).toEqual(['A-1002', 'A-1004']);
+		expect(runbook).toMatch(/two rows, A-1002[^\n]*A-1004/);
+		const f = RUNBOOK_QUERIES.R7.model.filters;
+		expect(f.map((x) => x.orGroup)).toEqual(['g1', 'g1', undefined]);
+	});
+
+	it('R8: the relative window is stored as an expression, never a timestamp', () => {
+		const f = RUNBOOK_QUERIES.R8.model.filters[0];
+		expect(f).toMatchObject({ op: 'gte', relativeTime: '-24h' });
+		expect(f.value).toBeUndefined();
 	});
 
 	it('step 2: the search finds 14 events', () => {

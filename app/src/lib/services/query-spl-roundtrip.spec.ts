@@ -218,6 +218,7 @@ function generateModel(r: Rng, schema: BuilderSchema, namespaces: string[], cov:
 		if (f) {
 			model.filters.push({ id: `f${model.filters.length + 1}`, ...f });
 			cov.filterOps.add(f.op);
+			if (f.relativeTime !== undefined) cov.features.add('relativeTime');
 		}
 	}
 
@@ -310,6 +311,19 @@ function generateModel(r: Rng, schema: BuilderSchema, namespaces: string[], cov:
 	model.columns = columns;
 	if (model.sort.length > 0) cov.features.add('sort');
 	if (model.filters.length > 0) cov.features.add('filters');
+	// OR groups: tag a contiguous run of 2–3 filters (canonical models keep group members adjacent).
+	for (let at = 0; at + 1 < model.filters.length; ) {
+		if (!r.chance(0.35)) {
+			at++;
+			continue;
+		}
+		const size = Math.min(r.int(2, 3), model.filters.length - at);
+		if (size < 2) break;
+		const id = `g${new Set(model.filters.map((f) => f.orGroup).filter(Boolean)).size + 1}`;
+		for (let k = at; k < at + size; k++) model.filters[k].orGroup = id;
+		cov.features.add('orGroup');
+		at += size;
+	}
 	if (model.hops.length > 0) cov.features.add('hops');
 	if (r.chance(0.4)) {
 		model.limit = r.pick([1, 5, 10, 100, 50000]);
@@ -341,6 +355,8 @@ function makeFilter(r: Rng, slot: Slot, ops: FilterOp[], schema: BuilderSchema):
 	if (op === 'isEmpty' || op === 'isNotEmpty') return { hopId, propertyIri: target.p.iri, op };
 	if (op === 'gt' || op === 'gte' || op === 'lt' || op === 'lte') {
 		if (target.kind !== 'property' || !isComparableDatatype(target.p.datatype)) return null;
+		if (isTemporalDatatype(target.p.datatype) && r.chance(0.4))
+			return { hopId, propertyIri: target.p.iri, op, relativeTime: r.pick(['now', '-24h', '+1d', '-90m', '-2w', '-30s']) };
 		return { hopId, propertyIri: target.p.iri, op, value: typedValue(r, target.p.datatype) };
 	}
 
@@ -403,6 +419,12 @@ describe('print/parse inverse: corpus', () => {
 		['214 head without sort', { ...base('Person'), columns: [col('c1', null, p('name'))], limit: 50000 }],
 		// STORY-215: extra measures
 		['215 sum/avg/min/max', { ...base('Person'), columns: [col('c1', null, p('role')), col('c2', null, p('age')), col('c3', null, p('salary')), col('c4', null, p('born'))], aggregation: { groupBy: ['c1'], measures: [{ fn: 'sum', of: 'c2', alias: 'total' }, { fn: 'avg', of: 'c3', alias: 'mean' }, { fn: 'min', of: 'c4', alias: 'oldest' }, { fn: 'max', of: 'c2', alias: 'top' }], having: [{ measure: 'total', op: 'gt', value: 100 }] } }],
+		// STORY-231: OR groups
+		['231 or group plus plain filter', { ...base('Person'), filters: [{ id: 'f1', hopId: null, propertyIri: o('name'), op: 'eq', value: 'a', orGroup: 'g1' }, { id: 'f2', hopId: null, propertyIri: o('email'), op: 'contains', value: 'x', orGroup: 'g1' }, { id: 'f3', hopId: null, propertyIri: o('age'), op: 'gt', value: '30' }], columns: [col('c1', null, p('name'))] }],
+		['231 two groups, mixed ops and a null check', { ...base('Person'), filters: [{ id: 'f1', hopId: null, propertyIri: o('age'), op: 'lt', value: '18', orGroup: 'g1' }, { id: 'f2', hopId: null, propertyIri: o('age'), op: 'gte', value: '65', orGroup: 'g1' }, { id: 'f3', hopId: null, propertyIri: o('email'), op: 'isEmpty', orGroup: 'g2' }, { id: 'f4', hopId: null, propertyIri: o('role'), op: 'in', value: ['admin', 'user'], orGroup: 'g2' }], columns: [col('c1', null, p('name'))] }],
+		// STORY-233: relative time
+		['233 relative window on a dateTime', { ...base('Person'), filters: [{ id: 'f1', hopId: null, propertyIri: o('lastSeen'), op: 'gte', relativeTime: '-24h' }, { id: 'f2', hopId: null, propertyIri: o('lastSeen'), op: 'lt', relativeTime: 'now' }], columns: [col('c1', null, p('name'))] }],
+		['233 relative bound on a date, inside an OR group', { ...base('Person'), filters: [{ id: 'f1', hopId: null, propertyIri: o('born'), op: 'lt', relativeTime: '-2w', orGroup: 'g1' }, { id: 'f2', hopId: null, propertyIri: o('lastSeen'), op: 'gt', relativeTime: '+1d', orGroup: 'g1' }], columns: [col('c1', null, p('name'))] }],
 		// Existing grammar: hops (incl. subclass fields and enumerations), IN, contains, entity filters, labels
 		['hops, enumeration filter and subclass property', { ...base('Org'), hops: [{ id: 'h1', parentHopId: null, propertyIri: o('hasTeam'), direction: 'forward', targetClassIri: o('Team') }, { id: 'h2', parentHopId: 'h1', propertyIri: o('hasMember'), direction: 'forward', targetClassIri: o('Person') }, { id: 'h3', parentHopId: 'h2', propertyIri: o('worksOn'), direction: 'forward', targetClassIri: o('Project') }], filters: [{ id: 'f1', hopId: 'h3', propertyIri: o('priority'), op: 'in', value: [o('pHigh'), o('pMed')] }, { id: 'f2', hopId: 'h2', propertyIri: o('employeeNo'), op: 'isNotEmpty' }, { id: 'f3', hopId: 'h2', propertyIri: o('role'), op: 'eq', value: 'admin' }], columns: [col('c1', null, 'label'), col('c2', 'h2', p('name')), col('c3', 'h3', 'iri')] }],
 		['exact root, entity iri filter, escapes', { ...base('Person'), root: { classIri: o('Person'), includeSubclasses: false }, filters: [{ id: 'f1', hopId: null, propertyIri: null, op: 'eq', value: 'urn:example:7' }, { id: 'f2', hopId: null, propertyIri: o('name'), op: 'contains', value: 'say "hi"\n\\' }], columns: [col('c1', null, 'iri')] }]
@@ -471,7 +493,7 @@ describe('print/parse inverse: seeded generator', () => {
 	it('exercises every SPL-visible model field and every column source kind', () => {
 		const visible = Object.entries(MODEL_FIELDS).filter(([, how]) => how === 'spl').map(([k]) => k);
 		expect(visible.length).toBeGreaterThan(0);
-		for (const feature of ['exact', 'aggregation', 'having', 'sort', 'filters', 'hops', 'limit', 'inverse'])
+		for (const feature of ['exact', 'aggregation', 'having', 'sort', 'filters', 'hops', 'limit', 'inverse', 'orGroup', 'relativeTime'])
 			expect(cov.features.has(feature), `generator never produced "${feature}"`).toBe(true);
 		expect([...cov.columnKinds].sort()).toEqual(['iri', 'label', 'property']);
 	});

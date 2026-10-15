@@ -142,9 +142,11 @@ describe('STORY-210: SOC demo section', () => {
 		const text = section?.content ?? '';
 		expect(text).toContain('SPL');
 		expect(text).not.toContain('takes free text, not SPL');
-		expect(text).toMatch(/inverse traversal/);
-		expect(text).toMatch(/OR groups/);
-		expect(text).toMatch(/relative time/);
+		expect(text).not.toMatch(/cannot yet show inverse traversal/);
+		expect(text).toMatch(/\(a AND b\) OR c/);
+		expect(text).toMatch(/NOT/);
+		expect(text).toMatch(/snap/);
+		expect(text).toMatch(/backwards hop/);
 		const wb = docSections.find((s) => s.id === 'query-workbench')?.content ?? '';
 		expect(wb).not.toContain('The SPL view is read-only.\n');
 		expect(wb).toContain('SPL** mode');

@@ -29,15 +29,17 @@ export async function exportAllRows(
 	model: QueryModel,
 	schema: BuilderSchema,
 	executor: { selectQuery(query: string): Promise<SparqlSelectResults> },
-	options: { rawIris?: boolean; onProgress?: (rowsSoFar: number) => void } = {}
+	options: { rawIris?: boolean; onProgress?: (rowsSoFar: number) => void; now?: Date } = {}
 ): Promise<ExportResult> {
 	const rawIris = options.rawIris === true;
+	// One reading for every chunk, so a relative window cannot shift between pages of one export.
+	const now = options.now ?? new Date();
 	let headers: string[] = [];
 	const rows: string[][] = [];
 	let truncated = false;
 
 	for (let offset = 0; ; offset += MAX_PAGE_SIZE) {
-		const compiled = compileQuery(model, schema, { limit: MAX_PAGE_SIZE, offset });
+		const compiled = compileQuery(model, schema, { limit: MAX_PAGE_SIZE, offset }, { now });
 		const page = buildResultRows(model, compiled, await executor.selectQuery(compiled.sparql));
 		if (offset === 0) headers = page.headers;
 		for (const r of page.rows) rows.push(r.map((c) => exportCellText(c, rawIris)));
@@ -52,7 +54,7 @@ export async function exportAllRows(
 				truncated = true;
 			} else if (fullPage) {
 				// Exactly at the cap: probe one row beyond it to know whether anything was cut off.
-				const probe = compileQuery(model, schema, { limit: 1, offset: EXPORT_ROW_CAP });
+				const probe = compileQuery(model, schema, { limit: 1, offset: EXPORT_ROW_CAP }, { now });
 				const more = await executor.selectQuery(probe.sparql);
 				truncated = more.results.bindings.length > 0;
 			}

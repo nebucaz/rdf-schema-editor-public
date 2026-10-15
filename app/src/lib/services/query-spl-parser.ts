@@ -9,6 +9,7 @@
  */
 import type { BuilderClass, BuilderSchema } from './query-builder-schema';
 import { XSD_DATETIME } from './query-datatypes';
+import { isRelativeTime } from './query-relative-time';
 import {
 	ALIAS_PATTERN,
 	validateRunnableQueryModel,
@@ -69,6 +70,12 @@ export interface SplStage {
 	command: string;
 	args: SplToken[];
 	span: SplSpan;
+}
+
+/** One AND-ed condition of a `where`: plain (`args`), or an OR group (`orMembers`, first `OR` token in `orToken`). */
+export interface SplCondition extends SplStage {
+	orMembers?: SplStage[];
+	orToken?: SplToken;
 }
 
 export type TokenizeResult = { ok: true; tokens: SplToken[] } | { ok: false; error: SplParseError };
@@ -537,15 +544,16 @@ class Resolver {
 
 	/** `earliest` → `gte`, `latest` → `lt` on the root class's single `xsd:dateTime` property. */
 	private addTimeFilter(which: 'earliest' | 'latest', value: SplToken, at: SplSpan): void {
-		if (value.type === 'ident' || (value.type === 'string' && RELATIVE_TIME.test(value.value.trim()))) {
+		const relative = (value.type === 'ident' || value.type === 'string') && isRelativeTime(value.value.trim());
+		if (!relative && (value.type === 'ident' || (value.type === 'string' && RELATIVE_TIME.test(value.value.trim())))) {
 			throw new SplFailure({
-				message: 'relative time is not supported yet: use an absolute timestamp such as "2026-01-01T00:00:00Z"',
+				message: `unsupported relative time "${value.value.trim()}": use -<n><s|m|h|d|w> or now (snapping such as @d is not supported), or an absolute timestamp such as "2026-01-01T00:00:00Z"`,
 				start: value.start,
 				end: value.end,
 				helpTopic: 'spl-relative-time'
 			});
 		}
-		if (value.type !== 'string') return fail(`${which} needs a quoted timestamp`, value);
+		if (value.type !== 'string' && !relative) return fail(`${which} needs a quoted timestamp or a relative time such as -24h`, value);
 		const times = this.membersOf(this.rootClass.iri).filter(
 			(m): m is Extract<Member, { kind: 'property' }> => m.kind === 'property' && m.datatype === XSD_DATETIME
 		);
@@ -563,7 +571,7 @@ class Resolver {
 			hopId: null,
 			propertyIri: times[0].iri,
 			op: which === 'earliest' ? 'gte' : 'lt',
-			value: value.value
+			...(relative ? { relativeTime: value.value.trim() } : { value: value.value })
 		});
 		this.filterSpans.push({ whole: { start: at.start, end: value.end }, value });
 	}
@@ -702,33 +710,121 @@ class Resolver {
 		if (at < tokens.length) fail(`Unexpected "${tokens[at].value}"`, tokens[at]);
 	}
 
-	/** Splits a `where` on top-level `AND`; `OR`/`NOT` have no model equivalent (yet). */
-	conditions(stage: SplStage): SplStage[] {
-		const parts: SplToken[][] = [[]];
-		let depth = 0;
+	/**
+	 * Reads a `where` as a top-level AND of conditions, where a condition is either plain or an OR group
+	 * (`(a OR b)` — or a bare `a OR b` with no AND). That is all `Filter.orGroup` can express, so
+	 * `AND`/`OR` mixed without parentheses, nesting and `NOT` are positioned errors. `OR` binds
+	 * nothing implicitly: `a OR b AND c` is rejected rather than read with Splunk precedence.
+	 */
+	conditions(stage: SplStage): SplCondition[] {
 		for (const tok of stage.args) {
+			if (tok.type === 'ident' && tok.value.toLowerCase() === 'not') unsupported('NOT', tok);
+		}
+		if (stage.args.length === 0) fail('Expected a condition after "where"', stage.head!);
+		return this.expand(stage, stage.args);
+	}
+
+	private connectives(tokens: SplToken[], word: 'and' | 'or'): SplToken[] {
+		const out: SplToken[] = [];
+		let depth = 0;
+		for (const tok of tokens) {
 			if (tok.type === 'lparen') depth++;
 			else if (tok.type === 'rparen') depth--;
-			if (tok.type === 'ident' && depth === 0) {
-				const word = tok.value.toLowerCase();
-				if (word === 'or' || word === 'not') unsupported(tok.value.toUpperCase(), tok);
-				if (word === 'and') {
-					if (parts[parts.length - 1].length === 0) fail('Expected a condition before AND', tok);
-					parts.push([]);
-					continue;
-				}
+			else if (depth === 0 && tok.type === 'ident' && tok.value.toLowerCase() === word) out.push(tok);
+		}
+		return out;
+	}
+
+	/** Splits at the given top-level connective tokens; an empty side is a positioned error. */
+	private splitAt(stage: SplStage, tokens: SplToken[], word: 'and' | 'or'): SplToken[][] {
+		const parts: SplToken[][] = [[]];
+		let depth = 0;
+		for (const tok of tokens) {
+			if (tok.type === 'lparen') depth++;
+			else if (tok.type === 'rparen') depth--;
+			if (depth === 0 && tok.type === 'ident' && tok.value.toLowerCase() === word) {
+				if (parts[parts.length - 1].length === 0) fail(`Expected a condition before ${tok.value.toUpperCase()}`, tok);
+				parts.push([]);
+				continue;
 			}
 			parts[parts.length - 1].push(tok);
 		}
 		if (parts[parts.length - 1].length === 0) {
-			fail('Expected a condition after "where"' + (parts.length > 1 ? ' AND' : ''), stage.args[stage.args.length - 1] ?? stage.head!);
+			const last = tokens[tokens.length - 1] ?? stage.head!;
+			fail('Expected a condition after "where"' + (parts.length > 1 ? ` ${word.toUpperCase()}` : ''), last);
 		}
-		return parts.map((args) => ({
-			...stage,
-			args,
-			span: { start: args[0].start, end: args[args.length - 1].end }
-		}));
+		return parts;
 	}
+
+	/** Index of the `)` closing the `(` at 0, or -1. */
+	private closeOf(tokens: SplToken[]): number {
+		if (tokens[0]?.type !== 'lparen') return -1;
+		let depth = 0;
+		for (const [i, t] of tokens.entries()) {
+			if (t.type === 'lparen') depth++;
+			else if (t.type === 'rparen' && --depth === 0) return i;
+		}
+		return -1;
+	}
+
+	private unwrap(stage: SplStage, tokens: SplToken[]): SplToken[] {
+		let t = tokens;
+		while (t.length > 0 && this.closeOf(t) === t.length - 1) {
+			t = t.slice(1, -1);
+			if (t.length === 0) fail('Expected a condition inside "( )"', tokens[0]);
+		}
+		return t;
+	}
+
+	private asStage(stage: SplStage, args: SplToken[]): SplStage {
+		return { ...stage, args, span: { start: args[0].start, end: args[args.length - 1].end } };
+	}
+
+	private expand(stage: SplStage, raw: SplToken[]): SplCondition[] {
+		const tokens = this.unwrap(stage, raw);
+		const ands = this.connectives(tokens, 'and');
+		const ors = this.connectives(tokens, 'or');
+		if (ands.length > 0 && ors.length > 0) {
+			const first = [...ands, ...ors].sort((x, y) => x.start - y.start)[0];
+			fail(
+				'AND and OR cannot be mixed without parentheses, and (a AND b) OR c is not expressible: write (a OR b) AND c, or use separate queries',
+				first
+			);
+		}
+		if (ors.length > 0) {
+			const members = this.splitAt(stage, tokens, 'or').map((part) => this.member(stage, part));
+			return [{ ...this.asStage(stage, tokens), orMembers: members, orToken: ors[0] }];
+		}
+		if (ands.length > 0) {
+			return this.splitAt(stage, tokens, 'and').flatMap((part) => this.expand(stage, part));
+		}
+		return [this.asStage(stage, tokens)];
+	}
+
+	/** One member of an OR group: a plain condition, never another group or an AND. */
+	private member(stage: SplStage, part: SplToken[]): SplStage {
+		const whole = { start: part[0].start, end: part[part.length - 1].end };
+		const inner = this.unwrap(stage, part);
+		const nested = this.connectives(inner, 'or')[0] ?? this.connectives(inner, 'and')[0];
+		if (nested) {
+			if (inner !== part) {
+				fail('a nested group inside OR is not expressible: use separate queries', whole);
+			}
+			fail('AND inside an OR group is not expressible: use separate queries or write (a OR b) AND c', nested);
+		}
+		return this.asStage(stage, inner);
+	}
+
+	/** Adds a plain filter, or every member of an OR group tagged with one fresh group id. */
+	addCondition(c: SplCondition): void {
+		if (!c.orMembers) return this.addFilter(c);
+		const id = `g${++this.groupCount}`;
+		for (const m of c.orMembers) {
+			this.addFilter(m);
+			this.filters[this.filters.length - 1].orGroup = id;
+		}
+	}
+	private groupCount = 0;
 
 	/** One `where` condition over entity fields. */
 	addFilter(stage: SplStage): void {
@@ -793,9 +889,14 @@ class Resolver {
 				if (op === 'eq' || op === 'neq') {
 					filter = { hopId: field.hopId, propertyIri: this.propertyIriOf(field, opTok.value), op, value: this.resolveValue(valueTok, field) };
 				} else {
-					if (valueTok.type !== 'string' && valueTok.type !== 'number')
-						return fail('Expected a number or a quoted value', valueTok);
-					filter = { hopId: field.hopId, propertyIri: this.propertyIriOf(field, opTok.value), op, value: valueTok.value };
+					const propertyIri = this.propertyIriOf(field, opTok.value);
+					if ((valueTok.type === 'string' || valueTok.type === 'ident') && isRelativeTime(valueTok.value.trim())) {
+						filter = { hopId: field.hopId, propertyIri, op, relativeTime: valueTok.value.trim() };
+					} else {
+						if (valueTok.type !== 'string' && valueTok.type !== 'number')
+							return fail('Expected a number, a quoted value or a relative time such as -24h', valueTok);
+						filter = { hopId: field.hopId, propertyIri, op, value: valueTok.value };
+					}
 				}
 			}
 		}
@@ -1206,7 +1307,10 @@ export function parseSpl(text: string, schema: BuilderSchema, opts: SplParseOpti
 			const at = stage.head!;
 			if (kind === 'where' && sawStats) {
 				if (rank > 2) fail(`"where" must come before "${last}"`, at);
-				for (const part of r.conditions(stage)) r.addHaving(part);
+				for (const part of r.conditions(stage)) {
+					if (part.orMembers) unsupported('OR on a measure', part.orToken!);
+					r.addHaving(part);
+				}
 				continue;
 			}
 			if (RANK[kind] < rank) fail(`"${kind === 'hop' ? at.value : kind}" must come before "${last}"`, at);
@@ -1227,7 +1331,7 @@ export function parseSpl(text: string, schema: BuilderSchema, opts: SplParseOpti
 					r.resolveHop(stage);
 					break;
 				case 'where':
-					for (const part of r.conditions(stage)) r.addFilter(part);
+					for (const part of r.conditions(stage)) r.addCondition(part);
 					break;
 				case 'rename':
 					r.renameFields(stage);

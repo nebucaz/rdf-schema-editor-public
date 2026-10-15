@@ -72,7 +72,9 @@ export class SavedQueriesStore {
 		try {
 			await this.storage.insertSavedQuery(
 				args.name,
-				compileUnpagedQuery(args.model, args.schema),
+				// A snapshot of the SPARQL at save time; the model JSON (which keeps any relative time) is
+				// what a saved query re-runs from.
+				compileUnpagedQuery(args.model, args.schema, { now: new Date() }),
 				args.description?.trim() || undefined,
 				{ queryModelJson: serializeQueryModel(args.model), createdBy: args.user.sub }
 			);

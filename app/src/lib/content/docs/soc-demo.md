@@ -28,15 +28,18 @@ To remove it again, delete the `soc` namespace with the force option (see
 `examples/soc/RUNBOOK.md` in the repository has the seven steps, each with a block of SPL to paste into the
 workbench's **SPL** mode and the expected rows: pivot from an IP address, alert to logfile to server, top
 failing sources (including `where count>7` and `top 5`), blast radius of one source, saving and annotating,
-and reset. The click path for the same queries is kept as an appendix.
+and reset. A closing section answers three more questions: which alerts touched a server (a backwards hop),
+High *or* Medium alerts in a window (an OR group) and the last 24 hours (relative time). The click path for the
+same queries is kept as an appendix.
 
 **Search** mode is free text over every value; switch to **SPL** to paste a pipeline (see
 [SPL in the Workbench](spl-unsupported)).
 
 ## Limits
 
-The demo cannot yet show inverse traversal (walking from a server back to its alerts), OR groups between
-different properties, or relative time such as `earliest=-24h`.
+Boolean logic is limited to `(a OR b) AND c`: `(a AND b) OR c`, nested groups and `NOT` are not
+expressible. Time can be relative (`-24h`, `now`) but cannot snap to a boundary such as `@d`. Computed or
+joined data (`eval`, `join`, `lookup`) is not supported.
 
 ## Related
 

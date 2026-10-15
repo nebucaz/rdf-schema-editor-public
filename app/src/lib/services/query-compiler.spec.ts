@@ -364,3 +364,54 @@ describe('compileUnpagedQuery (STORY-193)', () => {
 		expect(() => compileUnpagedQuery(m, schema)).toThrow(QueryCompileError);
 	});
 });
+
+describe('compileQuery — OR groups (STORY-230)', () => {
+	const orModel = (): QueryModel => {
+		const m = base();
+		m.filters = [
+			{ id: 'a', hopId: null, propertyIri: iri('lifecycle'), op: 'eq', value: 'Production', orGroup: 'g' },
+			{ id: 'b', hopId: null, propertyIri: iri('lifecycle'), op: 'eq', value: 'Staging', orGroup: 'g' },
+			{ id: 'c', hopId: null, propertyIri: iri('lifecycle'), op: 'neq', value: 'Retired' }
+		];
+		return m;
+	};
+
+	it('compiles a group to a single FILTER of EXISTS blocks joined by ||', () => {
+		const q = sparql(orModel());
+		const groupFilters = q.match(/FILTER\(\s*EXISTS[\s\S]*?\)\n/g) ?? [];
+		expect(groupFilters).toHaveLength(1);
+		expect(q).toMatch(/FILTER\(\s*EXISTS \{[^]*?FILTER\(STR\(\?f0\) = "Production"\)[^]*?\} \|\| EXISTS \{[^]*?FILTER\(STR\(\?f1\) = "Staging"\)/);
+	});
+
+	it('adds no required triple pattern for group members, and keeps ungrouped filters as they were', () => {
+		const q = sparql(orModel());
+		const required = q.split('OPTIONAL')[0].split('FILTER(')[0];
+		expect(required).not.toContain('?f0');
+		expect(required).not.toContain('?f1');
+		expect(q).toContain('?root <' + iri('lifecycle') + '> ?f2 .');
+		expect(q).toContain('FILTER(STR(?f2) != "Retired")');
+	});
+
+	it('supports isEmpty/isNotEmpty and entity filters as members', () => {
+		const m = base();
+		m.filters = [
+			{ id: 'a', hopId: null, propertyIri: iri('lifecycle'), op: 'isEmpty', orGroup: 'g' },
+			{ id: 'b', hopId: null, propertyIri: null, op: 'eq', value: iri('x'), orGroup: 'g' }
+		];
+		const q = sparql(m);
+		expect(q).toMatch(/NOT EXISTS \{[^]*?\} \|\| STR\(\?root\) = /);
+	});
+
+	it('works in the count query and with aggregation', () => {
+		const m = orModel();
+		m.aggregation = { groupBy: ['name'], measures: [{ fn: 'count', of: 'root', alias: 'n' }] };
+		expect(compileCountQuery(m, schema).sparql).toContain('||');
+		expect(sparql(m)).toContain('GROUP BY');
+	});
+
+	it('rejects a one-member group', () => {
+		const m = orModel();
+		m.filters = [m.filters[0]];
+		expect(() => sparql(m)).toThrow(QueryCompileError);
+	});
+});

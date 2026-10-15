@@ -159,9 +159,69 @@ Without it you can still run and share unsaved queries.
 Hamburger menu → **Namespaces** → delete `soc`. The app refuses and reports how many entries block it;
 confirm the **force** option. Importing the three files again restores the demo.
 
+## Further questions: backwards hops, OR and relative time
+
+Three things the chain above cannot ask. Each block parses to the model the tests assert on.
+
+### Which alerts touched a server?
+
+A hop can run **backwards**: `^hostedOn` reads "the logfiles hosted on this server", and the chain continues
+to the events recorded in them and the alerts they triggered. Start from `Server`:
+
+```
+Server
+| ^hostedOn
+| ^hostedOn.^recordedIn
+| ^hostedOn.^recordedIn.^triggeredBy
+| where hostname="web-01.example.com"
+| stats count as events by ^hostedOn.^recordedIn.^triggeredBy.alertId
+| sort -events
+```
+
+**Expected:** two rows, because only two alerts have events on web-01.
+
+| alertId | events |
+|---|---|
+| A-1001 | 13 |
+| A-1002 | 3 |
+
+In the builder a backwards hop is listed under the class's inbound relationships and drawn as `← hostedOn`.
+
+### High or Medium alerts in a window
+
+Conditions on different filters can be joined with **OR**, grouped by parentheses:
+
+```
+Alert
+| where (severity="High" OR severity="Medium")
+| where raisedAt>="2026-03-15T03:15:00Z"
+| fields alertId, title, severity, raisedAt
+| sort raisedAt
+```
+
+**Expected:** two rows, A-1002 (Medium, 2026-03-15) and A-1004 (High, 2026-03-16). A-1003 is inside the window but
+Low; A-1001 is High but older. Groups and the other conditions are AND-ed: `(a OR b) AND c`. In the builder,
+tick two filter chips and choose **Group as "any of"**. For several values of *one* property,
+`severity IN ("High","Medium")` is the shorter spelling of the same thing.
+
+### Relative time
+
+```
+Alert
+| where raisedAt>="-24h"
+| fields alertId, title, raisedAt
+| sort -raisedAt
+```
+
+`earliest=-24h` is accepted as well, and `now`, `+1d`, `-90m`, `-2w` and `-30s` work (units `s m h d w`, UTC).
+The expression is stored with the query, so a saved query, its report and a shared link always mean "the last
+24 hours *from when it runs*"; the results show the resolved window. **Expected on this sample:** no rows
+unless you run it within a day of the data (it ends on 2026-03-16), so use the absolute window above when you
+need a reproducible result.
+
 ## Appendix: the click path
 
-The same three queries without typing SPL. After each, **Show query** must print exactly the block above.
+The same queries without typing SPL. After each, **Show query** must print exactly the block above.
 
 **Step 3.** Pick the class **Alert**. Expand `triggeredBy` → `recordedIn` → `hostedOn`. Filter on the root:
 `severity` equals `High`. Tick `alertId`, `title` (on Alert), `timestamp` (on `triggeredBy`), `path`
@@ -176,14 +236,18 @@ equals `203.0.113.45`. Tick `hostname` (on `hostedOn`) and `user` (on the root).
 **COUNT** of the entity (alias `events`) and **COUNT DISTINCT** of `user` (alias `users`). Sort `events`
 descending.
 
+**Backwards hops.** Pick **Server**, expand the inbound `← hostedOn`, then `← recordedIn` and `← triggeredBy`.
+Filter `hostname` on the root, tick `alertId` on the last hop, group by it and add **COUNT** of the entity.
+
+**OR group.** Pick **Alert**, filter `severity` equals `High` (and add a second filter on another property, or
+parse the SPL), select the filter chips and choose **Group as “any of”**.
+
 ## What the engine can't do yet
 
 These are known gaps in the current workbench, not mistakes in the sample. They are listed under
 "Deferred" in `spec/query-workbench/plan.md` and `spec/spl-input/plan.md`.
 
-- **No inverse traversal.** Hops follow relations forward only, so "which alerts hit server X?" cannot be asked
-  from `Server`. Start at `Alert` and filter on `hostname` in the chain instead. That is why the schema has no
-  `Alert → Server` shortcut.
-- **No OR groups.** Filters combine with AND only; `severity="High" OR severity="Medium"` is an error. For one
-  property, `severity IN ("High","Medium")` does the same job.
-- **No relative time.** `earliest=` and `latest=` take absolute timestamps; `-24h` and `@d` are not accepted yet.
+- **No full boolean logic.** Filters are AND-ed, with OR only as `(a OR b) AND c`. `(a AND b) OR c`, nested
+  groups and `NOT` are rejected with a message pointing at the spot (run two queries instead).
+- **No computed or joined data.** `eval`, `rex`, `join`, `lookup` and subsearches are not supported.
+- **No time snapping or calendar units.** `-24h` works; `@d` (snap to day) and months or years do not.

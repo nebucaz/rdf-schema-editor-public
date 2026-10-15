@@ -8,7 +8,7 @@ import type { QueryModel } from './query-model';
 export interface NormalisedModel {
 	root: { classIri: string; includeSubclasses: boolean };
 	hops: string[];
-	filters: { hop: string; propertyIri: string | null; op: string; value: string | string[] | null }[];
+	filters: { hop: string; propertyIri: string | null; op: string; value: string | string[] | null; relative: string | null; group: number | null }[];
 	columns: { hop: string; source: string }[];
 	aggregation: {
 		groupBy: string[];
@@ -46,6 +46,9 @@ export function normaliseModel(model: QueryModel): NormalisedModel {
 		.map((c) => ({ hop: pathOf(c.hopId), source: typeof c.source === 'string' ? c.source : c.source.propertyIri }));
 	// Column order is only meaningful in a plain query (`| fields a, b`); an aggregated one derives it.
 	const columns = usedColumns === null ? shown : [...shown].sort((a, b) => `${a.hop}|${a.source}`.localeCompare(`${b.hop}|${b.source}`));
+	// OR groups are compared by first appearance, not by their ids (the SPL text carries none).
+	const groupNumber = new Map<string, number>();
+	for (const f of model.filters) if (f.orGroup && !groupNumber.has(f.orGroup)) groupNumber.set(f.orGroup, groupNumber.size + 1);
 	return {
 		root: { ...model.root },
 		hops: model.hops.map((h) => pathOf(h.id)),
@@ -53,7 +56,9 @@ export function normaliseModel(model: QueryModel): NormalisedModel {
 			hop: pathOf(f.hopId),
 			propertyIri: f.propertyIri,
 			op: f.op,
-			value: f.value === undefined ? null : f.value
+			value: f.value === undefined ? null : f.value,
+			relative: f.relativeTime ?? null,
+			group: f.orGroup ? groupNumber.get(f.orGroup)! : null
 		})),
 		columns,
 		aggregation: agg

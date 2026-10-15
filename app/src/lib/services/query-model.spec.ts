@@ -404,3 +404,114 @@ describe('share links (encodeModelForUrl / decodeModelFromUrl)', () => {
 		if (dec.ok) expect(validateQueryModel(dec.model).map((i) => i.path)).toContain('columnRules[0].color');
 	});
 });
+
+describe('OR groups (orGroup)', () => {
+	const withGroup = (groups: Array<string | undefined>): QueryModel => ({
+		...fullModel(),
+		aggregation: undefined,
+		filters: groups.map((g, i) => ({
+			id: `f${i}`,
+			hopId: i % 2 === 0 ? null : 'h1',
+			propertyIri: `${NS}#lifecycle`,
+			op: 'eq' as const,
+			value: 'x',
+			...(g === undefined ? {} : { orGroup: g })
+		}))
+	});
+
+	it('round-trips orGroup through serialise/parse', () => {
+		const m = withGroup(['g1', 'g1', undefined]);
+		const r = parseQueryModel(serializeQueryModel(m));
+		expect(r.ok).toBe(true);
+		if (r.ok) expect(r.model).toEqual(m);
+	});
+
+	it('rejects a non-string or empty orGroup on parse', () => {
+		for (const bad of [1, '', null]) {
+			const m = withGroup(['g1', 'g1']);
+			(m.filters[0] as unknown as Record<string, unknown>).orGroup = bad;
+			expect(parseQueryModel(serializeQueryModel(m)).ok).toBe(false);
+		}
+	});
+
+	it('accepts a group of two members, across hops', () => {
+		expect(validateQueryModel(withGroup(['g1', 'g1']))).toEqual([]);
+	});
+
+	it('flags a group with a single member', () => {
+		const issues = validateQueryModel(withGroup(['g1', undefined]));
+		expect(issues).toContainEqual({
+			path: 'filters[0].orGroup',
+			message: expect.stringContaining('at least two')
+		});
+	});
+
+	it('leaves models without orGroup unchanged', () => {
+		expect(validateQueryModel(withGroup([undefined, undefined]))).toEqual([]);
+	});
+});
+
+describe('relative time filters (STORY-233)', () => {
+	const rel = (patch: Partial<QueryModel['filters'][number]>): QueryModel => ({
+		...fullModel(),
+		aggregation: undefined,
+		filters: [{ id: 'f1', hopId: null, propertyIri: `${NS}#when`, op: 'gte', relativeTime: '-24h', ...patch }]
+	});
+	const at = (m: QueryModel, schema?: BuilderSchema) => validateQueryModel(m, undefined, schema).map((i) => i.path);
+	const dated = (datatype: string): BuilderSchema =>
+		({
+			classes: new Map([
+				[
+					`${NS}#Application`,
+					{ iri: `${NS}#Application`, label: 'Application', subclasses: [], properties: [{ iri: `${NS}#when`, label: 'when', datatype }], relationships: [], members: [] }
+				]
+			])
+		}) as unknown as BuilderSchema;
+	const DT = 'http://www.w3.org/2001/XMLSchema#dateTime';
+
+	it('round-trips through serialise/parse and rejects a non-string relativeTime', () => {
+		const m = rel({});
+		const r = parseQueryModel(serializeQueryModel(m));
+		expect(r).toEqual({ ok: true, model: m });
+		const bad = JSON.parse(serializeQueryModel(m));
+		bad.filters[0].relativeTime = 24;
+		expect(parseQueryModel(JSON.stringify(bad)).ok).toBe(false);
+	});
+
+	it('accepts a relative bound on a date/dateTime property', () => {
+		expect(at(rel({}), dated(DT))).toEqual([]);
+		expect(at(rel({ relativeTime: 'now' }), dated('http://www.w3.org/2001/XMLSchema#date'))).toEqual([]);
+	});
+
+	it('needs no separate value', () => {
+		expect(at(rel({}))).toEqual([]);
+	});
+
+	it('rejects a malformed expression, a value alongside it, and a non-comparison operator', () => {
+		expect(at(rel({ relativeTime: 'yesterday' }))).toContain('filters[0].relativeTime');
+		expect(at(rel({ value: '2026-01-01T00:00:00Z' }))).toContain('filters[0].value');
+		expect(at(rel({ op: 'eq' }))).toContain('filters[0].relativeTime');
+	});
+
+	it('rejects a relative bound on a numeric or unknown property', () => {
+		expect(at(rel({}), dated('http://www.w3.org/2001/XMLSchema#integer'))).toContain('filters[0].op');
+		expect(at(rel({ propertyIri: `${NS}#missing` }), dated(DT))).toContain('filters[0].propertyIri');
+		expect(at(rel({ propertyIri: null }))).toContain('filters[0].propertyIri');
+	});
+});
+
+describe('share links keep relative time (STORY-233)', () => {
+	it('encodes and decodes the expression, not a resolved timestamp', () => {
+		const m: QueryModel = {
+			...fullModel(),
+			aggregation: undefined,
+			filters: [{ id: 'f1', hopId: null, propertyIri: `${NS}#when`, op: 'gte', relativeTime: '-24h' }]
+		};
+		const enc = encodeModelForUrl(m);
+		expect(enc.ok).toBe(true);
+		if (!enc.ok) return;
+		const dec = decodeModelFromUrl(enc.param);
+		expect(dec.ok && dec.model.filters[0]).toMatchObject({ relativeTime: '-24h' });
+		expect(dec.ok && dec.model.filters[0].value).toBeUndefined();
+	});
+});

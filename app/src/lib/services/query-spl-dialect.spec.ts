@@ -98,7 +98,6 @@ describe('unsupported constructs fail with a positioned "not supported" error', 
 		['append', 'Alert | append [ search Server ] | fields title', 'append', 'append is not supported in this workbench'],
 		['lookup', 'Alert | lookup users user | fields title', 'lookup', 'lookup is not supported in this workbench'],
 		['subsearch', 'Alert | where title IN [ search Server | fields hostname ] | fields title', '[ search Server | fields hostname ]', 'subsearch is not supported in this workbench'],
-		['OR', 'Alert | where title="a" OR title="b" | fields title', 'OR', 'OR is not supported in this workbench'],
 		['NOT', 'Alert | where NOT title="a" | fields title', 'NOT', 'NOT is not supported in this workbench']
 	];
 	it.each(table)('%s', (_name, text, spanned, message) => {
@@ -113,12 +112,35 @@ describe('unsupported constructs fail with a positioned "not supported" error', 
 		expect(e.message).toMatch(/not supported/);
 	});
 
-	it('relative earliest/latest returns a dedicated error', () => {
-		const text = 'Authentication event earliest=-24h | fields user';
+	it('relative earliest/latest become a relative bound on the single dateTime property', () => {
+		const m = model('Authentication event earliest=-24h latest=now | fields user');
+		expect(m.filters.map((f) => ({ op: f.op, relativeTime: f.relativeTime, value: f.value }))).toEqual([
+			{ op: 'gte', relativeTime: '-24h', value: undefined },
+			{ op: 'lt', relativeTime: 'now', value: undefined }
+		]);
+		const quoted = model('Authentication event | where earliest="-90m" | fields user');
+		expect(quoted.filters[0]).toMatchObject({ op: 'gte', relativeTime: '-90m' });
+	});
+
+	it('a comparison on a dateTime field accepts a relative bound, quoted or bare', () => {
+		for (const bound of ['"-1d"', '-1d']) {
+			const m = model(`Authentication event | where timestamp>=${bound} | fields user`);
+			expect(m.filters[0]).toMatchObject({ op: 'gte', relativeTime: '-1d' });
+			expect(m.filters[0].value).toBeUndefined();
+		}
+	});
+
+	it('a relative bound on a non-date property is a positioned validation error', () => {
+		const text = 'Authentication event | where user>="-1d" | fields user';
+		const r = parse(text);
+		expect(r.ok).toBe(false);
+	});
+
+	it('unsupported relative syntax (snapping, months) keeps a dedicated error', () => {
+		const text = 'Authentication event earliest="-1d@d" | fields user';
 		const e = error(text);
-		expect(e.message).toBe('relative time is not supported yet: use an absolute timestamp such as "2026-01-01T00:00:00Z"');
-		expect(text.slice(e.start, e.end)).toBe('-24h');
+		expect(e.message).toMatch(/unsupported relative time/);
 		expect(e.helpTopic).toBe('spl-relative-time');
-		expect(error('Authentication event | where latest="now" | fields user').helpTopic).toBe('spl-relative-time');
+		expect(error('Authentication event | where latest="-1mon" | fields user').helpTopic).toBe('spl-relative-time');
 	});
 });

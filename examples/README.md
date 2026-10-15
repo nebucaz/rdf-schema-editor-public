@@ -5,7 +5,7 @@ never touches your existing schema.
 
 | Folder | What it is | Start here |
 |---|---|---|
-| [`soc/`](soc/) | A security-operations sample: servers, logfiles, authentication events and alerts, for the Query Workbench. | [`soc/RUNBOOK.md`](soc/RUNBOOK.md) |
+| [`soc/`](soc/) | A security-operations sample: servers, logfiles, authentication events and alerts, for the Query Workbench, including backwards hops, OR groups and relative time. | [`soc/RUNBOOK.md`](soc/RUNBOOK.md) |
 
 ## Importing a sample
 

@@ -26,6 +26,7 @@
 	import QueryResultsTable from '$lib/components/QueryResultsTable.svelte';
 	import { queryRunStore } from '$lib/stores/query-run-store.svelte';
 	import { compileQuery } from '$lib/services/query-compiler';
+	import { formatTimeWindow } from '$lib/services/query-relative-time';
 	import { resultKey, validateRunnableQueryModel } from '$lib/services/query-model';
 	import QueryFilterChips from '$lib/components/QueryFilterChips.svelte';
 	import { queryBuilderStore } from '$lib/stores/query-builder-store.svelte';
@@ -520,10 +521,19 @@
 							: { kind: 'property', hopId: m.hopId, propertyIri: m.propertyIri })}
 					onRemove={(m) => m.filters.forEach((f) => queryBuilderStore.removeFilter(f.id))}
 					onAdd={() => (filterTarget = { kind: 'pick' })}
+					onGroup={(ids) => queryBuilderStore.groupFilters(ids)}
+					onUngroup={(groupId) => queryBuilderStore.ungroupFilters(groupId)}
+					onRemoveFromGroup={(m) => m.filters.forEach((f) => queryBuilderStore.removeFromGroup(f.id))}
 				/>
 				{#if resultsView}
 					{@const model = queryBuilderStore.model}
 					{@const schema = queryBuilderStore.schema}
+					{#if queryRunStore.timeWindow.length > 0}
+						<p class="time-window" data-testid="time-window">
+							Time window{queryRunStore.asOf ? ` as of ${queryRunStore.asOf.toLocaleString()}` : ''}:
+							{queryRunStore.timeWindow.map(formatTimeWindow).join('; ')}
+						</p>
+					{/if}
 					<QueryResultsTable
 						table={resultsView.table}
 						columns={resultsView.columns}
@@ -603,6 +613,11 @@
 </div>
 
 <style>
+	.time-window {
+		margin: 0.25rem 0;
+		font-size: 0.8rem;
+		color: var(--color-text-secondary, inherit);
+	}
 	.workbench-page {
 		display: flex;
 		flex-direction: column;

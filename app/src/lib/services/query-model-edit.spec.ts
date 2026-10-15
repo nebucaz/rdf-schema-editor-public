@@ -18,6 +18,9 @@ import {
 	hasColumn,
 	addFilter,
 	removeFilter,
+	groupFilters,
+	ungroupFilters,
+	removeFromGroup,
 	addHop,
 	hopViaLabel,
 	removeHop,
@@ -490,5 +493,83 @@ describe('hopViaLabel', () => {
 	it('falls back to the IRI when the schema does not know the relationship', () => {
 		const m = addHop(startQueryFromClass(`${NS}#Server`, [NS]), null, { iri: `${NS}#gone`, targetClassIri: `${NS}#Application` }, 'inverse');
 		expect(hopViaLabel(m, schema, m.hops[0])).toBe(`← ${NS}#gone`);
+	});
+});
+
+describe('OR groups (STORY-232)', () => {
+	const P = (n: string) => `${NS}#${n}`;
+	const withFilters = (n: number): QueryModel => {
+		let m = startQueryFromClass(APP, [NS]);
+		for (let i = 1; i <= n; i++) m = addFilter(m, { hopId: null, propertyIri: P(`p${i}`), op: 'eq', value: `v${i}` });
+		return m;
+	};
+	const groups = (m: QueryModel) => m.filters.map((f) => f.orGroup ?? null);
+
+	it('groupFilters tags 2+ filters with a fresh group id and makes them contiguous', () => {
+		const m = groupFilters(withFilters(4), ['f1', 'f3']);
+		expect(m.filters.map((f) => f.id)).toEqual(['f1', 'f3', 'f2', 'f4']);
+		expect(groups(m)).toEqual(['g1', 'g1', null, null]);
+	});
+
+	it('groupFilters needs at least two existing filters and otherwise changes nothing', () => {
+		const m = withFilters(3);
+		expect(groupFilters(m, ['f1'])).toBe(m);
+		expect(groupFilters(m, ['f1', 'nope'])).toBe(m);
+	});
+
+	it('grouping filters that already belong to groups merges those groups', () => {
+		let m = groupFilters(withFilters(5), ['f1', 'f2']);
+		m = groupFilters(m, ['f2', 'f4']);
+		expect(groups(m)).toEqual(['g2', 'g2', 'g2', null, null]);
+		expect(m.filters.map((f) => f.id)).toEqual(['f1', 'f2', 'f4', 'f3', 'f5']);
+	});
+
+	it('group ids are never reused', () => {
+		let m = groupFilters(withFilters(4), ['f1', 'f2']);
+		m = groupFilters(m, ['f3', 'f4']);
+		expect(groups(m)).toEqual(['g1', 'g1', 'g2', 'g2']);
+	});
+
+	it('ungroup dissolves a whole group', () => {
+		const m = ungroupFilters(groupFilters(withFilters(3), ['f1', 'f2']), 'g1');
+		expect(groups(m)).toEqual([null, null, null]);
+	});
+
+	it('removing a member of a two-member group dissolves the group', () => {
+		const m = removeFilter(groupFilters(withFilters(3), ['f1', 'f2']), 'f1');
+		expect(m.filters.map((f) => f.id)).toEqual(['f2', 'f3']);
+		expect(groups(m)).toEqual([null, null]);
+	});
+
+	it('removing a member of a three-member group keeps the group', () => {
+		const m = removeFilter(groupFilters(withFilters(3), ['f1', 'f2', 'f3']), 'f2');
+		expect(groups(m)).toEqual(['g1', 'g1']);
+	});
+
+	it('removeFromGroup takes one filter out and dissolves a group left with one member', () => {
+		const three = removeFromGroup(groupFilters(withFilters(3), ['f1', 'f2', 'f3']), 'f2');
+		expect(groups(three)).toEqual(['g1', null, 'g1']);
+		const two = removeFromGroup(groupFilters(withFilters(2), ['f1', 'f2']), 'f1');
+		expect(groups(two)).toEqual([null, null]);
+	});
+
+	it('removing a hop dissolves a group it leaves with one member', () => {
+		let m = addHop(withFilters(1), null, { iri: P('rel'), targetClassIri: P('B') });
+		m = addFilter(m, { hopId: m.hops[0].id, propertyIri: P('q'), op: 'eq', value: 'x' });
+		m = groupFilters(m, ['f1', 'f2']);
+		m = removeHop(m, m.hops[0].id);
+		expect(m.filters).toHaveLength(1);
+		expect(m.filters[0].orGroup).toBeUndefined();
+	});
+
+	it('editing a grouped filter keeps it in its group', () => {
+		let m = groupFilters(withFilters(2), ['f1', 'f2']);
+		m = upsertFilter(m, { hopId: null, propertyIri: P('p1'), op: 'contains', value: 'z' });
+		expect(m.filters[0]).toMatchObject({ id: 'f1', op: 'contains', orGroup: 'g1' });
+	});
+
+	it('a grouped model validates and compiles to one OR filter', () => {
+		const m = groupFilters(withFilters(2), ['f1', 'f2']);
+		expect(validateQueryModel(m)).toEqual([]);
 	});
 });

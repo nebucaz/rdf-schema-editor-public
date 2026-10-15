@@ -2,11 +2,16 @@
  * Query Workbench model — a serialisable, versioned description of a visual query.
  * Pure: no GraphDB access, no Svelte, no DOM. Compiled to SPARQL by `query-compiler.ts`
  * and printed as an SPL-style pipeline by `query-spl.ts`.
+ *
+ * Boolean logic is deliberately limited: filters are AND-ed, with optional OR groups
+ * (`Filter.orGroup`) giving `(a OR b) AND c`. Full DNF (`(a AND b) OR c`), nesting and `NOT` are not
+ * expressible — a documented limitation, deferred in `spec/spl-input/plan.md`.
  */
 
 import { RULE_OPS, isPaletteColor, type ColumnRule } from './column-rules';
 import { fromBase64Url, toBase64Url } from '../utils/base64url';
 import type { BuilderSchema } from './query-builder-schema';
+import { isRelativeTime } from './query-relative-time';
 import {
 	isComparableDatatype,
 	isComparisonOp,
@@ -53,6 +58,18 @@ export interface Filter {
 	 * typed from the property's schema datatype (a range is two filters, `gte` + `lt`).
 	 */
 	value?: string | string[];
+	/**
+	 * Filters sharing the same non-empty `orGroup` are OR-ed with each other; groups and ungrouped
+	 * filters are AND-ed, i.e. `(a OR b) AND c`. Full DNF (`(a AND b) OR c`) is a documented
+	 * limitation, deferred (see `spec/spl-input/plan.md`). A group needs at least two members.
+	 */
+	orGroup?: string;
+	/**
+	 * A relative bound (`-24h`, `+1d`, `now`; see `query-relative-time.ts`) *instead of* `value` on a
+	 * `gt/gte/lt/lte` filter over a date/dateTime property. It is resolved at run time against a clock
+	 * handed to the compiler, so a saved query or report stays live.
+	 */
+	relativeTime?: string;
 }
 
 export type ColumnSource = 'label' | 'iri' | { propertyIri: string };
@@ -168,7 +185,9 @@ function shapeError(m: Record<string, unknown>): string | null {
 		if (
 			!isObj(f) || !isStr(f.id) || !isStrOrNull(f.hopId) || !isStrOrNull(f.propertyIri) ||
 			!isStr(f.op) || !FILTER_OPS.includes(f.op) ||
-			!(f.value === undefined || isStr(f.value) || isStrArr(f.value))
+			!(f.value === undefined || isStr(f.value) || isStrArr(f.value)) ||
+			!(f.orGroup === undefined || (isStr(f.orGroup) && f.orGroup !== '')) ||
+			!(f.relativeTime === undefined || isStr(f.relativeTime))
 		)
 			return 'filters contains a malformed entry';
 	}
@@ -390,13 +409,28 @@ export function validateQueryModel(
 		if (f.op === 'in') {
 			if (!Array.isArray(f.value) || f.value.length === 0)
 				add(`filters[${i}].value`, '"in" needs a non-empty list of values');
-		} else if (f.op !== 'isEmpty' && f.op !== 'isNotEmpty' && typeof f.value !== 'string') {
+		} else if (
+			f.op !== 'isEmpty' && f.op !== 'isNotEmpty' && f.relativeTime === undefined &&
+			typeof f.value !== 'string'
+		) {
 			add(`filters[${i}].value`, `"${f.op}" needs a value`);
+		}
+		if (f.relativeTime !== undefined) {
+			if (!isComparisonOp(f.op))
+				add(`filters[${i}].relativeTime`, `A relative time needs >, >=, < or <=, not "${f.op}"`);
+			else if (!isRelativeTime(f.relativeTime))
+				add(`filters[${i}].relativeTime`, `"${f.relativeTime}" is not a relative time such as -24h, +1d or now`);
+			if (f.value !== undefined) add(`filters[${i}].value`, 'A relative time replaces the value; give one or the other');
+			if (isComparisonOp(f.op) && f.propertyIri !== null && schema) {
+				const dt = propertyDatatype(model, schema, f.hopId, f.propertyIri);
+				if (dt === null) add(`filters[${i}].propertyIri`, `Unknown property ${f.propertyIri}`);
+				else if (!isTemporalDatatype(dt)) add(`filters[${i}].op`, 'A relative time needs a date or dateTime property');
+			}
 		}
 		if (isComparisonOp(f.op)) {
 			if (f.propertyIri === null) {
 				add(`filters[${i}].propertyIri`, `"${f.op}" needs a property, not the entity itself`);
-			} else if (schema && typeof f.value === 'string') {
+			} else if (schema && typeof f.value === 'string' && f.relativeTime === undefined) {
 				const dt = propertyDatatype(model, schema, f.hopId, f.propertyIri);
 				if (dt === null) add(`filters[${i}].propertyIri`, `Unknown property ${f.propertyIri}`);
 				else if (!isComparableDatatype(dt))
@@ -407,6 +441,15 @@ export function validateQueryModel(
 				}
 			}
 		}
+	});
+
+	const groupSizes = new Map<string, number>();
+	for (const f of model.filters) {
+		if (f.orGroup) groupSizes.set(f.orGroup, (groupSizes.get(f.orGroup) ?? 0) + 1);
+	}
+	model.filters.forEach((f, i) => {
+		if (f.orGroup && groupSizes.get(f.orGroup)! < 2)
+			add(`filters[${i}].orGroup`, `OR group "${f.orGroup}" needs at least two filters`);
 	});
 
 	const columnIds = new Set<string>();

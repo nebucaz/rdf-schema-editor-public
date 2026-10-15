@@ -124,3 +124,46 @@ describe('QueryRunStore', () => {
 		expect(store.table?.rows[0][0].text).toBe('new');
 	});
 });
+
+describe('QueryRunStore relative time (STORY-233)', () => {
+	const XSD_DT = 'http://www.w3.org/2001/XMLSchema#dateTime';
+	const timed = buildBuilderSchema({
+		...fetched,
+		datatypeProperties: [
+			{ iri: `${NS}#seen`, label: 'seen', domain: APP, range: XSD_DT, namespaceBaseIri: NS, required: false, repeatable: false }
+		]
+	} as unknown as FetchedSchema);
+	const relModel = {
+		...model,
+		filters: [{ id: 'f1', hopId: null, propertyIri: `${NS}#seen`, op: 'gte' as const, relativeTime: '-24h' }]
+	};
+
+	it('compiles against the injected clock and records the as-of time and resolved window', async () => {
+		const c = connector(async (q) => (isCount(q) ? count(1) : rows(['a'])));
+		const store = new QueryRunStore(c, () => new Date('2026-03-15T10:30:45Z'));
+		await store.run(relModel, timed);
+		for (const [q] of c.selectQuery.mock.calls) expect(q).toContain('"2026-03-14T10:30:45Z"');
+		expect(store.asOf?.toISOString()).toBe('2026-03-15T10:30:45.000Z');
+		expect(store.timeWindow).toEqual([
+			{ filterId: 'f1', property: 'seen', op: 'gte', expression: '-24h', resolved: '2026-03-14T10:30:45Z' }
+		]);
+		expect(store.error).toBeNull();
+	});
+
+	it('re-resolves on the next run with the new clock reading', async () => {
+		const c = connector(async (q) => (isCount(q) ? count(1) : rows(['a'])));
+		let now = new Date('2026-03-15T10:00:00Z');
+		const store = new QueryRunStore(c, () => now);
+		await store.run(relModel, timed);
+		now = new Date('2026-03-16T10:00:00Z');
+		await store.run(relModel, timed);
+		expect(store.timeWindow[0].resolved).toBe('2026-03-15T10:00:00Z');
+	});
+
+	it('has no window for a model without relative filters', async () => {
+		const c = connector(async (q) => (isCount(q) ? count(1) : rows(['a'])));
+		const store = new QueryRunStore(c);
+		await store.run(model, schema);
+		expect(store.timeWindow).toEqual([]);
+	});
+});

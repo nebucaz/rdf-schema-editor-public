@@ -19,6 +19,7 @@
 	import { cycleSort } from '$lib/services/query-model-edit';
 	import { validateRunnableQueryModel, type QueryModel } from '$lib/services/query-model';
 	import type { BuilderSchema } from '$lib/services/query-builder-schema';
+	import { formatTimeWindow } from '$lib/services/query-relative-time';
 
 	const user = $derived(page.data.user as { sub: string; displayName: string } | null | undefined);
 	const id = $derived(page.params.id ?? '');
@@ -96,7 +97,7 @@
 	async function execute() {
 		if (!model || !schema) return;
 		await runStore.run(model, schema);
-		if (!runStore.error) asOf = new Date();
+		if (!runStore.error) asOf = runStore.asOf ?? new Date();
 	}
 
 	// Re-runs the live query whenever the route's id changes (and on first open).
@@ -200,6 +201,16 @@
 						{asOf ? asOf.toLocaleString() : runStore.running ? 'running…' : '—'}
 					</dd>
 				</div>
+				{#if runStore.timeWindow.length > 0}
+					<div>
+						<dt>Time window</dt>
+						<dd data-testid="report-time-window">
+							{#each runStore.timeWindow as w (w.filterId)}
+								<div>{formatTimeWindow(w)}</div>
+							{/each}
+						</dd>
+					</div>
+				{/if}
 				{#if target.item.creator}
 					<div class="no-print">
 						<dt>Author</dt>

@@ -10,6 +10,7 @@
  */
 import type { BuilderSchema } from './query-builder-schema';
 import { isComparisonOp, propertyDatatype } from './query-datatypes';
+import { resolveRelativeTime } from './query-relative-time';
 import {
 	validateQueryModel,
 	type Filter,
@@ -51,6 +52,14 @@ export interface CompiledQuery {
 	entityVariables: Record<string, string>;
 }
 
+/**
+ * The clock is an input, never read here: `now` resolves `Filter.relativeTime` expressions. A model
+ * with a relative filter and no `now` is a compile error rather than a silently wrong window.
+ */
+export interface CompileOptions {
+	now?: Date;
+}
+
 export interface PageRequest {
 	limit: number;
 	offset: number;
@@ -87,7 +96,7 @@ function validateOrThrow(model: QueryModel, schema: BuilderSchema): void {
 	}
 }
 
-function build(model: QueryModel, schema: BuilderSchema): BuiltQuery {
+function build(model: QueryModel, schema: BuilderSchema, opts: CompileOptions = {}): BuiltQuery {
 	validateOrThrow(model, schema);
 	const agg = model.aggregation;
 
@@ -123,10 +132,7 @@ function build(model: QueryModel, schema: BuilderSchema): BuiltQuery {
 		);
 	}
 
-	const filterClauses: string[] = [];
-	for (const [i, f] of model.filters.entries()) {
-		filterClauses.push(...compileFilter(f, i, entityVar(f.hopId), scoped, model, schema));
-	}
+	const filterClauses = compileFilters(model, schema, entityVar, scoped, opts);
 
 	// In an aggregated query only grouped or measured columns take part.
 	const used = new Set<string>(
@@ -224,13 +230,18 @@ function withOrder(built: BuiltQuery): string {
 }
 
 /** The query text without paging (only a model-level row `LIMIT`, if set) — for "Show SPARQL" and the console (STORY-193). */
-export function compileUnpagedQuery(model: QueryModel, schema: BuilderSchema): string {
-	const text = withOrder(build(model, schema));
+export function compileUnpagedQuery(model: QueryModel, schema: BuilderSchema, opts: CompileOptions = {}): string {
+	const text = withOrder(build(model, schema, opts));
 	return model.limit === undefined ? text : `${text}\nLIMIT ${model.limit}`;
 }
 
-export function compileQuery(model: QueryModel, schema: BuilderSchema, page: PageRequest): CompiledQuery {
-	const built = build(model, schema);
+export function compileQuery(
+	model: QueryModel,
+	schema: BuilderSchema,
+	page: PageRequest,
+	opts: CompileOptions = {}
+): CompiledQuery {
+	const built = build(model, schema, opts);
 	const limit = Math.min(MAX_PAGE_SIZE, Math.max(1, Math.floor(page.limit) || 1));
 	const offset = Math.max(0, Math.floor(page.offset) || 0);
 	// A model-level row limit caps the total: shrink the page so offset+limit never passes it.
@@ -247,21 +258,71 @@ export function compileQuery(model: QueryModel, schema: BuilderSchema, page: Pag
  * `SELECT (COUNT(*) AS ?total)` over the un-paged query as a sub-select (research Q10), so the UI
  * can show the total next to a page. For aggregated models this counts groups.
  */
-export function compileCountQuery(model: QueryModel, schema: BuilderSchema): { sparql: string } {
-	const built = build(model, schema);
+export function compileCountQuery(
+	model: QueryModel,
+	schema: BuilderSchema,
+	opts: CompileOptions = {}
+): { sparql: string } {
+	const built = build(model, schema, opts);
 	return {
 		sparql: `${PREFIXES}\nSELECT (COUNT(*) AS ?total)\nWHERE {\n{\n${built.body}\n}\n}`
 	};
 }
 
-function compileFilter(
+/**
+ * One filter as required triple patterns plus a boolean test. `exists` marks tests that are already a
+ * (NOT) EXISTS group graph pattern and so are written `FILTER EXISTS {…}`, not `FILTER(…)`.
+ */
+interface FilterParts {
+	triples: string[];
+	test: string;
+	exists: boolean;
+}
+
+/**
+ * Ungrouped filters keep their flat, AND-ed form. Filters sharing an `orGroup` become one
+ * `FILTER(m1 || m2 …)` at the position of the group's first member; a member that needs a property
+ * triple is wrapped in `EXISTS { … FILTER(…) }` so the triple does not turn the OR into an AND.
+ */
+function compileFilters(
+	model: QueryModel,
+	schema: BuilderSchema,
+	entityVar: (hopId: string | null) => string,
+	scoped: (body: (g: string) => string) => string,
+	opts: CompileOptions
+): string[] {
+	const out: string[] = [];
+	const done = new Set<string>();
+	for (const [i, f] of model.filters.entries()) {
+		const parts = filterParts(f, i, entityVar(f.hopId), scoped, model, schema, opts);
+		if (!f.orGroup) {
+			out.push(...parts.triples, parts.exists ? `FILTER ${parts.test}` : `FILTER(${parts.test})`);
+			continue;
+		}
+		if (done.has(f.orGroup)) continue;
+		done.add(f.orGroup);
+		const members = model.filters
+			.map((m, j) => ({ m, j }))
+			.filter(({ m }) => m.orGroup === f.orGroup)
+			.map(({ m, j }) => {
+				const p = j === i ? parts : filterParts(m, j, entityVar(m.hopId), scoped, model, schema, opts);
+				if (p.triples.length === 0) return p.test;
+				return `EXISTS { ${p.triples.join('\n\t\t\t')}\n\t\t\tFILTER(${p.test}) }`;
+			});
+		out.push(`FILTER(${members.join(' || ')})`);
+	}
+	return out;
+}
+
+function filterParts(
 	f: Filter,
 	index: number,
 	entity: string,
 	scoped: (body: (g: string) => string) => string,
 	model: QueryModel,
-	schema: BuilderSchema
-): string[] {
+	schema: BuilderSchema,
+	opts: CompileOptions
+): FilterParts {
 	const v = `?f${index}`;
 	const prop = f.propertyIri === null ? null : iriRef(f.propertyIri, 'property IRI');
 
@@ -269,42 +330,51 @@ function compileFilter(
 		if (prop === null)
 			throw new QueryCompileError(`Filter ${index}: "${f.op}" needs a property`);
 		const exists = `{ ${scoped(() => `${entity} ${prop} ?x${index} .`)} }`;
-		return [`FILTER ${f.op === 'isEmpty' ? 'NOT EXISTS' : 'EXISTS'} ${exists}`];
+		return { triples: [], test: `${f.op === 'isEmpty' ? 'NOT EXISTS' : 'EXISTS'} ${exists}`, exists: true };
 	}
 
 	if (isComparisonOp(f.op)) {
 		// Validation has already proven: property present and declared, comparable datatype, valid
 		// lexical form. The datatype comes from the schema, never from the model or user text.
 		const datatype = propertyDatatype(model, schema, f.hopId, f.propertyIri!);
-		if (prop === null || datatype === null || typeof f.value !== 'string')
+		let value = f.value;
+		if (f.relativeTime !== undefined) {
+			if (!opts.now)
+				throw new QueryCompileError(`Filter ${index}: a relative time needs the current time (clock) to compile`);
+			if (datatype === null) throw new QueryCompileError(`Filter ${index}: "${f.op}" needs a typed property`);
+			value = resolveRelativeTime(f.relativeTime, opts.now, datatype);
+		}
+		if (prop === null || datatype === null || typeof value !== 'string')
 			throw new QueryCompileError(`Filter ${index}: "${f.op}" needs a typed property and a value`);
 		const operator = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[f.op];
-		return [
-			scoped(() => `${entity} ${prop} ${v} .`),
-			`FILTER(${v} ${operator} ${lit(f.value)}^^${iriRef(datatype, 'datatype IRI')})`
-		];
+		return {
+			triples: [scoped(() => `${entity} ${prop} ${v} .`)],
+			test: `${v} ${operator} ${lit(value)}^^${iriRef(datatype, 'datatype IRI')}`,
+			exists: false
+		};
 	}
 
-	const out: string[] = [];
+	const triples: string[] = [];
 	let subject = `STR(${entity})`;
 	if (prop !== null) {
-		out.push(scoped(() => `${entity} ${prop} ${v} .`));
+		triples.push(scoped(() => `${entity} ${prop} ${v} .`));
 		subject = `STR(${v})`;
 	}
 	const values = Array.isArray(f.value) ? f.value : [f.value ?? ''];
+	let test = '';
 	switch (f.op) {
 		case 'eq':
-			out.push(`FILTER(${subject} = ${lit(values[0])})`);
+			test = `${subject} = ${lit(values[0])}`;
 			break;
 		case 'neq':
-			out.push(`FILTER(${subject} != ${lit(values[0])})`);
+			test = `${subject} != ${lit(values[0])}`;
 			break;
 		case 'contains':
-			out.push(`FILTER(CONTAINS(LCASE(${subject}), LCASE(${lit(values[0])})))`);
+			test = `CONTAINS(LCASE(${subject}), LCASE(${lit(values[0])}))`;
 			break;
 		case 'in':
-			out.push(`FILTER(${subject} IN (${values.map(lit).join(', ')}))`);
+			test = `${subject} IN (${values.map(lit).join(', ')})`;
 			break;
 	}
-	return out;
+	return { triples, test, exists: false };
 }

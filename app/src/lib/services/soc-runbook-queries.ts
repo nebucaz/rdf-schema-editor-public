@@ -17,6 +17,10 @@ const hop = (id: string, parent: string | null, p: string, target: string) => ({
 	direction: 'forward' as const,
 	targetClassIri: cls(target)
 });
+const inverseHop = (id: string, parent: string | null, p: string, target: string) => ({
+	...hop(id, parent, p, target),
+	direction: 'inverse' as const
+});
 const col = (id: string, hopId: string | null, p: string) => ({ id, hopId, source: prop(p), header: p });
 
 export const runbookQueryModel = {
@@ -70,6 +74,54 @@ export const runbookQueryModel = {
 			},
 			sort: [{ columnId: 'events', direction: 'desc' }]
 		};
+	},
+
+	/** R6 — which alerts touched a server: from `Server` backwards through logfile and event to the alert. */
+	alertsTouchingServer(hostname = 'web-01.example.com'): QueryModel {
+		return {
+			...emptyQueryModel(cls('Server'), [SOC_BASE_IRI]),
+			hops: [
+				inverseHop('h1', null, 'hostedOn', 'LogFile'),
+				inverseHop('h2', 'h1', 'recordedIn', 'AuthenticationEvent'),
+				inverseHop('h3', 'h2', 'triggeredBy', 'Alert')
+			],
+			filters: [{ id: 'f1', hopId: null, propertyIri: cls('hostname'), op: 'eq', value: hostname }],
+			columns: [col('alertId', 'h3', 'alertId')],
+			aggregation: {
+				groupBy: ['alertId'],
+				measures: [{ fn: 'count', of: 'root', alias: 'events' }]
+			},
+			sort: [{ columnId: 'events', direction: 'desc' }]
+		};
+	},
+
+	/** R7 — High *or* Medium alerts raised in the last 24 hours of the sample (absolute window: the data is fixed). */
+	highOrMediumRecently(since = '2026-03-15T03:15:00Z'): QueryModel {
+		return {
+			...emptyQueryModel(cls('Alert'), [SOC_BASE_IRI]),
+			filters: [
+				{ id: 'f1', hopId: null, propertyIri: cls('severity'), op: 'eq', value: member('severityHigh'), orGroup: 'g1' },
+				{ id: 'f2', hopId: null, propertyIri: cls('severity'), op: 'eq', value: member('severityMedium'), orGroup: 'g1' },
+				{ id: 'f3', hopId: null, propertyIri: cls('raisedAt'), op: 'gte', value: since }
+			],
+			columns: [
+				col('alertId', null, 'alertId'),
+				col('title', null, 'title'),
+				col('severity', null, 'severity'),
+				col('raisedAt', null, 'raisedAt')
+			],
+			sort: [{ columnId: 'raisedAt', direction: 'asc' }]
+		};
+	},
+
+	/** R8 — alerts of the last 24 hours *relative to now* (live data; empty on the fixed sample). */
+	alertsLast24Hours(): QueryModel {
+		return {
+			...emptyQueryModel(cls('Alert'), [SOC_BASE_IRI]),
+			filters: [{ id: 'f1', hopId: null, propertyIri: cls('raisedAt'), op: 'gte', relativeTime: '-24h' }],
+			columns: [col('alertId', null, 'alertId'), col('title', null, 'title'), col('raisedAt', null, 'raisedAt')],
+			sort: [{ columnId: 'raisedAt', direction: 'desc' }]
+		};
 	}
 };
 
@@ -80,7 +132,7 @@ export interface RunbookQuery {
 	spl: string;
 }
 
-export const RUNBOOK_QUERIES: Record<'R3' | 'R4' | 'R5', RunbookQuery> = {
+export const RUNBOOK_QUERIES: Record<'R3' | 'R4' | 'R5' | 'R6' | 'R7' | 'R8', RunbookQuery> = {
 	R3: {
 		title: 'Alert → logfile → server',
 		model: runbookQueryModel.alertsByServer(),
@@ -113,6 +165,40 @@ export const RUNBOOK_QUERIES: Record<'R3' | 'R4' | 'R5', RunbookQuery> = {
 			'| where sourceIp="203.0.113.45"',
 			'| stats count as events, dc(user) as users by recordedIn.hostedOn.hostname',
 			'| sort -events'
+		].join('\n')
+	},
+	R6: {
+		title: 'Alerts that touched a server (inverse traversal)',
+		model: runbookQueryModel.alertsTouchingServer(),
+		spl: [
+			'Server',
+			'| ^hostedOn',
+			'| ^hostedOn.^recordedIn',
+			'| ^hostedOn.^recordedIn.^triggeredBy',
+			'| where hostname="web-01.example.com"',
+			'| stats count as events by ^hostedOn.^recordedIn.^triggeredBy.alertId',
+			'| sort -events'
+		].join('\n')
+	},
+	R7: {
+		title: 'High or Medium alerts in a window (OR group)',
+		model: runbookQueryModel.highOrMediumRecently(),
+		spl: [
+			'Alert',
+			'| where (severity="High" OR severity="Medium")',
+			'| where raisedAt>="2026-03-15T03:15:00Z"',
+			'| fields alertId, title, severity, raisedAt',
+			'| sort raisedAt'
+		].join('\n')
+	},
+	R8: {
+		title: 'Alerts of the last 24 hours (relative time)',
+		model: runbookQueryModel.alertsLast24Hours(),
+		spl: [
+			'Alert',
+			'| where raisedAt>="-24h"',
+			'| fields alertId, title, raisedAt',
+			'| sort -raisedAt'
 		].join('\n')
 	}
 };

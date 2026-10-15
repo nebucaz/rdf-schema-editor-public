@@ -13,7 +13,9 @@ import { RUNBOOK_QUERIES, runbookQueryModel } from './soc-runbook-queries';
 
 const builder = buildBuilderSchema(buildSocFetchedSchema(loadSocQuads()));
 const PAGE = { limit: 25, offset: 0 };
-const ids = ['R3', 'R4', 'R5'] as const;
+const ids = ['R3', 'R4', 'R5', 'R6', 'R7', 'R8'] as const;
+/** Fixed clock: relative time (R8) resolves against it, never the real time. */
+const NOW = new Date('2026-03-16T12:00:00Z');
 
 describe.each(ids)('runbook query %s', (id) => {
 	const q = RUNBOOK_QUERIES[id];
@@ -29,10 +31,10 @@ describe.each(ids)('runbook query %s', (id) => {
 	});
 
 	it('compiles (paged, unpaged, count) using only known or standard IRIs', () => {
-		const compiled = compileQuery(q.model, builder, PAGE);
+		const compiled = compileQuery(q.model, builder, PAGE, { now: NOW });
 		expect(compiled.sparql).toMatch(/LIMIT 25 OFFSET 0$/);
-		expect(compileUnpagedQuery(q.model, builder)).not.toMatch(/LIMIT/);
-		expect(compileCountQuery(q.model, builder).sparql).toContain('COUNT(*)');
+		expect(compileUnpagedQuery(q.model, builder, { now: NOW })).not.toMatch(/LIMIT/);
+		expect(compileCountQuery(q.model, builder, { now: NOW }).sparql).toContain('COUNT(*)');
 		const iris = [...compiled.sparql.matchAll(/<([^>]+)>/g)].map((m) => m[1]);
 		expect(iris.length).toBeGreaterThan(0);
 		for (const iri of iris) {
@@ -119,5 +121,37 @@ describe('engine limits the runbook documents', () => {
 		m.columns.push({ id: 'extra', hopId: null, source: 'label', header: 'label' });
 		m.sort = [{ columnId: 'extra', direction: 'desc' }];
 		expect(validateQueryModel(m).some((i) => i.path === 'sort[0].columnId')).toBe(true);
+	});
+});
+
+describe('OR group golden data (STORY-230)', () => {
+	const quads = loadSocQuads();
+	const alertCls = `${SOC_SCHEMA_NS}Alert`;
+	const sev = (n: string) => `${SOC_BASE_IRI}#severity${n}`;
+	const codes = (levels: string[]) =>
+		quads
+			.filter((q) => q.predicate.value === `${SOC_SCHEMA_NS}severity` && levels.map(sev).includes(q.object.value))
+			.map((q) => q.subject.value)
+			.map((s) => quads.find((x) => x.subject.value === s && x.predicate.value === `${SOC_SCHEMA_NS}alertId`)!.object.value)
+			.sort();
+
+	it('High OR Medium selects A-1001, A-1002 and A-1004 in the dataset', () => {
+		expect(codes(['High', 'Medium'])).toEqual(['A-1001', 'A-1002', 'A-1004']);
+	});
+
+	it('compiles severity=High OR severity=Medium as one group over the same values', () => {
+		const m = {
+			...RUNBOOK_QUERIES.R3.model,
+			hops: [],
+			filters: ['High', 'Medium'].map((n, i) => ({
+				id: `f${i}`, hopId: null, propertyIri: `${SOC_SCHEMA_NS}severity`, op: 'eq' as const, value: sev(n), orGroup: 'g'
+			})),
+			columns: [{ id: 'c', hopId: null, source: { propertyIri: `${SOC_SCHEMA_NS}alertId` }, header: 'Alert' }]
+		};
+		m.root = { classIri: alertCls, includeSubclasses: true } as typeof m.root;
+		const sparql = compileUnpagedQuery(m, builder);
+		expect(sparql).toContain(`"${sev('High')}"`);
+		expect(sparql).toContain(`"${sev('Medium')}"`);
+		expect(sparql.match(/ \|\| /g)).toHaveLength(1);
 	});
 });

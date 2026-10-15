@@ -6,41 +6,23 @@ available as the advanced, free-form alternative.
 
 ## Building a query
 
-The builder is **column-first**: the columns you will see in the result are the main content, grouped by the
-class they come from.
-
-1. **Add column.** Click **+ Add column**. The first time, choose the class the query starts from and tick its
-   properties (or search for something and start from the hit). Later, the dialog lists the relationships you
-   can follow — outbound or inbound — from *any* class already in the query, grouped by the class they start
-   from and searchable; tick the properties of the class you reach to add them. A step that is not available
-   stays visible with the reason (for example it would loop back to a class already on the path), and the
-   dialog suggests the nearest path when what you search for is not one step away.
-2. **Groups.** Each class in the query is a coloured group: the start class first, then one group per followed
-   relationship, indented by depth. Collapse a group to its header (the column count stays visible) and give it
-   a colour from the palette — both are only for your eyes, kept in this browser, and never saved with a query.
-   Removing a group also drops what hung off it, and you are shown what that is before it happens.
-3. **Edit a group's columns.** **✎ Columns** on a group opens its property list with the current columns
-   ticked: tick to add, untick to remove. Each column box has a header bar: drag its handle (left) to reorder within the group — or focus it and use the arrow keys — and use × (right) to remove it. The title of a box is editable. Include-subclasses is a switch on the start class.
-4. **Sort.** Click the sort marker on a column header to cycle ascending, descending, none; the number shows the
-   order when several columns sort. An aggregated query can only sort by its grouped columns and its measures.
-5. **Filter.** The funnel on a column opens the filter dialog for that property (operator and value, a range
-   for numbers and dates, a pick-list for enumerations); a group's **Entity** button filters on a specific
-   entity. Use **Add filter** to filter on a property that is not a column. Active filters are listed in the
-   **Filter** group above the columns (a filter on a property that is not a column is tagged *hidden column*),
-   and a column with a filter shows the funnel highlighted.
-6. **Aggregate & limit.** The collapsed **Aggregate & limit** group holds aggregation (group by, count, sum,
-   average, min/max), thresholds on aggregated values ("keep only groups where…") and the row limit. It opens
-   by itself for a query that already aggregates or limits.
-7. **Scope namespaces.** The workbench has its own namespace selection, saved with the query.
-
-**Run** and **Save** sit at the top of the query box. Once a result is on screen it follows the builder: adding
-a column, filter or relationship re-runs it automatically.
+1. **Search or pick a class.** Searching looks across every text value and shows which property matched,
+   with facet counts; or choose a class directly from the schema panel.
+2. **Expand relationships.** Follow a relation to a related entity to add a *hop*; removing a hop removes
+   everything that hung off it. Relations can be followed forward or backwards (`← hostedOn`, written
+   `^hostedOn` in SPL), e.g. from a server back to the alerts that touched it.
+3. **Filter.** Add filters on properties, enumeration members or related entities. Select two or more filter
+   chips and choose **Group as “any of”** to OR them: `(a OR b) AND c`. A date or dateTime filter can be
+   relative (`-24h`, `now`), resolved each time the query runs.
+4. **Choose columns, sort and aggregate.** Pick the columns to show, sort by one or more of them, or group
+   by columns and count (or count distinct).
+5. **Scope namespaces.** The workbench has its own namespace selection, saved with the query.
 
 **Show query** displays what will actually run, as an SPL-style pipeline or as SPARQL, and can open the
 SPARQL in the console. The SPL view is read-only; to *type* SPL instead of clicking, switch the search region
 to **SPL** mode (see [SPL in the Workbench](spl-unsupported)). The text becomes the same query the builder
-edits, and any query — typed, saved or shared — shows up as groups and columns. Not yet available: OR between
-filters in the builder and relative time.
+edits, and any query — typed, saved or shared — shows up as groups and columns. Not expressible: `(a AND b) OR c`,
+nested groups and `NOT`.
 
 ## Results
 

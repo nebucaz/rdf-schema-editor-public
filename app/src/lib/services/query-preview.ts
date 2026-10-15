@@ -11,11 +11,15 @@ export type QueryOutput =
 	| { ok: true; spl: string; sparql: string }
 	| { ok: false; messages: string[] };
 
-export function describeQueryOutput(model: QueryModel, schema: BuilderSchema): QueryOutput {
+export function describeQueryOutput(
+	model: QueryModel,
+	schema: BuilderSchema,
+	now: Date = new Date()
+): QueryOutput {
 	const issues = validateRunnableQueryModel(model, new Set(schema.classes.keys()));
 	if (issues.length > 0) return { ok: false, messages: issues.map((i) => i.message) };
 	try {
-		return { ok: true, spl: printSplPipeline(model, schema), sparql: compileUnpagedQuery(model, schema) };
+		return { ok: true, spl: printSplPipeline(model, schema), sparql: compileUnpagedQuery(model, schema, { now }) };
 	} catch (e) {
 		return { ok: false, messages: [e instanceof Error ? e.message : 'The query could not be compiled'] };
 	}

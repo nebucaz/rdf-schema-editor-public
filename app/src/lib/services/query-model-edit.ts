@@ -130,7 +130,9 @@ export function upsertFilter(model: QueryModel, draft: Omit<Filter, 'id'>): Quer
 	if (!existing) return addFilter(model, draft);
 	return {
 		...model,
-		filters: model.filters.map((f) => (f.id === existing.id ? { ...draft, id: f.id } : f))
+		filters: model.filters.map((f) =>
+			f.id === existing.id ? { ...draft, id: f.id, ...(f.orGroup ? { orGroup: f.orGroup } : {}) } : f
+		)
 	};
 }
 
@@ -147,7 +149,68 @@ export function updateFilter(
 }
 
 export function removeFilter(model: QueryModel, filterId: string): QueryModel {
-	return { ...model, filters: model.filters.filter((f) => f.id !== filterId) };
+	return dissolveSmallGroups({ ...model, filters: model.filters.filter((f) => f.id !== filterId) });
+}
+
+// ── OR groups (STORY-232) ───────────────────────────────────────────────────
+
+/** An OR group needs two members: a group left with one is dissolved (its member becomes plain). */
+function dissolveSmallGroups(model: QueryModel): QueryModel {
+	const sizes = new Map<string, number>();
+	for (const f of model.filters) if (f.orGroup) sizes.set(f.orGroup, (sizes.get(f.orGroup) ?? 0) + 1);
+	if (![...sizes.values()].some((n) => n < 2)) return model;
+	return {
+		...model,
+		filters: model.filters.map((f) => {
+			if (!f.orGroup || sizes.get(f.orGroup)! >= 2) return f;
+			const { orGroup: _dropped, ...plain } = f;
+			return plain;
+		})
+	};
+}
+
+/**
+ * Makes the given filters one "any of" group (OR-ed with each other, AND-ed with the rest). Filters
+ * already in a group pull their whole group in, so groups merge rather than nest. Members are moved
+ * next to each other at the first member's position, which is the canonical order the SPL printer
+ * and parser agree on. Fewer than two (existing) ids returns the model unchanged.
+ */
+export function groupFilters(model: QueryModel, filterIds: readonly string[]): QueryModel {
+	const ids = new Set(filterIds);
+	if (ids.size < 2 || [...ids].some((id) => !model.filters.some((f) => f.id === id))) return model;
+	const touched = new Set(model.filters.filter((f) => ids.has(f.id) && f.orGroup).map((f) => f.orGroup!));
+	const isMember = (f: Filter) => ids.has(f.id) || (f.orGroup !== undefined && touched.has(f.orGroup));
+	const taken = model.filters.map((f) => Number(/^g(\d+)$/.exec(f.orGroup ?? '')?.[1] ?? 0));
+	const group = `g${Math.max(0, ...taken) + 1}`;
+	const members = model.filters.filter(isMember).map((f) => ({ ...f, orGroup: group }));
+	const firstAt = model.filters.findIndex(isMember);
+	const before = model.filters.slice(0, firstAt);
+	const after = model.filters.slice(firstAt).filter((f) => !isMember(f));
+	return { ...model, filters: [...before, ...members, ...after] };
+}
+
+/** Dissolves one group: every member becomes a plain (AND-ed) filter again. */
+export function ungroupFilters(model: QueryModel, groupId: string): QueryModel {
+	return {
+		...model,
+		filters: model.filters.map((f) => {
+			if (f.orGroup !== groupId) return f;
+			const { orGroup: _dropped, ...plain } = f;
+			return plain;
+		})
+	};
+}
+
+/** Takes one filter out of its group; a group left with a single member is dissolved. */
+export function removeFromGroup(model: QueryModel, filterId: string): QueryModel {
+	return dissolveSmallGroups({
+		...model,
+		filters: model.filters.map((f) => {
+			if (f.id !== filterId || !f.orGroup) return f;
+			const { orGroup: _dropped, ...plain } = f;
+			return plain;
+		})
+	});
 }
 
 /**
@@ -210,11 +273,11 @@ export function removeHop(model: QueryModel, hopId: string): QueryModel {
 			}
 		}
 	}
-	let next: QueryModel = {
+	let next: QueryModel = dissolveSmallGroups({
 		...model,
 		hops: model.hops.filter((h) => !doomed.has(h.id)),
 		filters: model.filters.filter((f) => f.hopId === null || !doomed.has(f.hopId))
-	};
+	});
 	for (const c of model.columns) {
 		if (c.hopId !== null && doomed.has(c.hopId)) next = removeColumn(next, c.id);
 	}

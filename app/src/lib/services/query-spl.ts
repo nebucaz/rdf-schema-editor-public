@@ -64,7 +64,7 @@ export function printSplPipeline(model: QueryModel, schema: BuilderSchema): stri
 
 	for (const h of model.hops) stages.push(`| ${pathOf(h.id)}`);
 
-	for (const f of model.filters) {
+	const filterExpr = (f: Filter): string => {
 		const name = filterField(f);
 		const values = Array.isArray(f.value) ? f.value : [f.value ?? ''];
 		let expr: string;
@@ -86,6 +86,11 @@ export function printSplPipeline(model: QueryModel, schema: BuilderSchema): stri
 			case 'lt':
 			case 'lte': {
 				const operator = { gt: '>', gte: '>=', lt: '<', lte: '<=' }[f.op];
+				if (f.relativeTime !== undefined) {
+					// Kept as written (a quoted expression is unambiguous: it is never a valid date).
+					expr = `${name}${operator}${quote(f.relativeTime)}`;
+					break;
+				}
 				const dt = f.propertyIri === null ? null : propertyDatatype(model, schema, f.hopId, f.propertyIri);
 				// Numbers print bare (lexical form is validated and must read back as a number token);
 				// dates/times and unknowns stay quoted.
@@ -104,7 +109,18 @@ export function printSplPipeline(model: QueryModel, schema: BuilderSchema): stri
 				expr = `isnotnull(${name})`;
 				break;
 		}
-		stages.push(`| where ${expr}`);
+		return expr;
+	};
+	// A group prints once, at its first member, as `(a OR b)`; members are contiguous in canonical models.
+	const printed = new Set<string>();
+	for (const f of model.filters) {
+		if (!f.orGroup) {
+			stages.push(`| where ${filterExpr(f)}`);
+		} else if (!printed.has(f.orGroup)) {
+			printed.add(f.orGroup);
+			const members = model.filters.filter((m) => m.orGroup === f.orGroup).map(filterExpr);
+			stages.push(`| where (${members.join(' OR ')})`);
+		}
 	}
 
 	const fieldByColumn = new Map(model.columns.map((c) => [c.id, columnField(c)]));

@@ -19,6 +19,9 @@ import {
 	addHop,
 	upsertFilter,
 	removeFilter,
+	groupFilters,
+	ungroupFilters,
+	removeFromGroup,
 	moveColumn,
 	setColumnHeader,
 	setSort,
@@ -147,6 +150,19 @@ export class QueryBuilderStore {
 
 	removeFilter(filterId: string): void {
 		if (this.model) this.model = removeFilter(this.model, filterId);
+	}
+
+	/** Makes the filters one "any of" group (STORY-232). */
+	groupFilters(filterIds: string[]): void {
+		if (this.model) this.model = groupFilters(this.model, filterIds);
+	}
+
+	ungroupFilters(groupId: string): void {
+		if (this.model) this.model = ungroupFilters(this.model, groupId);
+	}
+
+	removeFromGroup(filterId: string): void {
+		if (this.model) this.model = removeFromGroup(this.model, filterId);
 	}
 
 	// Thin wrappers so components never reassign `model` themselves (STORY-191).
