@@ -114,14 +114,39 @@
 		anyURI: 'url'
 	};
 
-	let matchedExisting = $derived(
+	/** Registered-namespace prefix an element's IRI belongs to (`<base>#x` instances, `<base>/schema#x`
+	 *  classes), so same-named elements in different namespaces stay distinguishable in the lookup. */
+	function namespaceLabel(elementIri: string): string {
+		const ns = namespaceOptions
+			.filter((n) => elementIri.startsWith(`${n.baseIri}#`) || elementIri.startsWith(`${n.baseIri}/`))
+			.sort((a, b) => b.baseIri.length - a.baseIri.length)[0];
+		return ns?.prefix ?? '';
+	}
+
+	let nameMatches = $derived(
 		mode === 'create'
-			? existingOptions.find((o) => o.label.trim().toLowerCase() === name.trim().toLowerCase())
+			? existingOptions.filter((o) => o.label.trim().toLowerCase() === name.trim().toLowerCase())
+			: []
+	);
+	/** The match sitting in the namespace currently picked below — a new element with this name
+	 *  there would be a duplicate, so only "Add Existing" is offered. */
+	let matchInSelectedNamespace = $derived(
+		namespaceBaseIri
+			? nameMatches.find((o) => o.iri.startsWith(`${namespaceBaseIri}#`))
 			: undefined
 	);
+	/** Same name exists, but only in other namespaces: offer both "Add Existing" and "Add New". */
+	let matchedExisting = $derived(matchInSelectedNamespace ?? nameMatches[0]);
+	let canAddNew = $derived(!!matchedExisting && !matchInSelectedNamespace);
+	/** Fields feed "Add New", so they stay editable whenever it is offered. */
+	let fieldsLocked = $derived(!!matchedExisting && !canAddNew);
 
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
+		await submit(false);
+	}
+
+	async function submit(forceNew: boolean) {
 		if (!name.trim()) {
 			error = 'Name must not be empty';
 			return;
@@ -143,7 +168,7 @@
 		error = null;
 		submitting = true;
 		try {
-			if (matchedExisting && onSelectExisting) {
+			if (matchedExisting && onSelectExisting && !forceNew) {
 				await onSelectExisting(matchedExisting);
 			} else {
 				await onSubmit(
@@ -186,14 +211,20 @@
 	{#if mode === 'create' && existingOptions.length > 0}
 		<datalist id="entity-existing-names">
 			{#each existingOptions as o (o.iri)}
-				<option value={o.label}>{existingKindLabels[o.kind] ?? o.kind}</option>
+				<option value={o.label}>
+					{existingKindLabels[o.kind] ?? o.kind}{#if namespaceLabel(o.iri)} · {namespaceLabel(o.iri)}{/if}
+				</option>
 			{/each}
 		</datalist>
 	{/if}
 	{#if matchedExisting}
 		<p class="hint">
-			A {existingKindLabels[matchedExisting.kind]?.toLowerCase() ?? matchedExisting.kind} named "{matchedExisting.label}"
-			already exists — submitting will add it to the workspace instead of creating a duplicate.
+			A {existingKindLabels[matchedExisting.kind]?.toLowerCase() ?? matchedExisting.kind} named "{matchedExisting.label}"{#if namespaceLabel(matchedExisting.iri)} ({namespaceLabel(matchedExisting.iri)}){/if}
+			{#if canAddNew}
+				already exists in another namespace — add that one, or create a new one in the selected namespace.
+			{:else}
+				already exists in this namespace — submitting will add it to the workspace instead of creating a duplicate.
+			{/if}
 		</p>
 	{/if}
 	<label>
@@ -202,12 +233,12 @@
 			bind:value={description}
 			placeholder="Optional description"
 			rows="3"
-			disabled={!!matchedExisting}
+			disabled={fieldsLocked}
 		></textarea>
 	</label>
 	<label>
 		Color
-		<ColorSwatchPicker {color} onChange={(c) => (color = c)} disabled={!!matchedExisting} />
+		<ColorSwatchPicker {color} onChange={(c) => (color = c)} disabled={fieldsLocked} />
 	</label>
 	<label>
 		Backstage kind
@@ -215,12 +246,12 @@
 			type="text"
 			bind:value={backstageKind}
 			placeholder="Optional — e.g. Component"
-			disabled={!!matchedExisting}
+			disabled={fieldsLocked}
 		/>
 	</label>
 	<label>
 		Concept namespace{#if requireConceptNamespace}<span class="required-mark"> *</span>{/if}
-		<select bind:value={conceptNamespace} disabled={!!matchedExisting}>
+		<select bind:value={conceptNamespace} disabled={fieldsLocked}>
 			<option value="">
 				{effectiveConceptNamespace?.own === false
 					? `— None — inherits ${effectiveConceptNamespace.baseIri} —`
@@ -249,7 +280,7 @@
 				type={inputTypeByDatatype[attr.datatype]}
 				value={subclassAttrValues[attr.iri] ?? ''}
 				oninput={(e) => (subclassAttrValues = { ...subclassAttrValues, [attr.iri]: (e.currentTarget as HTMLInputElement).value })}
-				disabled={!!matchedExisting}
+				disabled={fieldsLocked}
 			/>
 		</label>
 		<p class="hint">Required for a direct subclass of <code>{attr.ownerClassName}</code>.</p>
@@ -257,7 +288,7 @@
 	{#if mode === 'create' && namespaceOptions.length > 0}
 		<label>
 			Namespace
-			<select bind:value={namespaceBaseIri} disabled={!!matchedExisting}>
+			<select bind:value={namespaceBaseIri} disabled={fieldsLocked}>
 				{#each namespaceOptions as ns (ns.baseIri)}
 					<option value={ns.baseIri}>{ns.prefix}</option>
 				{/each}
@@ -269,9 +300,18 @@
 	{/if}
 	<div class="actions">
 		<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
-		<button type="submit" class="primary" disabled={submitting}>
-			{submitting ? 'Saving…' : matchedExisting ? 'Add Existing' : submitLabel}
-		</button>
+		{#if canAddNew}
+			<button type="button" class="secondary" disabled={submitting} onclick={() => submit(true)}>
+				Add New
+			</button>
+			<button type="submit" class="primary" disabled={submitting}>
+				{submitting ? 'Saving…' : 'Add Existing'}
+			</button>
+		{:else}
+			<button type="submit" class="primary" disabled={submitting}>
+				{submitting ? 'Saving…' : matchedExisting ? 'Add Existing' : submitLabel}
+			</button>
+		{/if}
 	</div>
 </form>
 

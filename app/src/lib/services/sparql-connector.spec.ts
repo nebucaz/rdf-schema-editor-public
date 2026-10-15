@@ -29,6 +29,7 @@ import {
 	WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI,
 	workspaceIri,
 	workspaceMembershipIri,
+	workspaceMembershipIriDisambiguated,
 	SAVED_QUERY_CLASS_IRI,
 	SAVED_QUERY_TEXT_PREDICATE_IRI,
 	ANNOTATION_CLASS_IRI,
@@ -6151,6 +6152,36 @@ describe('SparqlConnector — WorkspaceMembership CRUD and position storage (STO
 		expect(updates).toHaveLength(0);
 	});
 
+	it('addWorkspaceMember mints a hash-disambiguated subject when a same-named element in another namespace owns the legacy one', async () => {
+		const ws = workspaceIri('Project Overview');
+		const mine = 'http://example.org/x/schema#Application';
+		const other = 'http://example.org/y/schema#Application';
+		const legacy = workspaceMembershipIri(ws, mine);
+		expect(workspaceMembershipIri(ws, other)).toBe(legacy);
+		const updates: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				const body = JSON.parse(opts.body);
+				if (body.update !== undefined) {
+					updates.push(body.update);
+					return new Response('{}', { status: 200 });
+				}
+				const q: string = body.query;
+				let bool = false;
+				if (q.includes(`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class`)) bool = true;
+				else if (q.includes(`<${legacy}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`)) bool = q.includes(`<${other}>`) || !q.includes(`<${mine}>`);
+				return new Response(JSON.stringify({ head: {}, boolean: bool }), { status: 200 });
+			})
+		);
+		await new SparqlConnector('/api/sparql').addWorkspaceMember(ws, mine, 1, 2);
+		const hashed = workspaceMembershipIriDisambiguated(ws, mine);
+		expect(hashed).not.toBe(legacy);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${hashed}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${mine}>`);
+	});
+
 	it('removeWorkspaceMember deletes exactly the one membership subject\'s triples', async () => {
 		const { fn, updates } = mockWorkspaceFetch();
 		vi.stubGlobal('fetch', fn);
@@ -6160,10 +6191,10 @@ describe('SparqlConnector — WorkspaceMembership CRUD and position storage (STO
 		const connector = new SparqlConnector('/api/sparql');
 		await connector.removeWorkspaceMember(ws, elementIri);
 
-		const membershipIri = workspaceMembershipIri(ws, elementIri);
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain('DELETE WHERE');
-		expect(updates[0]).toContain(`<${membershipIri}> ?p ?o`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}>`);
+		expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${ws}>`);
 	});
 
 	it('updateWorkspaceMemberPosition round-trips a non-integer position as xsd:decimal', async () => {

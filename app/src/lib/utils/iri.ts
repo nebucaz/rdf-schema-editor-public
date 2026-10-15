@@ -464,6 +464,21 @@ export function workspaceMembershipIri(workspaceIriValue: string, elementIri: st
 }
 
 /**
+ * Collision-free sibling of `workspaceMembershipIri`: `workspaceMembershipIri` keeps only the two local
+ * names, so `a:Application` and `b:Application` in the same workspace map to one membership subject.
+ * The connector falls back to this IRI (legacy IRI + an FNV-1a hash of the *full* element IRI) when the
+ * legacy subject already belongs to a different element — existing memberships keep their IRIs.
+ */
+export function workspaceMembershipIriDisambiguated(workspaceIriValue: string, elementIri: string): string {
+	let hash = 0x811c9dc5;
+	for (let i = 0; i < elementIri.length; i++) {
+		hash ^= elementIri.charCodeAt(i);
+		hash = Math.imul(hash, 0x01000193) >>> 0;
+	}
+	return `${workspaceMembershipIri(workspaceIriValue, elementIri)}-${hash.toString(16).padStart(8, '0')}`;
+}
+
+/**
  * Derive an individual's (enumerated class member's) IRI from its owning class + user-entered
  * label — e.g. `core:RelationType`'s `nutzt`/`verbucht` members (STORY-019). Scoped by owning
  * class the same way `propertyIri` is, so two different classes can each have a member with the

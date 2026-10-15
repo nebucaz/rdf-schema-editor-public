@@ -39,6 +39,7 @@ import {
 	WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI,
 	workspaceIri,
 	workspaceMembershipIri,
+	workspaceMembershipIriDisambiguated,
 	SAVED_QUERY_CLASS_IRI,
 	SAVED_QUERY_TEXT_PREDICATE_IRI,
 	ANNOTATION_CLASS_IRI,
@@ -5004,9 +5005,10 @@ export class SparqlConnector {
 		await this.ensureWorkspaceMembershipClass();
 
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
-		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		const membershipIri = await this.resolveMembershipIri(workspaceIriValue, elementIri);
 		const exists = await this.askQuery(
-			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> }`
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ; ` +
+				`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> }`
 		);
 		if (exists) return;
 
@@ -5028,10 +5030,39 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
 		this.assertSafeSparqlIri(elementIri, 'element IRI');
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
-		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		// Matched by (workspace, element) rather than a computed subject, so it removes the right row
+		// whichever of the two membership IRI forms (`resolveMembershipIri`) it was minted under.
 		await this.executeUpdate(
-			`${PREFIXES} DELETE WHERE { ${inGraph(`<${membershipIri}> ?p ?o .`, graphs.schema)} }`
+			`${PREFIXES} DELETE WHERE { ${inGraph(
+				`?m <${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+					`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> ; ?p ?o .`,
+				graphs.schema
+			)} }`
 		);
+	}
+
+	/**
+	 * The membership subject for one `(workspace, element)` pair. Subjects are minted from local names
+	 * only (`workspaceMembershipIri`), so two same-named classes in different namespaces would share
+	 * one — the second add used to be a silent no-op, and a later position update overwrote the first
+	 * one's `element`. Resolution: the subject (either form) that already points at this element, else
+	 * the legacy subject if free, else the hash-disambiguated one.
+	 */
+	private async resolveMembershipIri(workspaceIriValue: string, elementIri: string): Promise<string> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const legacy = workspaceMembershipIri(workspaceIriValue, elementIri);
+		const hashed = workspaceMembershipIriDisambiguated(workspaceIriValue, elementIri);
+		const ownedBy = (iri: string) =>
+			this.askQuery(
+				`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ; ` +
+					`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${elementIri}> }`
+			);
+		if (await ownedBy(hashed)) return hashed;
+		if (await ownedBy(legacy)) return legacy;
+		const legacyTaken = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${legacy}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> }`
+		);
+		return legacyTaken ? hashed : legacy;
 	}
 
 	/** Upserts the full membership row's `x`/`y` (plus its `a`/`workspace`/`element` link triples,
@@ -5053,7 +5084,7 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
 		this.assertSafeSparqlIri(elementIri, 'element IRI');
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
-		const membershipIri = workspaceMembershipIri(workspaceIriValue, elementIri);
+		const membershipIri = await this.resolveMembershipIri(workspaceIriValue, elementIri);
 		await this.executeUpdate(`
 			${PREFIXES}
 			${withGraph(graphs.schema)}
