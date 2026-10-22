@@ -1,3 +1,4 @@
+import { isShortId } from './short-links';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
 	classIri,
@@ -56,6 +57,8 @@ import {
 	SAVED_QUERY_CREATED_AT_PREDICATE_IRI,
 	SAVED_QUERY_PUBLISHED_PREDICATE_IRI,
 	savedQueryIri,
+	SHARED_QUERY_CLASS_IRI,
+	sharedQueryIri,
 	NOTE_CLASS_IRI,
 	NOTE_WORKSPACE_PREDICATE_IRI,
 	NOTE_TEXT_PREDICATE_IRI,
@@ -4845,6 +4848,50 @@ export class SparqlConnector {
 			)} }`
 		);
 		return iri;
+	}
+
+	// -- Shared queries / short links (object-browser STORY-261) ---------------------------------
+
+	/** Idempotently declares `SharedQuery` in the default namespace's `/schema` graph. */
+	async ensureSharedQueryClass(): Promise<void> {
+		if (await this.classExists(SHARED_QUERY_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI)) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${SHARED_QUERY_CLASS_IRI}> a owl:Class ; rdfs:label "SharedQuery" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Stores a model under `id`. Returns `false` (writing nothing) when the id is already taken so the
+	 *  caller can retry with a fresh one. The node IRI is derived from the validated id only. */
+	async insertSharedQuery(
+		id: string,
+		modelJson: string,
+		createdBy?: string,
+		createdAt: string = new Date().toISOString()
+	): Promise<boolean> {
+		if (!isShortId(id)) throw new Error('Invalid share id');
+		await this.ensureSharedQueryClass();
+		const iri = sharedQueryIri(id);
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> ?p ?o }`)) return false;
+		const by = createdBy ? ` ; <${SAVED_QUERY_CREATED_BY_PREDICATE_IRI}> "${this.escapeString(createdBy)}"` : '';
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a <${SHARED_QUERY_CLASS_IRI}> ; <${SAVED_QUERY_MODEL_PREDICATE_IRI}> "${this.escapeString(modelJson)}"${by} ; <${SAVED_QUERY_CREATED_AT_PREDICATE_IRI}> "${this.escapeString(createdAt)}"^^xsd:dateTime .`,
+				graphs.schema
+			)} }`
+		);
+		return true;
+	}
+
+	/** The stored model JSON for `id`, or `null` for a malformed or unknown id (a malformed id never queries). */
+	async fetchSharedQuery(id: string): Promise<string | null> {
+		if (!isShortId(id)) return null;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const res = await this.selectQuery(
+			`${PREFIXES} SELECT ?model ${fromClause(graphs.schema)} WHERE { <${sharedQueryIri(id)}> a <${SHARED_QUERY_CLASS_IRI}> ; <${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?model }`
+		);
+		return res.results.bindings[0]?.model?.value ?? null;
 	}
 
 	/** Updates only `rdfs:label` — the saved query's own IRI never changes, mirroring

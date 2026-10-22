@@ -3,7 +3,8 @@
  * decides what the workbench should load from its URL. Nothing here trusts URL input — inline
  * models go through `decodeModelFromUrl` (strict parse), saved ids through `resolveReportTarget`.
  */
-import { decodeModelFromUrl, encodeModelForUrl, type QueryModel } from './query-model';
+import { decodeModelFromUrl, encodeModelForUrl, parseQueryModel, type QueryModel } from './query-model';
+import { isShortId } from './short-links';
 import { reportIdForIri, resolveReportTarget } from './report-id';
 import type { SavedQueryItem } from './saved-queries';
 
@@ -63,4 +64,27 @@ export function resolveSharedLoad(
 		return decoded.ok ? { kind: 'model', model: decoded.model } : { kind: 'error', message: decoded.error };
 	}
 	return { kind: 'none' };
+}
+
+export type ShortLinkResult = { ok: true; model: QueryModel } | { ok: false; error: string };
+
+const SHORT_LINK_NOT_FOUND = 'The shared query was not found. The link may be wrong.';
+
+/** Resolves `?q=<id>` through `GET /api/shared-queries/<id>`; a malformed id never leaves the browser. */
+export async function fetchShortLinkModel(
+	id: string,
+	fetchImpl: typeof fetch
+): Promise<ShortLinkResult> {
+	if (!isShortId(id)) return { ok: false, error: SHORT_LINK_NOT_FOUND };
+	let res: Response;
+	try {
+		res = await fetchImpl(`/api/shared-queries/${id}`);
+	} catch {
+		return { ok: false, error: 'The shared query could not be loaded. Check your connection and try again.' };
+	}
+	if (res.status === 404) return { ok: false, error: SHORT_LINK_NOT_FOUND };
+	if (!res.ok) return { ok: false, error: 'The shared query could not be loaded. Try again later.' };
+	const body = await res.json().catch(() => null);
+	const parsed = parseQueryModel(JSON.stringify(body?.model ?? null));
+	return parsed.ok ? { ok: true, model: parsed.model } : { ok: false, error: 'The shared query is damaged and could not be read.' };
 }

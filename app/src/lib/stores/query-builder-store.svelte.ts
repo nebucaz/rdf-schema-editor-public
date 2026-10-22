@@ -4,13 +4,9 @@ import type { QueryModel, ColumnSource, Filter, Having, Measure } from '$lib/ser
 import type { ColumnRule } from '$lib/services/column-rules';
 import { addRule, removeRule, moveRuleWithinColumn, updateRule } from '$lib/services/column-rules-editor';
 import {
-	applyStartClass,
-	applyStep,
-	applyGroupColumns,
-	applyToGroup,
-	type ColumnChoice,
-	type ReachableStep
-} from '$lib/services/query-add-column';
+	applyBrowserSelection as foldBrowserSelection,
+	type BrowserPick
+} from '$lib/services/query-object-browser';
 import {
 	startQueryFromClass,
 	startQueryFromSearchHit,
@@ -69,38 +65,20 @@ export class QueryBuilderStore {
 		this.model = startQueryFromClass(classIri, namespaces);
 	}
 
-	/** Add-column modal, first step: a new query with the picked columns, applied as one assignment. */
-	startWithColumns(
-		classIri: string,
-		namespaces: string[],
-		picks: readonly Pick<ColumnChoice, 'source' | 'header'>[]
-	): void {
-		this.model = applyStartClass(classIri, namespaces, picks);
-	}
-
-	/** Add-column modal, extend mode: one hop plus its columns (a disabled step changes nothing). */
-	addStepWithColumns(
-		step: ReachableStep,
-		picks: readonly Pick<ColumnChoice, 'source' | 'header'>[]
-	): void {
-		if (this.model) this.model = applyStep(this.model, step, picks);
-	}
-
-	/** Add-column modal, extend mode: more properties for an existing group, no new hop. */
-	addColumnsToGroup(
-		hopId: string | null,
-		picks: readonly Pick<ColumnChoice, 'source' | 'header'>[]
-	): void {
-		if (this.model) this.model = applyToGroup(this.model, hopId, picks);
-	}
-
-	/** Edit-columns dialog: adds the ticked and removes the unticked columns of one group at once. */
-	editGroupColumns(
-		hopId: string | null,
-		picks: readonly Pick<ColumnChoice, 'source' | 'header'>[],
-		removeColumnIds: readonly string[]
-	): void {
-		if (this.model) this.model = applyGroupColumns(this.model, hopId, picks, removeColumnIds);
+	/**
+	 * Add/Edit-column dialog: folds the object browser's whole selection (new hops, ticked columns and
+	 * unticked existing ones) into the model as one assignment. `false` — and the model untouched — when a
+	 * picked path is rejected. `namespaces` scope a query started from a start-class pick.
+	 */
+	applyBrowserSelection(
+		picks: readonly BrowserPick[],
+		removeColumnIds: readonly string[],
+		namespaces: string[]
+	): boolean {
+		const result = foldBrowserSelection(this.model, picks, removeColumnIds, { namespaces });
+		if (!result.ok) return false;
+		this.model = result.model;
+		return true;
 	}
 
 	startFromSearchHit(

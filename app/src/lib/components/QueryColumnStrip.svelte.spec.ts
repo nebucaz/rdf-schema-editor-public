@@ -31,7 +31,7 @@ function mount(colors = { getColor: vi.fn(), setColor: vi.fn() }) {
 
 function render_(store: QueryBuilderStore, colors: { getColor: unknown; setColor: unknown }) {
 	render(QueryColumnStrip, {
-		props: { model: store.model!, schema, store, onAddColumn: vi.fn(), onFilter: vi.fn(), colors: colors as never }
+		props: { model: store.model!, schema, store, onFilter: vi.fn(), colors: colors as never }
 	});
 	return { store, colors };
 }
@@ -101,5 +101,45 @@ describe('QueryColumnStrip column boxes', () => {
 		const handle = screen.getAllByTestId('cell-handle')[0];
 		await fireEvent.keyDown(handle, { key: 'ArrowRight' });
 		expect(store.model!.columns[1].id).toBe(first);
+	});
+});
+
+describe('QueryColumnStrip column-less hop (object-browser join path)', () => {
+	const teamSchema = buildBuilderSchema({
+		classes: [
+			{ iri: o('Org'), label: 'Organisation', comment: null, namespaceBaseIri: NS },
+			{ iri: o('Team'), label: 'Team', comment: null, namespaceBaseIri: NS }
+		],
+		datatypeProperties: [],
+		objectProperties: [
+			{ iri: o('hasTeam'), label: 'has team', domain: o('Org'), range: o('Team'),
+				namespaceBaseIri: NS, required: false, repeatable: false, relationKind: 'specific' }
+		],
+		individuals: [],
+		subClassOf: [],
+		shapeInConstraints: []
+	} as unknown as FetchedSchema);
+
+	it('shows the empty-group text, and a 0-column count once the group is collapsed', async () => {
+		const store = new QueryBuilderStore();
+		store.schema = teamSchema;
+		const withColumns = applyStartClass(o('Org'), [NS], columnChoices(teamSchema.classes.get(o('Org'))!).slice(0, 1));
+		store.load({
+			...withColumns,
+			hops: [{ id: 'h1', parentHopId: null, propertyIri: o('hasTeam'), direction: 'forward', targetClassIri: o('Team') }]
+		});
+		render(QueryColumnStrip, {
+			props: {
+				model: store.model!,
+				schema: teamSchema,
+				store,
+				onFilter: vi.fn(),
+				colors: { getColor: vi.fn(), setColor: vi.fn() } as never
+			}
+		});
+		expect(screen.getByText('No columns from Team yet.')).toBeInTheDocument();
+		expect(screen.queryByTestId('group-column-count')).toBeNull();
+		await fireEvent.click(screen.getAllByTestId('group-collapse')[1]);
+		expect(screen.getByTestId('group-column-count')).toHaveTextContent('0 columns');
 	});
 });

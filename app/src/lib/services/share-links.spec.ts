@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
-import { savedQueryLinks, adHocLink, adHocReportLink, AD_HOC_REPORT_ID, resolveSharedLoad } from './share-links';
+import { describe, it, expect, vi } from 'vitest';
+import { savedQueryLinks, adHocLink, adHocReportLink, AD_HOC_REPORT_ID, resolveSharedLoad, fetchShortLinkModel } from './share-links';
 import { reportIdForIri } from './report-id';
 import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '../config';
 import { emptyQueryModel, encodeModelForUrl, serializeQueryModel } from './query-model';
+import { startQueryFromClass } from './query-model-edit';
 import type { SavedQueryItem } from './saved-queries';
 
 const BASE = `${namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI).schema}#`;
@@ -119,5 +120,28 @@ describe('adHocReportLink', () => {
 	it('cannot collide with a saved-query report id (those are PascalCase local names or ~-encoded)', () => {
 		expect(reportIdForIri(`${BASE}AdhocSavedQuery`)).not.toBe(AD_HOC_REPORT_ID);
 		expect(AD_HOC_REPORT_ID).toBe('adhoc');
+	});
+});
+
+describe('fetchShortLinkModel (STORY-261)', () => {
+	const model = startQueryFromClass('https://x.test/o#A', ['https://x.test/o']);
+	const reply = (status: number, body?: unknown) =>
+		vi.fn(async () => new Response(JSON.stringify(body ?? {}), { status }));
+
+	it('returns the stored model', async () => {
+		const f = reply(200, { model });
+		expect(await fetchShortLinkModel('aZ09aZ09aZ', f as never)).toEqual({ ok: true, model });
+		expect(f).toHaveBeenCalledWith('/api/shared-queries/aZ09aZ09aZ');
+	});
+	it('reports a malformed id without a request', async () => {
+		const f = reply(200, { model });
+		expect(await fetchShortLinkModel('bad id', f as never)).toMatchObject({ ok: false });
+		expect(f).not.toHaveBeenCalled();
+	});
+	it('reports an unknown id, a server error, a network error and a damaged model', async () => {
+		expect(await fetchShortLinkModel('aZ09aZ09aZ', reply(404) as never)).toMatchObject({ ok: false, error: expect.stringContaining('not found') });
+		expect(await fetchShortLinkModel('aZ09aZ09aZ', reply(502) as never)).toMatchObject({ ok: false });
+		expect(await fetchShortLinkModel('aZ09aZ09aZ', vi.fn(async () => { throw new Error('x'); }) as never)).toMatchObject({ ok: false });
+		expect(await fetchShortLinkModel('aZ09aZ09aZ', reply(200, { model: { version: 1 } }) as never)).toMatchObject({ ok: false });
 	});
 });

@@ -6,17 +6,36 @@ available as the advanced, free-form alternative.
 
 ## Building a query
 
-1. **Search or pick a class.** Searching looks across every text value and shows which property matched,
-   with facet counts; or choose a class directly from the schema panel.
-2. **Expand relationships.** Follow a relation to a related entity to add a *hop*; removing a hop removes
-   everything that hung off it. Relations can be followed forward or backwards (`← hostedOn`, written
-   `^hostedOn` in SPL), e.g. from a server back to the alerts that touched it.
+1. **Search, or start with Columns.** Searching looks across every text value and shows which property
+   matched, with facet counts. Or click **Columns** to open the object browser (below).
+2. **Add columns with the object browser.** The **Columns** button (always shown beside Saved queries) or a group header's *Columns* button opens a multi-pane browser, like a file manager's
+   column view. The first pane lists the classes in your query (or every class, filterable by namespace, when
+   you are starting). Click a class, or its `›` chevron, to open the next pane: its **Label** and **IRI**, its
+   properties, its relationships, and under **Referenced by** the relationships pointing at it. Click a
+   relationship to open the class it leads to, as deep as you like. Tick the properties you want in any pane;
+   the **Selected columns** list shows each one with its path (`Employee › worksFor › Organization › name`).
+   **Save** adds all of them at once, creating the relationship hops along each path (a hop you already
+   have is reused). A hop whose properties you did not tick stays in the query as a join path. Relationships
+   that would loop back on themselves are greyed out with the reason. Past four relationships the browser
+   warns that long paths slow the query and lengthen share links.
+   - **Selection markers:** a class or relationship row with a number badge has that many ticked columns on it or
+     further down its path, so a selection in a branch you are not looking at stays visible.
+   - **Search** box: type a class or property name and pick a result to open the panes straight to it.
+   - **Keyboard:** Up/Down move within a pane, Home/End jump, Right or Enter opens the next pane, Left goes back,
+     Space ticks a property, Escape clears the search box (and closes the dialog when it is empty).
+   - The group's **Columns** button opens the same browser on that group with its columns ticked; unticking a
+     column removes it. Relations can be followed forward or backwards (`← hostedOn`, written `^hostedOn` in
+     SPL), e.g. from a server back to the alerts that touched it.
 3. **Filter.** Add filters on properties, enumeration members or related entities. Select two or more filter
    chips and choose **Group as “any of”** to OR them: `(a OR b) AND c`. A date or dateTime filter can be
    relative (`-24h`, `now`), resolved each time the query runs.
-4. **Choose columns, sort and aggregate.** Pick the columns to show, sort by one or more of them, or group
-   by columns and count (or count distinct).
+4. **Sort and aggregate.** Sort by one or more columns, or group by columns and count (or count distinct).
 5. **Scope namespaces.** The workbench has its own namespace selection, saved with the query.
+
+**Copy link** puts the whole query in the link while it is small enough. A query with many columns on a long path
+is too large for that, so the workbench stores it on the server and copies a short link instead
+(`/workbench?q=<id>`). Short links never expire and open the query in the builder; an unknown or damaged link shows
+a message and leaves the builder empty. Saved queries keep their own `?query=` and report links.
 
 **Show query** displays what will actually run, as an SPL-style pipeline or as SPARQL, and can open the
 SPARQL in the console. The SPL view is read-only; to *type* SPL instead of clicking, switch the search region

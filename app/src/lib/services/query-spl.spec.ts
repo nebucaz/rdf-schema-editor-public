@@ -81,6 +81,13 @@ describe('printSplPipeline', () => {
 		);
 	});
 
+	it('prints a path stage for every hop even when no hop carries a column (object-browser join paths)', () => {
+		const m = model();
+		m.hops = [hop('a', null, 'hostedOn', 'Server'), hop('b', 'a', 'hasIP', 'IP')];
+		m.columns = [{ id: 'c1', hopId: null, source: prop('owner'), header: 'x' }];
+		expect(printSplPipeline(m, schema)).toBe('Application\n| hostedOn\n| hostedOn.hasIP\n| fields owner');
+	});
+
 	it('prints columns as a fields stage', () => {
 		const m = model();
 		m.hops = [hop('a', null, 'hostedOn', 'Server')];

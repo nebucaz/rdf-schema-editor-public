@@ -80,7 +80,6 @@
 		flex-wrap: wrap;
 		align-items: center;
 		gap: 0.75rem;
-		margin-bottom: 0.5rem;
 		font-size: 0.85rem;
 	}
 	.error {

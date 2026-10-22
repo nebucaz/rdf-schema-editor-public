@@ -2,7 +2,6 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import AddColumnModal from './AddColumnModal.svelte';
 import { buildBuilderSchema } from '$lib/services/query-builder-schema';
-import { applyStartClass } from '$lib/services/query-add-column';
 import { addHop, startQueryFromClass } from '$lib/services/query-model-edit';
 import type { FetchedNamespace, FetchedSchema } from '$lib/services/sparql-connector';
 
@@ -19,113 +18,100 @@ const rel = (n: string, domain: string, range: string, label = n) => ({
 
 const schema = buildBuilderSchema({
 	classes: [cls('Org', 'Organisation'), cls('Team'), cls('Person')],
-	datatypeProperties: [dp('orgName', 'Org', XSD_STRING, 'name')],
+	datatypeProperties: [dp('orgName', 'Org', XSD_STRING, 'name'), dp('personName', 'Person', XSD_STRING, 'full name')],
 	objectProperties: [rel('hasTeam', 'Org', 'Team', 'has team'), rel('hasMember', 'Team', 'Person', 'has member')],
 	individuals: [],
 	subClassOf: [],
 	shapeInConstraints: []
 } as unknown as FetchedSchema);
 const namespaces = [{ baseIri: NS, prefix: 'org', description: '' }] as unknown as FetchedNamespace[];
+const root = () => startQueryFromClass(o('Org'), [NS]);
 
 function props(over: Record<string, unknown> = {}) {
-	return {
-		isOpen: true,
-		schema,
-		namespaces,
-		onStart: vi.fn(),
-		onStep: vi.fn(),
-		onGroup: vi.fn(),
-		onClose: vi.fn(),
-		...over
-	};
+	return { isOpen: true, schema, namespaces, model: null, onSave: vi.fn(), onClose: vi.fn(), ...over };
 }
+const panes = () => screen.getAllByTestId('browser-pane');
+const link = (pane: HTMLElement, name: RegExp) => within(pane).getByRole('button', { name });
+const boxes = (pane: HTMLElement) => within(pane).getAllByRole('checkbox') as HTMLInputElement[];
+const save = () => screen.getByTestId('add-column-save');
 
-describe('AddColumnModal — first class', () => {
-	it('saves the start class with the ticked columns', async () => {
+describe('AddColumnModal — object browser', () => {
+	it('hosts the browser and no longer has the step list, start-class selects or group list', () => {
+		render(AddColumnModal, props());
+		expect(screen.getByTestId('object-browser')).toBeInTheDocument();
+		for (const id of ['add-column-steps', 'add-column-class', 'add-column-namespace', 'add-column-existing']) {
+			expect(screen.queryByTestId(id)).toBeNull();
+		}
+	});
+
+	it('starts a new query: browse classes, tick a deep property, Save', async () => {
 		const p = props();
 		render(AddColumnModal, p);
-		expect(screen.getByTestId('add-column-save')).toBeDisabled();
-		await fireEvent.change(screen.getByTestId('add-column-class'), { target: { value: o('Org') } });
-		const boxes = screen.getAllByRole('checkbox');
-		await fireEvent.click(boxes[0]);
-		await fireEvent.click(screen.getByTestId('add-column-save'));
-		expect(p.onStart).toHaveBeenCalledTimes(1);
-		const [classIri, picks] = p.onStart.mock.calls[0];
-		expect(classIri).toBe(o('Org'));
+		expect(save()).toBeDisabled();
+		await fireEvent.click(screen.getByRole('button', { name: /org:Organisation/ }));
+		await fireEvent.click(link(panes()[1], /has team/));
+		await fireEvent.click(link(panes()[2], /has member/));
+		await fireEvent.click(boxes(panes()[3])[2]);
+		expect(save()).toBeEnabled();
+		await fireEvent.click(save());
+		expect(p.onSave).toHaveBeenCalledTimes(1);
+		const { picks, removeColumnIds } = p.onSave.mock.calls[0][0];
+		expect(removeColumnIds).toEqual([]);
 		expect(picks).toHaveLength(1);
+		expect(picks[0].path.anchor).toEqual({ startClassIri: o('Org') });
+		expect(picks[0].path.steps.map((s: { relationshipIri: string }) => s.relationshipIri)).toEqual([
+			o('hasTeam'),
+			o('hasMember')
+		]);
+		expect(picks[0].source).toEqual({ propertyIri: o('personName') });
 	});
 
-	it('cancel closes without starting a query', async () => {
-		const p = props();
+	it('extends an existing query from its own classes with a deep pick in one Save', async () => {
+		const p = props({ model: root() });
 		render(AddColumnModal, p);
-		await fireEvent.click(screen.getByTestId('add-column-cancel'));
-		expect(p.onClose).toHaveBeenCalled();
-		expect(p.onStart).not.toHaveBeenCalled();
-		expect(p.onStep).not.toHaveBeenCalled();
-		expect(p.onGroup).not.toHaveBeenCalled();
-	});
-});
-
-describe('AddColumnModal — extend mode', () => {
-	const model = startQueryFromClass(o('Org'), [NS]);
-
-	it('lists only steps reachable from the classes already in the query', () => {
-		render(AddColumnModal, props({ model }));
-		const steps = screen.getByTestId('add-column-steps');
-		expect(steps).toHaveTextContent('has team');
-		expect(steps).not.toHaveTextContent('has member');
+		await fireEvent.click(screen.getByRole('button', { name: /Organisation/ }));
+		await fireEvent.click(link(panes()[1], /has team/));
+		await fireEvent.click(link(panes()[2], /has member/));
+		await fireEvent.click(boxes(panes()[3])[0]);
+		await fireEvent.click(save());
+		const { picks } = p.onSave.mock.calls[0][0];
+		expect(picks[0].path.anchor).toEqual({ hopId: null });
+		expect(picks[0].path.steps).toHaveLength(2);
 	});
 
-	it('applies the chosen step with its ticked columns', async () => {
-		const p = props({ model });
-		render(AddColumnModal, p);
-		await fireEvent.click(screen.getByRole('radio', { name: /has team/ }));
-		await fireEvent.click(screen.getAllByRole('checkbox')[0]);
-		await fireEvent.click(screen.getByTestId('add-column-save'));
-		expect(p.onStep).toHaveBeenCalledTimes(1);
-		expect(p.onStep.mock.calls[0][0]).toMatchObject({ relationshipIri: o('hasTeam'), targetClassIri: o('Team') });
-		expect(p.onStart).not.toHaveBeenCalled();
-	});
-
-	it('shows the not-offered hint when a search matches nothing reachable', async () => {
-		render(AddColumnModal, props({ model }));
-		await fireEvent.input(screen.getByTestId('add-column-search'), { target: { value: 'Person' } });
-		expect(screen.getByTestId('add-column-hint')).toHaveTextContent('one relationship away');
-		expect(screen.getByTestId('add-column-hint')).toHaveTextContent('Nearest path to Person');
-	});
-
-	it('shows the reason beside a disabled step and does not let it be picked', () => {
-		// The same relationship from the same class twice is the sibling-duplicate rule.
-		const withHop = addHop(model, null, { iri: o('hasTeam'), targetClassIri: o('Team') }, 'forward');
-		render(AddColumnModal, props({ model: withHop }));
-		const steps = within(screen.getByTestId('add-column-steps'));
-		const disabled = steps.getAllByRole('radio').filter((r) => (r as HTMLInputElement).disabled);
-		expect(disabled.length).toBeGreaterThan(0);
-		const item = disabled[0].closest('li')!;
-		expect(item.querySelector('.meta')?.textContent?.trim()).toBeTruthy();
-	});
-});
-
-describe('AddColumnModal — edit a group\'s columns', () => {
-	const model = applyStartClass(o('Org'), [NS], [{ source: 'iri', header: 'IRI' }]);
-
-	it('opens ticked with the group\'s current columns and saves only what changed', async () => {
+	it('edit mode opens on the group with its columns ticked and saves additions and removals', async () => {
+		const model = { ...root(), columns: [{ id: 'c1', hopId: null, source: 'iri' as const, header: 'IRI' }] };
 		const p = props({ model, initialTarget: 'group:root' });
 		render(AddColumnModal, p);
-		const boxes = screen.getAllByRole('checkbox') as HTMLInputElement[];
-		const checkedBefore = boxes.filter((b) => b.checked);
-		expect(checkedBefore).toHaveLength(1);
-		expect(screen.getByTestId('add-column-save')).toBeDisabled();
+		expect(screen.getByText('Columns')).toBeInTheDocument();
+		const b = boxes(panes()[1]);
+		expect(b.filter((x) => x.checked)).toHaveLength(1);
+		expect(save()).toBeDisabled();
+		await fireEvent.click(b[1]); // untick the existing IRI column
+		await fireEvent.click(b[0]); // tick Label
+		await fireEvent.click(save());
+		const { picks, removeColumnIds } = p.onSave.mock.calls[0][0];
+		expect(removeColumnIds).toEqual(['c1']);
+		expect(picks.map((x: { source: unknown }) => x.source)).toEqual(['label']);
+	});
 
-		// Untick the existing IRI column and tick another one.
-		await fireEvent.click(checkedBefore[0]);
-		await fireEvent.click(boxes.find((b) => !b.checked)!);
-		await fireEvent.click(screen.getByTestId('add-column-save'));
+	it('opens on a hop group when asked to edit it', () => {
+		const model = addHop(root(), null, { iri: o('hasTeam'), targetClassIri: o('Team') });
+		render(AddColumnModal, props({ model, initialTarget: 'group:h1' }));
+		expect(within(panes()[1]).getByRole('heading', { name: 'Team' })).toBeInTheDocument();
+	});
 
-		expect(p.onGroup).toHaveBeenCalledTimes(1);
-		const [hopId, picks, removeIds] = p.onGroup.mock.calls[0];
-		expect(hopId).toBeNull();
-		expect(picks).toHaveLength(1);
-		expect(removeIds).toEqual([model.columns[0].id]);
+	it('Cancel closes without saving, and Save stays disabled until something changes', async () => {
+		const p = props({ model: root() });
+		render(AddColumnModal, p);
+		expect(save()).toBeDisabled();
+		await fireEvent.click(screen.getByRole('button', { name: /Organisation/ }));
+		await fireEvent.click(boxes(panes()[1])[0]);
+		await fireEvent.click(boxes(panes()[1])[0]);
+		expect(save()).toBeDisabled();
+		await fireEvent.click(boxes(panes()[1])[0]);
+		await fireEvent.click(screen.getByTestId('add-column-cancel'));
+		expect(p.onClose).toHaveBeenCalledTimes(1);
+		expect(p.onSave).not.toHaveBeenCalled();
 	});
 });

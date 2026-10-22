@@ -39,7 +39,8 @@
 	import SaveQueryModal from '$lib/components/SaveQueryModal.svelte';
 	import { savedQueriesStore } from '$lib/stores/saved-queries-store.svelte';
 	import { openSavedQuery, saveDisabledReason, toSavedQueryItem, type SavedQueryItem } from '$lib/services/saved-queries';
-	import { adHocLink, adHocReportLink, resolveSharedLoad } from '$lib/services/share-links';
+	import { adHocLink, adHocReportLink, fetchShortLinkModel, resolveSharedLoad } from '$lib/services/share-links';
+	import { shareLinkFor, shortLinkUrl } from '$lib/services/short-links';
 	import { prepareModelLoad, prepareSplLoad } from '$lib/services/query-load';
 	import type { SplParseError } from '$lib/services/query-spl-parser';
 	import { formatSplError, shouldOfferSplMode } from '$lib/services/spl-error-format';
@@ -194,9 +195,14 @@
 	});
 
 	async function loadShared(params: URLSearchParams) {
-		if (!params.has('query') && !params.has('m')) return;
+		if (!params.has('query') && !params.has('m') && !params.has('q')) return;
 		shareError = null;
 		try {
+			if (params.has('q') && !params.has('query') && !params.has('m')) {
+				const short = await fetchShortLinkModel(params.get('q') ?? '', fetch);
+				shareError = short.ok ? await loadModelIntoBuilder(short.model) : short.error;
+				return;
+			}
 			const items = params.has('query')
 				? (await sparqlConnector.fetchSavedQueries()).map((sq) => toSavedQueryItem(sq, user ?? null))
 				: [];
@@ -223,10 +229,41 @@
 		}
 	}
 
+	let creatingShortLink = $state(false);
+	/** The Query section (columns, filters, shape) folds away so the results table moves up. */
+	let queryCollapsed = $state(false);
+
+	async function copyShortLink(model: NonNullable<typeof queryBuilderStore.model>) {
+		creatingShortLink = true;
+		try {
+			const res = await fetch('/api/shared-queries', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ model })
+			});
+			const data = await res.json().catch(() => ({}));
+			if (!res.ok || typeof data.id !== 'string') {
+				shareError = 'The short link could not be created. Try again, or save the query and share that.';
+				return;
+			}
+			await copyText(shortLinkUrl(window.location.origin, data.id));
+		} catch {
+			shareError = 'The short link could not be created. Try again, or save the query and share that.';
+		} finally {
+			creatingShortLink = false;
+		}
+	}
+
 	function copyAdHocLink(kind: 'editor' | 'result') {
 		const model = queryBuilderStore.model;
 		if (!model) return;
 		shareError = null;
+		if (kind === 'editor') {
+			const plan = shareLinkFor(window.location.origin, model);
+			if (plan.kind === 'inline') void copyText(plan.url);
+			else void copyShortLink(model);
+			return;
+		}
 		const build = kind === 'result' ? adHocReportLink : adHocLink;
 		const link = build(window.location.origin, model);
 		if (!link.ok) {
@@ -418,17 +455,38 @@
 			{:else if queryBuilderStore.schemaError}
 				<p class="error" role="alert">{queryBuilderStore.schemaError}</p>
 			{/if}
-			{#if queryBuilderStore.schema && !queryBuilderStore.model}
+			{#if queryBuilderStore.schema}
 				<button type="button" onclick={() => {
-					addColumnTarget = null;
+					// With a query, open exactly as a group's Columns button does (on the root group).
+					addColumnTarget = queryBuilderStore.model ? 'group:root' : null;
 					showAddColumn = true;
 				}} data-testid="add-column">
-					Add column to start
+					Columns
 				</button>
 			{/if}
 			<button type="button" onclick={() => (showSavedModal = true)} data-testid="open-saved-queries">
 				Saved queries
 			</button>
+			{#if queryBuilderStore.model && rootClass}
+				<button type="button" class="run-btn" disabled={!runnable || queryRunStore.running} onclick={runQuery} data-testid="run-query">
+					{queryRunStore.running ? 'Running…' : 'Run'}
+				</button>
+				<button type="button" disabled={!runnable} onclick={() => (showSaveModal = true)} data-testid="open-save-modal">
+					Save
+				</button>
+				<button type="button" onclick={() => copyAdHocLink('editor')} data-testid="copy-adhoc-link" disabled={creatingShortLink}>
+					Copy editor link
+				</button>
+				<button
+					type="button"
+					disabled={!runnable}
+					onclick={() => copyAdHocLink('result')}
+					data-testid="copy-adhoc-result-link"
+				>
+					Copy result link (read-only)
+				</button>
+				<button type="button" onclick={() => queryBuilderStore.close()}>Close</button>
+			{/if}
 		</div>
 		{#if openError}<p class="error" role="alert">{openError}</p>{/if}
 		{#if searchError}
@@ -461,35 +519,34 @@
 	{#if queryBuilderStore.model && rootClass}
 		<section class="region" data-testid="region-builder" aria-labelledby="region-builder-title">
 			<div class="builder-head">
-				<h2 id="region-builder-title">Query: {rootClass.label}</h2>
-				<button type="button" class="run-btn" disabled={!runnable || queryRunStore.running} onclick={runQuery} data-testid="run-query">
-					{queryRunStore.running ? 'Running…' : 'Run'}
-				</button>
-				<button type="button" disabled={!runnable} onclick={() => (showSaveModal = true)} data-testid="open-save-modal">
-					Save
-				</button>
-				<button type="button" onclick={() => copyAdHocLink('editor')} data-testid="copy-adhoc-link">
-					Copy editor link
-				</button>
-				<button
-					type="button"
-					disabled={!runnable}
-					onclick={() => copyAdHocLink('result')}
-					data-testid="copy-adhoc-result-link"
-				>
-					Copy result link (read-only)
-				</button>
-				<button type="button" onclick={() => queryBuilderStore.close()}>Close</button>
+				<h2 id="region-builder-title">
+					<button
+						type="button"
+						class="query-toggle"
+						aria-expanded={!queryCollapsed}
+						aria-controls="query-config"
+						onclick={() => (queryCollapsed = !queryCollapsed)}
+						data-testid="query-toggle"
+					>
+						<span aria-hidden="true">{queryCollapsed ? '▸' : '▾'}</span>
+						Query: {rootClass.label}
+					</button>
+				</h2>
+				{#if queryBuilderStore.schema}
+					<QueryExportButton
+						model={queryBuilderStore.model}
+						schema={queryBuilderStore.schema}
+						disabled={!runnable || !queryRunStore.table}
+					/>
+				{/if}
 			</div>
 			{#if queryBuilderStore.schema}
+				<!-- Hidden, not unmounted, so group collapse and drawer state survive a collapse. -->
+				<div id="query-config" hidden={queryCollapsed} data-testid="query-config">
 				<QueryColumnStrip
 					model={queryBuilderStore.model}
 					schema={queryBuilderStore.schema}
 					store={queryBuilderStore}
-					onAddColumn={() => {
-						addColumnTarget = null;
-						showAddColumn = true;
-					}}
 					onEditColumns={(hopId) => {
 						addColumnTarget = `group:${hopId ?? 'root'}`;
 						showAddColumn = true;
@@ -506,11 +563,7 @@
 					model={queryBuilderStore.model}
 					schema={queryBuilderStore.schema}
 				/>
-				{#if queryRunStore.error}
-					<p class="error" role="alert" data-testid="run-error">{queryRunStore.error}</p>
-				{/if}
 				{#if queryRunStore.table && queryRunStore.compiled}
-					<QueryExportButton model={queryBuilderStore.model} schema={queryBuilderStore.schema} disabled={!runnable} />
 					<QueryColumnRules model={queryBuilderStore.model} schema={queryBuilderStore.schema} store={queryBuilderStore} />
 				{/if}
 				<QueryFilterChips
@@ -525,6 +578,10 @@
 					onUngroup={(groupId) => queryBuilderStore.ungroupFilters(groupId)}
 					onRemoveFromGroup={(m) => m.filters.forEach((f) => queryBuilderStore.removeFromGroup(f.id))}
 				/>
+				</div>
+				{#if queryRunStore.error}
+					<p class="error" role="alert" data-testid="run-error">{queryRunStore.error}</p>
+				{/if}
 				{#if resultsView}
 					{@const model = queryBuilderStore.model}
 					{@const schema = queryBuilderStore.schema}
@@ -578,16 +635,8 @@
 			namespaces={namespaceStore.namespaces}
 			model={queryBuilderStore.model}
 			initialTarget={addColumnTarget}
-			onStep={(step, picks) => {
-				queryBuilderStore.addStepWithColumns(step, picks);
-				showAddColumn = false;
-			}}
-			onGroup={(hopId, picks, removeIds) => {
-				queryBuilderStore.editGroupColumns(hopId, picks, removeIds);
-				showAddColumn = false;
-			}}
-			onStart={(classIri, picks) => {
-				queryBuilderStore.startWithColumns(classIri, scope, picks);
+			onSave={({ picks, removeColumnIds }) => {
+				queryBuilderStore.applyBrowserSelection(picks, removeColumnIds, scope);
 				showAddColumn = false;
 			}}
 			onClose={() => (showAddColumn = false)}
@@ -723,6 +772,18 @@
 	}
 
 	.hits li,
+	.query-toggle {
+		all: unset;
+		cursor: pointer;
+		font: inherit;
+		display: inline-flex;
+		gap: 0.4rem;
+	}
+	.query-toggle:focus-visible {
+		outline: 2px solid var(--color-accent);
+		outline-offset: 2px;
+	}
+
 	.builder-head {
 		display: flex;
 		align-items: center;

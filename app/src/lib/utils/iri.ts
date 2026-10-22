@@ -256,6 +256,15 @@ export const SAVED_QUERY_CLASS_IRI = `${SCHEMA_NAMESPACE}SavedQuery`;
  *  `escapeString()` convention every other literal-bearing insert/update already uses). */
 export const SAVED_QUERY_TEXT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sparqlText`;
 
+/** Short share links (object-browser STORY-261): one node per stored model, kept apart from `SavedQuery`
+ *  so it never shows in the saved-query list. Reuses the saved-query model/createdBy/createdAt predicates. */
+export const SHARED_QUERY_CLASS_IRI = `${SCHEMA_NAMESPACE}SharedQuery`;
+
+/** Node IRI for a short-link id; the caller must have validated `id` (`isShortId`). */
+export function sharedQueryIri(id: string, namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): string {
+	return `${namespaceGraphs(namespaceBaseIri).schema}#SharedQuery${id}`;
+}
+
 /** Query Workbench (STORY-178): the serialised `QueryModel` JSON. Absent = legacy raw-SPARQL query. */
 export const SAVED_QUERY_MODEL_PREDICATE_IRI = `${SCHEMA_NAMESPACE}queryModelJson`;
 /** The creating user's JWT `sub` (STORY-179). */

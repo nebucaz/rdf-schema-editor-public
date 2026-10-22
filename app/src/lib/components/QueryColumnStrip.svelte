@@ -28,7 +28,6 @@
 		model: QueryModel;
 		schema: BuilderSchema;
 		store: QueryBuilderStore;
-		onAddColumn: () => void;
 		/** Opens the filter dialog for a column's property, a group's entity, or any property. */
 		onFilter: (target: FilterTarget) => void;
 		/** Per-browser group tints; injectable for tests. */
@@ -37,7 +36,7 @@
 		onEditColumns?: (hopId: string | null) => void;
 	}
 
-	let { model, schema, store, onAddColumn, onFilter, colors = workbenchGroupColorStore, onEditColumns }: Props = $props();
+	let { model, schema, store, onFilter, colors = workbenchGroupColorStore, onEditColumns }: Props = $props();
 
 	// View state only (STORY-248): collapse is per page visit, tint persists per browser; neither is in the model.
 	let collapsedKeys = $state<Set<string>>(new Set());
@@ -204,11 +203,6 @@
 			{/if}
 		</section>
 	{/each}
-	<div>
-		<button type="button" class="add-column" onclick={onAddColumn} data-testid="add-column">
-			+ Add column
-		</button>
-	</div>
 </div>
 
 <style>

@@ -103,6 +103,19 @@ describe('compileQuery — shape', () => {
 		expect(r.sparql).not.toMatch(/SELECT[^{]*\?h1/);
 	});
 
+	it('joins through a column-less middle hop and selects only the leaf entity (object-browser join path)', () => {
+		const m = base();
+		m.hops = [hop('a', null, 'hostedOn', 'Server'), hop('b', 'a', 'hasIP', 'IP')];
+		m.columns = [{ id: 'ip', hopId: 'b', source: 'label', header: 'IP' }];
+		const r = compileQuery(m, schema, page);
+		expect(r.entityVariables).toEqual({ root: 'root', b: 'h1' });
+		// hop `a` has no column: joined, not selected
+		expect(r.sparql).toMatch(/\?root <[^>]*hostedOn> \?h0 \./);
+		expect(r.sparql).toMatch(/\?h0 <[^>]*hasIP> \?h1 \./);
+		expect(r.sparql).toMatch(/SELECT DISTINCT \?root \?c0 \?h1\n/);
+		expect(r.sparql).not.toMatch(/SELECT[^{]*\?h0/);
+	});
+
 	it('keeps the select list unchanged when no hop has a column', () => {
 		const r = compileQuery(base(), schema, page);
 		expect(r.entityVariables).toEqual({ root: 'root' });
