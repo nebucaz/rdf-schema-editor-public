@@ -5,7 +5,10 @@ import {
 	GraphDbLayoutStore,
 	gridPosition,
 	resolvePositions,
-	viewportCenteredGridPosition,
+	viewportCenteredPosition,
+	NEW_NODE_SIZE,
+	PLACEMENT_NUDGE_PX,
+	PLACEMENT_NUDGE_STEPS,
 	type MinimalStorage,
 	type WorkspaceMemberPositionsSource
 } from './layout-store';
@@ -230,51 +233,66 @@ describe('gridPosition', () => {
 	});
 });
 
-describe('viewportCenteredGridPosition (Sprint 6 Story 020)', () => {
-	const viewport = { x: 0, y: 0, zoom: 1 };
+describe('viewportCenteredPosition (editing-issues Story 001)', () => {
 	const width = 800;
 	const height = 600;
+	const size = NEW_NODE_SIZE;
 
-	it('at zoom 1, reproduces the exact pre-fix placement (no regression)', () => {
-		const centerX = width / 2;
-		const centerY = height / 2;
-		for (let i = 0; i < 8; i++) {
-			const col = i % 4;
-			const row = Math.floor(i / 4) % 4;
-			const expected = { x: centerX - 390 + col * 260, y: centerY - 220 + row * 220 };
-			expect(viewportCenteredGridPosition(viewport, width, height, i)).toEqual(expected);
+	/** Node's visual center, in screen space, for a returned top-left flow position. */
+	function screenCenter(pos: { x: number; y: number }, vp: { x: number; y: number; zoom: number }) {
+		return {
+			x: (pos.x + size.width / 2) * vp.zoom + vp.x,
+			y: (pos.y + size.height / 2) * vp.zoom + vp.y
+		};
+	}
+
+	it.each([0.4, 1, 2.5])('puts the node\'s visual center on the viewport center at zoom %s', (zoom) => {
+		const vp = { x: 0, y: 0, zoom };
+		const pos = viewportCenteredPosition(vp, width, height, []);
+		const c = screenCenter(pos, vp);
+		expect(c.x).toBeCloseTo(width / 2, 6);
+		expect(c.y).toBeCloseTo(height / 2, 6);
+	});
+
+	it('follows a panned viewport', () => {
+		const vp = { x: -200, y: 100, zoom: 1.5 };
+		const c = screenCenter(viewportCenteredPosition(vp, width, height, []), vp);
+		expect(c.x).toBeCloseTo(width / 2, 6);
+		expect(c.y).toBeCloseTo(height / 2, 6);
+	});
+
+	it('falls back to an 800x600 canvas before layout has measured it', () => {
+		const vp = { x: 0, y: 0, zoom: 1 };
+		expect(viewportCenteredPosition(vp, 0, 0, [])).toEqual(viewportCenteredPosition(vp, 800, 600, []));
+	});
+
+	it('nudges diagonally by a fixed screen-space step when the center is occupied', () => {
+		const vp = { x: 0, y: 0, zoom: 2 };
+		const first = viewportCenteredPosition(vp, width, height, []);
+		const second = viewportCenteredPosition(vp, width, height, [first]);
+		expect((second.x - first.x) * vp.zoom).toBeCloseTo(PLACEMENT_NUDGE_PX, 6);
+		expect((second.y - first.y) * vp.zoom).toBeCloseTo(PLACEMENT_NUDGE_PX, 6);
+	});
+
+	it('keeps nudging until a free spot is found, then wraps back to the center', () => {
+		const vp = { x: 0, y: 0, zoom: 1 };
+		const placed: { x: number; y: number }[] = [];
+		const seen = new Set<string>();
+		for (let i = 0; i < PLACEMENT_NUDGE_STEPS; i++) {
+			const p = viewportCenteredPosition(vp, width, height, placed);
+			seen.add(`${p.x},${p.y}`);
+			placed.push(p);
 		}
+		expect(seen.size).toBe(PLACEMENT_NUDGE_STEPS);
+		expect(viewportCenteredPosition(vp, width, height, placed)).toEqual(
+			viewportCenteredPosition(vp, width, height, [])
+		);
 	});
 
-	it('at a high zoom level, every node of a full 4x4 block keeps the same on-screen offset from center as at zoom 1 (no longer drifting off-screen as zoom increases)', () => {
-		const zoomedViewport = { x: 0, y: 0, zoom: 2.5 };
-		for (let i = 0; i < 16; i++) {
-			const posAtZoom1 = viewportCenteredGridPosition(viewport, width, height, i);
-			const posZoomed = viewportCenteredGridPosition(zoomedViewport, width, height, i);
-			// Screen-space position = flow position * zoom + pan offset (pan is 0 here).
-			const screenAtZoom1 = { x: posAtZoom1.x * viewport.zoom, y: posAtZoom1.y * viewport.zoom };
-			const screenZoomed = { x: posZoomed.x * zoomedViewport.zoom, y: posZoomed.y * zoomedViewport.zoom };
-			expect(screenZoomed.x).toBeCloseTo(screenAtZoom1.x, 6);
-			expect(screenZoomed.y).toBeCloseTo(screenAtZoom1.y, 6);
-		}
-	});
-
-	it('grows the spread at a low zoom level instead of clustering nodes tightly', () => {
-		const zoomedIn = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 1 }, width, height, 1);
-		const zoomedOut = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 0.4 }, width, height, 1);
-		const zoomedInCenter = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 1 }, width, height, 0);
-		const zoomedOutCenter = viewportCenteredGridPosition({ x: 0, y: 0, zoom: 0.4 }, width, height, 0);
-		const distIn = Math.hypot(zoomedIn.x - zoomedInCenter.x, zoomedIn.y - zoomedInCenter.y);
-		const distOut = Math.hypot(zoomedOut.x - zoomedOutCenter.x, zoomedOut.y - zoomedOutCenter.y);
-		expect(distOut).toBeGreaterThan(distIn);
-	});
-
-	it('still centers on a panned viewport position (unaffected by the zoom fix)', () => {
-		const panned = { x: -200, y: 100, zoom: 1 };
-		const pos = viewportCenteredGridPosition(panned, width, height, 0);
-		const centerX = (width / 2 - panned.x) / panned.zoom;
-		const centerY = (height / 2 - panned.y) / panned.zoom;
-		expect(pos).toEqual({ x: centerX - 390, y: centerY - 220 });
+	it('ignores far-away nodes', () => {
+		const vp = { x: 0, y: 0, zoom: 1 };
+		const base = viewportCenteredPosition(vp, width, height, []);
+		expect(viewportCenteredPosition(vp, width, height, [{ x: base.x + 5000, y: base.y }])).toEqual(base);
 	});
 });
 

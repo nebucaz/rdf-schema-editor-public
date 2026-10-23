@@ -5,6 +5,7 @@
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
 	import { extractLocalName } from '$lib/utils/iri';
 	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
+	import { gridVisibilityStore } from '$lib/stores/grid-visibility-store.svelte';
 	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
 
 	let loadError = $state<string | null>(null);
@@ -86,6 +87,21 @@
 		Adds the standard <code>0..*</code> symbol (any number of sources may reference one target) at the
 		start of each relation line in exported Crow's Foot diagrams. Off by default — it adds visual noise.
 		Saved in this browser, immediately.
+	</p>
+</div>
+
+<div class="field">
+	<label class="checkbox">
+		<input
+			type="checkbox"
+			checked={gridVisibilityStore.getShowGrid()}
+			onchange={(e) => gridVisibilityStore.setShowGrid(e.currentTarget.checked)}
+		/>
+		Show the orientation grid on the canvas
+	</label>
+	<p class="hint">
+		Grid lines with column letters (A, B, C…) and row numbers (1, 2, 3…) to help locate a section of the
+		diagram. Saved in this browser, immediately.
 	</p>
 </div>
 

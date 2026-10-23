@@ -123,6 +123,56 @@
 		return ns?.prefix ?? '';
 	}
 
+	/** The entry the user explicitly chose from the picker. Held by identity (IRI), so two same-named
+	 *  entries in different namespaces stay distinguishable — the typed label alone cannot say which
+	 *  was meant. Cleared as soon as the name text is edited. */
+	let pickedExisting = $state<NameableEntity | undefined>();
+	let pickerOpen = $state(false);
+	let activeIndex = $state(-1);
+
+	/** Whether `iri` is minted under `base` (instances `<base>#x`, classes possibly `<base>/schema#x`). */
+	function inNamespace(iri: string, base: string): boolean {
+		return iri.startsWith(`${base}#`) || iri.startsWith(`${base}/`);
+	}
+
+	const MAX_PICKER_ROWS = 50;
+	let pickerRows = $derived(
+		mode === 'create' && name.trim() && !pickedExisting
+			? existingOptions
+					.filter((o) => o.label.toLowerCase().includes(name.trim().toLowerCase()))
+					.slice(0, MAX_PICKER_ROWS)
+			: []
+	);
+
+	function handleNameInput() {
+		pickedExisting = undefined;
+		pickerOpen = true;
+		activeIndex = -1;
+	}
+
+	function pick(entity: NameableEntity) {
+		pickedExisting = entity;
+		name = entity.label;
+		pickerOpen = false;
+		activeIndex = -1;
+	}
+
+	function handleNameKeydown(event: KeyboardEvent) {
+		if (!pickerOpen || pickerRows.length === 0) return;
+		if (event.key === 'ArrowDown') {
+			event.preventDefault();
+			activeIndex = (activeIndex + 1) % pickerRows.length;
+		} else if (event.key === 'ArrowUp') {
+			event.preventDefault();
+			activeIndex = activeIndex <= 0 ? pickerRows.length - 1 : activeIndex - 1;
+		} else if (event.key === 'Enter' && activeIndex >= 0) {
+			event.preventDefault();
+			pick(pickerRows[activeIndex]);
+		} else if (event.key === 'Escape') {
+			pickerOpen = false;
+		}
+	}
+
 	let nameMatches = $derived(
 		mode === 'create'
 			? existingOptions.filter((o) => o.label.trim().toLowerCase() === name.trim().toLowerCase())
@@ -132,11 +182,12 @@
 	 *  there would be a duplicate, so only "Add Existing" is offered. */
 	let matchInSelectedNamespace = $derived(
 		namespaceBaseIri
-			? nameMatches.find((o) => o.iri.startsWith(`${namespaceBaseIri}#`))
+			? (pickedExisting ? [pickedExisting] : nameMatches).find((o) => inNamespace(o.iri, namespaceBaseIri))
 			: undefined
 	);
+	/** An explicit pick wins; otherwise the same-named entry in the selected namespace, else the first. */
+	let matchedExisting = $derived(pickedExisting ?? matchInSelectedNamespace ?? nameMatches[0]);
 	/** Same name exists, but only in other namespaces: offer both "Add Existing" and "Add New". */
-	let matchedExisting = $derived(matchInSelectedNamespace ?? nameMatches[0]);
 	let canAddNew = $derived(!!matchedExisting && !matchInSelectedNamespace);
 	/** Fields feed "Add New", so they stay editable whenever it is offered. */
 	let fieldsLocked = $derived(!!matchedExisting && !canAddNew);
@@ -204,18 +255,34 @@
 			type="text"
 			bind:value={name}
 			placeholder="e.g. Person"
-			list={mode === 'create' && existingOptions.length > 0 ? 'entity-existing-names' : undefined}
 			autocomplete="off"
+			role={mode === 'create' && existingOptions.length > 0 ? 'combobox' : undefined}
+			aria-expanded={pickerOpen && pickerRows.length > 0}
+			aria-controls="entity-existing-names"
+			oninput={handleNameInput}
+			onkeydown={handleNameKeydown}
+			onblur={() => (pickerOpen = false)}
 		/>
 	</label>
-	{#if mode === 'create' && existingOptions.length > 0}
-		<datalist id="entity-existing-names">
-			{#each existingOptions as o (o.iri)}
-				<option value={o.label}>
-					{existingKindLabels[o.kind] ?? o.kind}{#if namespaceLabel(o.iri)} · {namespaceLabel(o.iri)}{/if}
-				</option>
+	{#if pickerOpen && pickerRows.length > 0}
+		<ul class="picker" id="entity-existing-names" role="listbox">
+			{#each pickerRows as o, i (o.iri)}
+				<!-- svelte-ignore a11y_click_events_have_key_events -->
+				<!-- mousedown is prevented so the input keeps focus (and doesn't blur-close) before the click lands -->
+				<li
+					role="option"
+					aria-selected={i === activeIndex}
+					class:active={i === activeIndex}
+					onmousedown={(e) => e.preventDefault()}
+					onclick={() => pick(o)}
+				>
+					{o.label}
+					<span class="picker-meta">
+						{existingKindLabels[o.kind] ?? o.kind}{#if namespaceLabel(o.iri)} · {namespaceLabel(o.iri)}{/if}
+					</span>
+				</li>
 			{/each}
-		</datalist>
+		</ul>
 	{/if}
 	{#if matchedExisting}
 		<p class="hint">
@@ -341,6 +408,28 @@
 		padding: 0.5rem 0.65rem;
 	}
 
+	.picker {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		max-height: 12rem;
+		overflow-y: auto;
+		border: 1px solid var(--border, #ccc);
+		border-radius: 4px;
+	}
+	.picker li {
+		padding: 0.3rem 0.5rem;
+		cursor: pointer;
+	}
+	.picker li.active,
+	.picker li:hover {
+		background: var(--hover-bg, rgba(127, 127, 127, 0.18));
+	}
+	.picker-meta {
+		opacity: 0.65;
+		font-size: 0.85em;
+		margin-left: 0.4rem;
+	}
 	input.iri {
 		font-family: 'SF Mono', Menlo, Consolas, monospace;
 		font-size: 0.8rem;

@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { mode } from 'mode-watcher';
 	import {
 		SvelteFlow,
@@ -48,6 +48,12 @@
 	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
+	import CanvasGrid from '$lib/components/CanvasGrid.svelte';
+	import CanvasReadout from '$lib/components/CanvasReadout.svelte';
+	import CanvasSearch from '$lib/components/CanvasSearch.svelte';
+	import { panToNode, searchCanvasNodes, searchHighlightCss } from '$lib/services/canvas-search';
+	import { formatReadout, gridOrigin } from '$lib/services/canvas-grid';
+	import { gridVisibilityStore } from '$lib/stores/grid-visibility-store.svelte';
 	import ProvenanceReportView from '$lib/components/ProvenanceReportView.svelte';
 	import {
 		sparqlConnector,
@@ -69,7 +75,8 @@
 		KeyedDebouncer,
 		debounce,
 		resolvePositions,
-		viewportCenteredGridPosition
+		viewportCenteredPosition,
+		NEW_NODE_SIZE
 	} from '$lib/stores/layout-store';
 	import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
 	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
@@ -87,6 +94,7 @@
 	import { extractLocalName, workspaceIri, type XsdDatatype } from '$lib/utils/iri';
 	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
 	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
+	import { classifyAddedElement } from '$lib/services/workspace-add';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
 
@@ -140,6 +148,58 @@
 	let canvasWidth = $state(0);
 	let canvasHeight = $state(0);
 	let canvasWrapEl = $state<HTMLDivElement | undefined>();
+
+	// -- Zoom / pointer readout (canvas-navigation Story 004) ----------------------------------------
+	// The pointer position is sampled at most once per animation frame, not on every `pointermove`.
+	let pointerFlow = $state<{ x: number; y: number } | null>(null);
+	let pendingPointer: { clientX: number; clientY: number } | null = null;
+	let pointerFrame = 0;
+	function handleCanvasPointerMove(event: PointerEvent) {
+		pendingPointer = { clientX: event.clientX, clientY: event.clientY };
+		if (pointerFrame) return;
+		pointerFrame = requestAnimationFrame(() => {
+			pointerFrame = 0;
+			if (pendingPointer) pointerFlow = screenToFlowPosition(pendingPointer.clientX, pendingPointer.clientY);
+		});
+	}
+	function handleCanvasPointerLeave() {
+		pendingPointer = null;
+		pointerFlow = null;
+	}
+	// -- Canvas search (canvas-navigation Story 005) -------------------------------------------------
+	// Matching is derived from `nodes`, so it follows Workspace switches and hidden namespaces; the
+	// highlight is a scoped stylesheet keyed on Svelte Flow's `data-id`, so no node data is rewritten.
+	let canvasSearchQuery = $state('');
+	const canvasSearchCss = $derived(
+		searchHighlightCss(
+			canvasSearchQuery,
+			searchCanvasNodes(nodes, canvasSearchQuery).map((m) => m.id)
+		)
+	);
+
+	/** Story 006: jump to a search result by assigning the bound `viewport` (the same way a Workspace
+	 *  switch restores a stored frame), centering the node's measured box. */
+	function handleSearchSelect(match: { id: string }) {
+		const node = nodes.find((n) => n.id === match.id);
+		if (!node) return;
+		viewport = panToNode(viewport, canvasWidth, canvasHeight, node.position, {
+			width: node.measured?.width ?? NEW_NODE_SIZE.width,
+			height: node.measured?.height ?? NEW_NODE_SIZE.height
+		});
+	}
+
+	// -- Orientation grid origin (canvas-navigation Story 003) ---------------------------------------
+	// Recomputed when the set of visible nodes changes (add/remove/hide, Workspace switch) but not
+	// while dragging: only the visible ids are tracked, positions are read untracked.
+	let canvasGridOrigin = $state({ x: 0, y: 0 });
+	$effect(() => {
+		void activeWorkspaceIri;
+		void nodes.filter((n) => !n.hidden).map((n) => n.id).join('|');
+		untrack(() => {
+			canvasGridOrigin = gridOrigin(nodes);
+		});
+	});
+	const readoutText = $derived(formatReadout(viewport.zoom, pointerFlow, canvasGridOrigin));
 
 	// -- Per-Workspace view-frame persistence (Sprint 6 Story 023) ----------------------------------
 	// A pan/zoom preference is a pure browser/UI preference, not semantic RDF (same ADR as
@@ -483,7 +543,12 @@
 	}
 
 	function nextPosition() {
-		return viewportCenteredGridPosition(viewport, canvasWidth, canvasHeight, nodes.length);
+		return viewportCenteredPosition(
+			viewport,
+			canvasWidth,
+			canvasHeight,
+			nodes.filter((n) => !n.hidden).map((n) => n.position)
+		);
 	}
 
 	const entityOptions = $derived(
@@ -2970,8 +3035,23 @@
 		if (!alreadyMember) {
 			workspaceMembers = new Set([...workspaceMembers, iri]);
 			graphDbLayoutStore.setPosition(iri, position.x, position.y);
+			const outcome = classifyAddedElement({
+				hasNode: nodes.some((n) => n.id === iri),
+				namespace: nodeNamespaces.get(iri),
+				hiddenNamespaces
+			});
+			if (outcome === 'missing-node') {
+				// The canvas was built from a `lastFetchedSchema` that predates this element — re-fetch so
+				// its node exists (positioned from the membership row just written) instead of the add
+				// silently showing nothing until a page reload.
+				lastFetchedSchema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+				buildAndApplyCanvasModel(lastFetchedSchema);
+			}
 			nodes = nodes.map((n) => (n.id === iri ? { ...n, position } : n));
 			applyVisibilityFilters();
+			if (outcome === 'namespace-hidden') {
+				errorMessage = 'Added to the workspace, but its namespace is hidden — show the namespace to see it.';
+			}
 		}
 		return { alreadyMember };
 	}
@@ -3196,7 +3276,15 @@
 			<span class="error-banner">{errorMessage}</span>
 		{/if}
 	</div>
-	<div class="canvas-wrap" bind:this={canvasWrapEl} bind:clientWidth={canvasWidth} bind:clientHeight={canvasHeight}>
+	<div
+		class="canvas-wrap"
+		bind:this={canvasWrapEl}
+		bind:clientWidth={canvasWidth}
+		bind:clientHeight={canvasHeight}
+		onpointermove={handleCanvasPointerMove}
+		onpointerleave={handleCanvasPointerLeave}
+		role="presentation"
+	>
 		<SvelteFlow
 			bind:nodes
 			bind:edges
@@ -3211,10 +3299,20 @@
 			fitView
 			colorMode={mode.current}
 		>
+			{#if gridVisibilityStore.getShowGrid()}
+				<CanvasGrid {viewport} width={canvasWidth} height={canvasHeight} origin={canvasGridOrigin} />
+			{/if}
 			<Background variant={BackgroundVariant.Dots} />
 			<Controls />
 			<MiniMap />
 		</SvelteFlow>
+		<CanvasReadout text={readoutText} />
+		<CanvasSearch
+			matchesFor={(q) => searchCanvasNodes(nodes, q)}
+			onQueryChange={(q) => (canvasSearchQuery = q)}
+			onSelect={handleSearchSelect}
+		/>
+		{#if canvasSearchCss}{@html `<style>${canvasSearchCss}</style>`}{/if}
 	</div>
 	{#if showTriplesPanel}
 		<TriplesPanel

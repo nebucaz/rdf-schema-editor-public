@@ -186,32 +186,40 @@ export function gridPosition(index: number, columns = 4, cellWidth = 260, cellHe
 	return { x: (index % columns) * cellWidth, y: Math.floor(index / columns) * cellHeight };
 }
 
+/** Estimated flow-space size of a freshly created node — its measured size isn't known until after
+ *  first render, so the centering offset uses this (`EntityNode` has `min-width: 200px`). */
+export const NEW_NODE_SIZE = { width: 200, height: 80 };
+/** Screen-space diagonal step, in px, applied when the viewport center is already occupied. */
+export const PLACEMENT_NUDGE_PX = 24;
+/** How many nudge steps to try before wrapping back to the exact center. */
+export const PLACEMENT_NUDGE_STEPS = 8;
+
 /**
- * Placement for the Nth interactively-created node (`+page.svelte`'s `nextPosition()`, Sprint 6
- * Story 020), centered on the live viewport and laid out in a 4×4 grid that repeats every 16 nodes.
- * The center point (`centerX`/`centerY`) already converts screen space to flow space via
- * `viewport.zoom` — this function's own fix is scaling the column/row *spread* by the same
- * `1 / viewport.zoom` factor, so the whole grid shrinks/grows to stay within the visible viewport at
- * any zoom level instead of using fixed flow-space pixel offsets that only look right at `zoom === 1`.
+ * Placement for an interactively-created node (`+page.svelte`'s `nextPosition()`): the node's visual
+ * center sits on the live viewport center at any pan/zoom. When another node already occupies that
+ * spot, nudges diagonally by a fixed on-screen step (so it reads the same at every zoom) up to
+ * `PLACEMENT_NUDGE_STEPS` times, then wraps to the center. `occupied` holds existing nodes'
+ * top-left flow positions.
  */
-export function viewportCenteredGridPosition(
+export function viewportCenteredPosition(
 	viewport: { x: number; y: number; zoom: number },
 	canvasWidth: number,
 	canvasHeight: number,
-	nodeCount: number
+	occupied: Position[]
 ): Position {
 	const width = canvasWidth || 800;
 	const height = canvasHeight || 600;
-	const centerX = (width / 2 - viewport.x) / viewport.zoom;
-	const centerY = (height / 2 - viewport.y) / viewport.zoom;
-	const col = nodeCount % 4;
-	const row = Math.floor(nodeCount / 4) % 4;
-	const colSpacing = 260 / viewport.zoom;
-	const rowSpacing = 220 / viewport.zoom;
-	return {
-		x: centerX - 1.5 * colSpacing + col * colSpacing,
-		y: centerY - 1 * rowSpacing + row * rowSpacing
-	};
+	const baseX = (width / 2 - viewport.x) / viewport.zoom - NEW_NODE_SIZE.width / 2;
+	const baseY = (height / 2 - viewport.y) / viewport.zoom - NEW_NODE_SIZE.height / 2;
+	const step = PLACEMENT_NUDGE_PX / viewport.zoom;
+	const isTaken = (x: number, y: number) =>
+		occupied.some((p) => Math.abs(p.x - x) < step / 2 && Math.abs(p.y - y) < step / 2);
+	for (let k = 0; k < PLACEMENT_NUDGE_STEPS; k++) {
+		const x = baseX + k * step;
+		const y = baseY + k * step;
+		if (!isTaken(x, y)) return { x, y };
+	}
+	return { x: baseX, y: baseY };
 }
 
 /**
