@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/sparqlsafe"
 )
 
 // defaultSchemaNamespace mirrors `app/src/lib/config.ts`'s own fallback default — the schema
@@ -40,6 +42,19 @@ type Config struct {
 	// AuthJWTSecret is the HS256 signing secret shared between the JWT verification middleware
 	// (STORY-002) and the minting tool (STORY-003). Required — see Load()'s fail-fast behavior.
 	AuthJWTSecret string
+	// AllowedOrigins lists extra browser origins (e.g. "https://app.example") CSRFGuard accepts in
+	// addition to one matching the request Host. Parsed from comma-separated ALLOWED_ORIGINS.
+	AllowedOrigins []string
+	// UserJWTSecret verifies the end-user access token in the `Oglala` cookie (HS256). Optional —
+	// without it the backend starts and /me always reports no user. Deliberately separate from
+	// AuthJWTSecret so a leaked user key cannot mint service tokens.
+	UserJWTSecret string
+	// DevLoginEnabled exposes the dev-only login routes and is reported by GET /config so the UI
+	// can offer its button. Parsed from DEV_LOGIN_ENABLED ("true" enables).
+	DevLoginEnabled bool
+	// CookieSecure sets the `Secure` attribute on the cookie the dev login issues (COOKIE_SECURE);
+	// leave off for plain-HTTP development.
+	CookieSecure bool
 }
 
 // BackstageKindPredicateIRI is the `backstageKind` annotation-property IRI (Story 003), derived
@@ -130,8 +145,7 @@ func (c Config) RepresentsPredicateSettingIRI() string {
 // mirroring `app/src/lib/config.ts`'s `deriveDefaultNamespaceBaseIri` exactly — the seed value
 // every ingestion source's own namespace mints under (e.g. `<DefaultNamespaceBaseIRI>/backstage`).
 func (c Config) DefaultNamespaceBaseIRI() string {
-	withoutFragment := strings.TrimSuffix(c.SchemaNamespace, "#")
-	return strings.TrimSuffix(withoutFragment, "/schema")
+	return sparqlsafe.DefaultNamespaceBaseIRI(c.SchemaNamespace)
 }
 
 // Load reads Config from the environment. GraphDBEndpointURL is required and fails fast if unset;
@@ -168,6 +182,23 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("BACKSTAGE_SYNC_INTERVAL: %w", err)
 	}
 
+	devLoginEnabled := os.Getenv("DEV_LOGIN_ENABLED") == "true"
+	if devLoginEnabled {
+		if os.Getenv("APP_ENV") == "production" {
+			return Config{}, fmt.Errorf("DEV_LOGIN_ENABLED=true is refused when APP_ENV=production")
+		}
+		if os.Getenv("USER_JWT_SECRET") == "" {
+			return Config{}, fmt.Errorf("DEV_LOGIN_ENABLED=true requires USER_JWT_SECRET")
+		}
+	}
+
+	var allowedOrigins []string
+	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
+		if origin = strings.TrimSpace(origin); origin != "" {
+			allowedOrigins = append(allowedOrigins, origin)
+		}
+	}
+
 	return Config{
 		Port:                  port,
 		GraphDBEndpointURL:    endpoint,
@@ -178,5 +209,9 @@ func Load() (Config, error) {
 		BackstageToken:        os.Getenv("BACKSTAGE_TOKEN"),
 		BackstageSyncInterval: syncInterval,
 		AuthJWTSecret:         authJWTSecret,
+		AllowedOrigins:        allowedOrigins,
+		UserJWTSecret:         os.Getenv("USER_JWT_SECRET"),
+		DevLoginEnabled:       devLoginEnabled,
+		CookieSecure:          os.Getenv("COOKIE_SECURE") == "true",
 	}, nil
 }

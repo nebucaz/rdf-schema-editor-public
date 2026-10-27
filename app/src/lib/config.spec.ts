@@ -35,3 +35,31 @@ describe('namespaceGraphs (STORY-025)', () => {
 		expect(`${graphs.shapes}#`).toBe(SHAPES_NAMESPACE);
 	});
 });
+
+describe('loadRuntimeConfig (static-frontend STORY-011)', () => {
+	const respond = (body: unknown, ok = true) =>
+		(async () => ({ ok, status: ok ? 200 : 503, json: async () => body })) as unknown as typeof fetch;
+
+	it('takes the default namespace base IRI and devLoginEnabled from /api/config', async () => {
+		const { loadRuntimeConfig } = await import('./config');
+		const result = await loadRuntimeConfig(
+			respond({ defaultNamespaceBaseIri: 'http://example.org/ns/schema#', devLoginEnabled: true })
+		);
+		expect(result).toEqual({ ok: true, defaultNamespaceBaseIri: 'http://example.org/ns', devLoginEnabled: true });
+	});
+
+	it('reports a failed request as an error', async () => {
+		const { loadRuntimeConfig } = await import('./config');
+		const result = await loadRuntimeConfig(respond({}, false));
+		expect(result.ok).toBe(false);
+	});
+
+	it('reports a network failure or a malformed body as an error', async () => {
+		const { loadRuntimeConfig } = await import('./config');
+		const down = (async () => {
+			throw new TypeError('offline');
+		}) as unknown as typeof fetch;
+		expect((await loadRuntimeConfig(down)).ok).toBe(false);
+		expect((await loadRuntimeConfig(respond({ nope: 1 }))).ok).toBe(false);
+	});
+});

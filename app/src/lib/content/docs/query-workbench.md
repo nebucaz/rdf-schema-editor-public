@@ -86,25 +86,19 @@ Confluence — rather than exporting.
 ## Using results in Power BI or other tools
 
 There is **no dedicated results API yet** — a read-only endpoint with its own scoped credential is a planned
-follow-up. Until then the only programmatic route is the backend's SPARQL endpoint:
+follow-up. The backend's SPARQL endpoint is not an option for other tools in the meantime: it accepts only calls
+from the app itself, which carry both the service credential and a signed-in user's session cookie, and neither
+should be handed to report consumers.
 
-1. Open **Show query → SPARQL** and copy the generated query (remove its `LIMIT`/`OFFSET` to fetch everything).
-2. `POST` it to `<backend>/sparql` as a form field `query=...`, with an
-   `Authorization: Bearer <token>` header. The response is standard SPARQL-results JSON
-   (`results.bindings[]`, one object per row).
-3. In Power BI, use **Get data → Blank query** and, in the Advanced Editor, call `Web.Contents` with a
-   `Headers` record (the bearer token) and a `Content` body (`Text.ToBinary("query=" & Uri.EscapeDataString(sparql))`),
-   parse with `Json.Document`, and expand `results.bindings` into columns.
-
-**Caution:** the token is the app's service credential, which can also write to the repository. Do not
-distribute it to report consumers; use it only for a gateway or scheduled refresh you control.
+What works today: use **Export CSV** and load the file into your tool, or share a report link
+(`/reports/<id>`) with people who can sign in to the app.
 
 ## Annotations
 
 Cells that stand for a single fact (a relation or a literal attribute) can be annotated in place, in the
 workbench or on a report. A badge shows existing annotations; open it to add or remove one. Each annotation
-has a label, text, author and time. The author is taken from the signed-in user, so annotating requires a
-user identity to be configured; without one you can still browse and query.
+has a label, text, author and time. The author is taken from your signed-in user and stamped by the server. Signing in is required to use
+the app at all; without it you see a "Sign in required" screen.
 
 Aggregated and multi-valued cells cannot be annotated yet. Annotations follow their fact: editing the
 fact moves them, and deleting it deletes them.

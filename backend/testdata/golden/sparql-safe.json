@@ -1,0 +1,76 @@
+{
+  "safeIri": [
+    { "name": "plain http", "input": "http://example.org/ns#Thing", "safe": true },
+    { "name": "trailing hash", "input": "http://example.org/ns#", "safe": true },
+    { "name": "schema namespace", "input": "http://example.org/ns/schema#Person", "safe": true },
+    { "name": "empty", "input": "", "safe": true },
+    { "name": "percent encoded", "input": "http://example.org/a%20b", "safe": true },
+    { "name": "non-ascii", "input": "http://example.org/Zürich", "safe": true },
+    { "name": "space", "input": "http://example.org/a b", "safe": false },
+    { "name": "tab", "input": "http://example.org/a\tb", "safe": false },
+    { "name": "newline", "input": "http://example.org/a\nb", "safe": false },
+    { "name": "nul", "input": "http://example.org/a\u0000b", "safe": false },
+    { "name": "control 0x1f", "input": "http://example.org/a\u001fb", "safe": false },
+    { "name": "less-than", "input": "http://example.org/<x", "safe": false },
+    { "name": "greater-than", "input": "http://example.org/x>", "safe": false },
+    { "name": "double quote", "input": "http://example.org/\"x", "safe": false },
+    { "name": "open brace", "input": "http://example.org/{x", "safe": false },
+    { "name": "close brace", "input": "http://example.org/x}", "safe": false },
+    { "name": "pipe", "input": "http://example.org/a|b", "safe": false },
+    { "name": "caret", "input": "http://example.org/a^b", "safe": false },
+    { "name": "backtick", "input": "http://example.org/a`b", "safe": false },
+    { "name": "backslash", "input": "http://example.org/a\\b", "safe": false },
+    { "name": "injection attempt", "input": "x> } ; DROP ALL ; <y", "safe": false }
+  ],
+  "escapeString": [
+    { "name": "plain", "input": "hello", "output": "hello" },
+    { "name": "empty", "input": "", "output": "" },
+    { "name": "double quote", "input": "say \"hi\"", "output": "say \\\"hi\\\"" },
+    { "name": "backslash", "input": "a\\b", "output": "a\\\\b" },
+    { "name": "backslash before quote", "input": "\\\"", "output": "\\\\\\\"" },
+    { "name": "newline", "input": "a\nb", "output": "a\\nb" },
+    { "name": "carriage return", "input": "a\rb", "output": "a\\rb" },
+    { "name": "crlf", "input": "a\r\nb", "output": "a\\r\\nb" },
+    { "name": "non-ascii", "input": "Zürich ✓", "output": "Zürich ✓" },
+    { "name": "literal break-out", "input": "x\" } ; DROP ALL ; \"", "output": "x\\\" } ; DROP ALL ; \\\"" }
+  ],
+  "namespaceGraphs": [
+    {
+      "name": "plain base",
+      "baseIri": "http://example.org/ns",
+      "graphs": {
+        "instances": "http://example.org/ns",
+        "schema": "http://example.org/ns/schema",
+        "shapes": "http://example.org/ns/shapes",
+        "catalog": "http://example.org/ns/catalog"
+      }
+    },
+    {
+      "name": "trailing slash is normalised",
+      "baseIri": "http://example.org/ns/",
+      "graphs": {
+        "instances": "http://example.org/ns",
+        "schema": "http://example.org/ns/schema",
+        "shapes": "http://example.org/ns/shapes",
+        "catalog": "http://example.org/ns/catalog"
+      }
+    },
+    {
+      "name": "base that itself ends in a graph word",
+      "baseIri": "http://example.org/ns/schema",
+      "graphs": {
+        "instances": "http://example.org/ns/schema",
+        "schema": "http://example.org/ns/schema/schema",
+        "shapes": "http://example.org/ns/schema/shapes",
+        "catalog": "http://example.org/ns/schema/catalog"
+      }
+    }
+  ],
+  "defaultNamespaceBaseIri": [
+    { "name": "schema fragment form", "raw": "http://ld.pageagent.com/rdf-schema-editor/schema#", "baseIri": "http://ld.pageagent.com/rdf-schema-editor" },
+    { "name": "schema without fragment", "raw": "http://example.org/ns/schema", "baseIri": "http://example.org/ns" },
+    { "name": "bare base", "raw": "http://example.org/ns", "baseIri": "http://example.org/ns" },
+    { "name": "bare base with hash", "raw": "http://example.org/ns#", "baseIri": "http://example.org/ns" },
+    { "name": "trailing slash kept", "raw": "http://example.org/ns/", "baseIri": "http://example.org/ns/" }
+  ]
+}

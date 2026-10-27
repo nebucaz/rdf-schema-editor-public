@@ -209,3 +209,81 @@ func TestConfig_DerivedVocabularyIRIs(t *testing.T) {
 		t.Errorf("DefaultNamespaceBaseIRI() = %q, want %q", got, want)
 	}
 }
+
+func TestLoad_AllowedOrigins(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("ALLOWED_ORIGINS", " https://a.example, ,https://b.example ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if len(cfg.AllowedOrigins) != 2 || cfg.AllowedOrigins[0] != "https://a.example" || cfg.AllowedOrigins[1] != "https://b.example" {
+		t.Errorf("AllowedOrigins = %v, want the two trimmed origins", cfg.AllowedOrigins)
+	}
+}
+
+func TestLoad_UserJWTSecretOptional(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("USER_JWT_SECRET", "")
+	cfg, err := Load()
+	if err != nil || cfg.UserJWTSecret != "" {
+		t.Fatalf("Load() = %q, %v; want empty secret and no error", cfg.UserJWTSecret, err)
+	}
+	t.Setenv("USER_JWT_SECRET", "user-secret")
+	if cfg, _ = Load(); cfg.UserJWTSecret != "user-secret" {
+		t.Errorf("UserJWTSecret = %q", cfg.UserJWTSecret)
+	}
+}
+
+func TestLoad_DevLoginEnabled(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("USER_JWT_SECRET", "user-secret") // required when the dev login is on
+	for value, want := range map[string]bool{"": false, "false": false, "true": true} {
+		t.Setenv("DEV_LOGIN_ENABLED", value)
+		cfg, err := Load()
+		if err != nil || cfg.DevLoginEnabled != want {
+			t.Errorf("DEV_LOGIN_ENABLED=%q: DevLoginEnabled = %v, err %v; want %v", value, cfg.DevLoginEnabled, err, want)
+		}
+	}
+}
+
+func TestLoad_DevLoginRefusals(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("DEV_LOGIN_ENABLED", "true")
+	t.Setenv("USER_JWT_SECRET", "user-secret")
+
+	t.Setenv("APP_ENV", "production")
+	if _, err := Load(); err == nil {
+		t.Error("Load() accepted DEV_LOGIN_ENABLED=true with APP_ENV=production")
+	}
+
+	t.Setenv("APP_ENV", "development")
+	if _, err := Load(); err != nil {
+		t.Errorf("Load() with APP_ENV=development: %v", err)
+	}
+
+	t.Setenv("USER_JWT_SECRET", "")
+	if _, err := Load(); err == nil {
+		t.Error("Load() accepted DEV_LOGIN_ENABLED=true without USER_JWT_SECRET")
+	}
+
+	t.Setenv("DEV_LOGIN_ENABLED", "false")
+	t.Setenv("APP_ENV", "production")
+	if _, err := Load(); err != nil {
+		t.Errorf("production without dev login must start: %v", err)
+	}
+}
+
+func TestLoad_CookieSecure(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("COOKIE_SECURE", "true")
+	if cfg, _ := Load(); !cfg.CookieSecure {
+		t.Error("COOKIE_SECURE=true not parsed")
+	}
+}

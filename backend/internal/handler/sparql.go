@@ -3,7 +3,9 @@ package handler
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -42,28 +44,29 @@ func (h *SparqlHandler) setBasicAuth(req *http.Request) {
 // Query handles POST /sparql — form-encoded `query` (and optional `infer=false`), forwarded to
 // GraphDB's SPARQL protocol endpoint, returning its sparql-results+json response unchanged.
 func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	params, err := readSparqlParams(r)
+	if err != nil {
 		auditLog(r, "", http.StatusBadRequest, "malformed request body")
-		http.Error(w, "malformed request body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "malformed request body")
 		return
 	}
 
-	query := r.FormValue("query")
+	query := params.query
 	if strings.TrimSpace(query) == "" {
 		auditLog(r, "", http.StatusBadRequest, `Missing or invalid "query" parameter`)
-		http.Error(w, `Missing or invalid "query" parameter`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, `Missing or invalid "query" parameter`)
 		return
 	}
 
 	form := url.Values{"query": {query}}
-	if r.FormValue("infer") == "false" {
+	if params.inferOff {
 		form.Set("infer", "false")
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		auditLog(r, query, http.StatusInternalServerError, "failed to build GraphDB request")
-		http.Error(w, "failed to build GraphDB request", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "failed to build GraphDB request")
 		return
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -73,7 +76,7 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.client.Do(req)
 	if err != nil {
 		auditLog(r, query, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
-		http.Error(w, "GraphDB unreachable: "+err.Error(), http.StatusBadGateway)
+		writeJSONError(w, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -85,23 +88,24 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 // Update handles POST /sparql/update — form-encoded `update`, forwarded to GraphDB's /statements
 // endpoint as raw application/sparql-update content, matching GraphDB's SPARQL Update protocol.
 func (h *SparqlHandler) Update(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	params, err := readSparqlParams(r)
+	if err != nil {
 		auditLog(r, "", http.StatusBadRequest, "malformed request body")
-		http.Error(w, "malformed request body", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "malformed request body")
 		return
 	}
 
-	update := r.FormValue("update")
+	update := params.update
 	if strings.TrimSpace(update) == "" {
 		auditLog(r, "", http.StatusBadRequest, `Missing or invalid "update" parameter`)
-		http.Error(w, `Missing or invalid "update" parameter`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, `Missing or invalid "update" parameter`)
 		return
 	}
 
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.endpointURL+"/statements", strings.NewReader(update))
 	if err != nil {
 		auditLog(r, update, http.StatusInternalServerError, "failed to build GraphDB request")
-		http.Error(w, "failed to build GraphDB request", http.StatusInternalServerError)
+		writeJSONError(w, http.StatusInternalServerError, "failed to build GraphDB request")
 		return
 	}
 	req.Header.Set("Content-Type", "application/sparql-update")
@@ -111,7 +115,7 @@ func (h *SparqlHandler) Update(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.client.Do(req)
 	if err != nil {
 		auditLog(r, update, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
-		http.Error(w, "GraphDB unreachable: "+err.Error(), http.StatusBadGateway)
+		writeJSONError(w, http.StatusBadGateway, "GraphDB unreachable: "+err.Error())
 		return
 	}
 	defer resp.Body.Close()
@@ -120,9 +124,49 @@ func (h *SparqlHandler) Update(w http.ResponseWriter, r *http.Request) {
 	proxyResponse(w, resp, "application/json")
 }
 
+// sparqlParams is the decoded request body of POST /sparql and /sparql/update.
+type sparqlParams struct {
+	query    string
+	update   string
+	inferOff bool
+}
+
+// readSparqlParams decodes either the browser's JSON body (`{query, infer?}` / `{update}`) or the
+// form-encoded body non-browser callers (importctl) send.
+func readSparqlParams(r *http.Request) (sparqlParams, error) {
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType == "application/json" {
+		var body struct {
+			Query  any `json:"query"`
+			Update any `json:"update"`
+			Infer  any `json:"infer"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			return sparqlParams{}, err
+		}
+		q, _ := body.Query.(string)
+		u, _ := body.Update.(string)
+		return sparqlParams{query: q, update: u, inferOff: body.Infer == false}, nil
+	}
+	if err := r.ParseForm(); err != nil {
+		return sparqlParams{}, err
+	}
+	return sparqlParams{query: r.FormValue("query"), update: r.FormValue("update"), inferOff: r.FormValue("infer") == "false"}, nil
+}
+
 // proxyResponse copies GraphDB's status code and body to the client verbatim, defaulting the
 // Content-Type to fallback only if GraphDB didn't set one.
 func proxyResponse(w http.ResponseWriter, resp *http.Response, fallbackContentType string) {
+	if resp.StatusCode >= 400 {
+		// GraphDB's error body is plain text; the browser contract is `{"message"}` with the same status.
+		body, _ := io.ReadAll(resp.Body)
+		message := strings.TrimSpace(string(body))
+		if message == "" {
+			message = http.StatusText(resp.StatusCode)
+		}
+		writeJSONError(w, resp.StatusCode, message)
+		return
+	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = fallbackContentType

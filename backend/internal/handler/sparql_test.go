@@ -89,8 +89,8 @@ func TestSparqlHandler_Query_GraphDBErrorPassthrough(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Errorf("response status = %d, want 500 passed through from GraphDB", w.Code)
 	}
-	if w.Body.String() != "malformed SPARQL query" {
-		t.Errorf("response body = %q, want GraphDB's error passed through", w.Body.String())
+	if w.Body.String() != "{\"message\":\"malformed SPARQL query\"}\n" {
+		t.Errorf("response body = %q, want GraphDB's error wrapped as {message}", w.Body.String())
 	}
 }
 

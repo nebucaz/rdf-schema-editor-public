@@ -1,0 +1,559 @@
+{
+  "maxSharedModelBytes": 200000,
+  "queryModels": [
+    {
+      "name": "minimal model",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ]\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}"
+    },
+    {
+      "name": "every feature",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [\n    {\n      \"id\": \"h1\",\n      \"parentHopId\": null,\n      \"propertyIri\": \"https://x.test/o#rel\",\n      \"direction\": \"forward\",\n      \"targetClassIri\": \"https://x.test/o#B\"\n    },\n    {\n      \"id\": \"h2\",\n      \"parentHopId\": \"h1\",\n      \"propertyIri\": \"https://x.test/o#back\",\n      \"direction\": \"inverse\",\n      \"targetClassIri\": \"https://x.test/o#C\"\n    }\n  ],\n  \"filters\": [\n    {\n      \"id\": \"f1\",\n      \"hopId\": null,\n      \"propertyIri\": \"https://x.test/o#name\",\n      \"op\": \"contains\",\n      \"value\": \"a \\\"q\\\" \\\\ b\"\n    },\n    {\n      \"id\": \"f2\",\n      \"hopId\": \"h1\",\n      \"propertyIri\": null,\n      \"op\": \"in\",\n      \"value\": [\n        \"x\",\n        \"y\"\n      ]\n    },\n    {\n      \"id\": \"f3\",\n      \"hopId\": null,\n      \"propertyIri\": \"https://x.test/o#d\",\n      \"op\": \"gte\",\n      \"relativeTime\": \"-24h\",\n      \"orGroup\": \"g\"\n    },\n    {\n      \"id\": \"f4\",\n      \"hopId\": null,\n      \"propertyIri\": \"https://x.test/o#d\",\n      \"op\": \"isEmpty\",\n      \"orGroup\": \"g\"\n    }\n  ],\n  \"columns\": [\n    {\n      \"id\": \"c1\",\n      \"hopId\": null,\n      \"source\": \"label\",\n      \"header\": \"Name\"\n    },\n    {\n      \"id\": \"c2\",\n      \"hopId\": \"h1\",\n      \"source\": \"iri\",\n      \"header\": \"B\"\n    },\n    {\n      \"id\": \"c3\",\n      \"hopId\": null,\n      \"source\": {\n        \"propertyIri\": \"https://x.test/o#n\"\n      },\n      \"header\": \"N\"\n    }\n  ],\n  \"sort\": [\n    {\n      \"columnId\": \"c1\",\n      \"direction\": \"asc\"\n    }\n  ],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ],\n  \"aggregation\": {\n    \"groupBy\": [\n      \"c1\"\n    ],\n    \"measures\": [\n      {\n        \"fn\": \"count\",\n        \"of\": \"root\",\n        \"alias\": \"total\"\n      }\n    ],\n    \"having\": [\n      {\n        \"measure\": \"total\",\n        \"op\": \"gt\",\n        \"value\": 1.5\n      }\n    ]\n  },\n  \"columnRules\": [\n    {\n      \"columnId\": \"c1\",\n      \"color\": \"green\",\n      \"match\": {\n        \"op\": \"eq\",\n        \"value\": \"x\"\n      },\n      \"chip\": true,\n      \"row\": false\n    }\n  ],\n  \"limit\": 100\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"id\":\"h1\",\"parentHopId\":null,\"propertyIri\":\"https://x.test/o#rel\",\"direction\":\"forward\",\"targetClassIri\":\"https://x.test/o#B\"},{\"id\":\"h2\",\"parentHopId\":\"h1\",\"propertyIri\":\"https://x.test/o#back\",\"direction\":\"inverse\",\"targetClassIri\":\"https://x.test/o#C\"}],\"filters\":[{\"id\":\"f1\",\"hopId\":null,\"propertyIri\":\"https://x.test/o#name\",\"op\":\"contains\",\"value\":\"a \\\"q\\\" \\\\ b\"},{\"id\":\"f2\",\"hopId\":\"h1\",\"propertyIri\":null,\"op\":\"in\",\"value\":[\"x\",\"y\"]},{\"id\":\"f3\",\"hopId\":null,\"propertyIri\":\"https://x.test/o#d\",\"op\":\"gte\",\"relativeTime\":\"-24h\",\"orGroup\":\"g\"},{\"id\":\"f4\",\"hopId\":null,\"propertyIri\":\"https://x.test/o#d\",\"op\":\"isEmpty\",\"orGroup\":\"g\"}],\"columns\":[{\"id\":\"c1\",\"hopId\":null,\"source\":\"label\",\"header\":\"Name\"},{\"id\":\"c2\",\"hopId\":\"h1\",\"source\":\"iri\",\"header\":\"B\"},{\"id\":\"c3\",\"hopId\":null,\"source\":{\"propertyIri\":\"https://x.test/o#n\"},\"header\":\"N\"}],\"sort\":[{\"columnId\":\"c1\",\"direction\":\"asc\"}],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[\"c1\"],\"measures\":[{\"fn\":\"count\",\"of\":\"root\",\"alias\":\"total\"}],\"having\":[{\"measure\":\"total\",\"op\":\"gt\",\"value\":1.5}]},\"columnRules\":[{\"columnId\":\"c1\",\"color\":\"green\",\"match\":{\"op\":\"eq\",\"value\":\"x\"},\"chip\":true,\"row\":false}],\"limit\":100}"
+    },
+    {
+      "name": "unknown top-level and nested fields are kept",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": false,\n    \"note\": \"x\"\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ],\n  \"futureField\": {\n    \"a\": [\n      1,\n      2,\n      {\n        \"b\": null\n      }\n    ]\n  }\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":false,\"note\":\"x\"},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"futureField\":{\"a\":[1,2,{\"b\":null}]}}"
+    },
+    {
+      "name": "key order is preserved",
+      "text": "{\"namespaces\":[\"n\"],\"sort\":[],\"columns\":[],\"filters\":[],\"hops\":[],\"root\":{\"includeSubclasses\":true,\"classIri\":\"c\"},\"version\":1}",
+      "ok": true,
+      "canonical": "{\"namespaces\":[\"n\"],\"sort\":[],\"columns\":[],\"filters\":[],\"hops\":[],\"root\":{\"includeSubclasses\":true,\"classIri\":\"c\"},\"version\":1}"
+    },
+    {
+      "name": "numbers are written the JavaScript way",
+      "text": "{\"version\":1.0,\"root\":{\"classIri\":\"c\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[],\"limit\":5.0,\"big\":1e21,\"small\":1E-7,\"neg\":-0.0,\"frac\":0.1,\"exp\":1.5e3}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"c\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[],\"limit\":5,\"big\":1e+21,\"small\":1e-7,\"neg\":0,\"frac\":0.1,\"exp\":1500}"
+    },
+    {
+      "name": "duplicate keys keep the first position and the last value",
+      "text": "{\"version\":1,\"limit\":1,\"root\":{\"classIri\":\"c\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[],\"limit\":2}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"limit\":2,\"root\":{\"classIri\":\"c\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[]}"
+    },
+    {
+      "name": "strings keep non-ASCII and escape control characters",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [\n    {\n      \"id\": \"c\",\n      \"hopId\": null,\n      \"source\": \"label\",\n      \"header\": \"Zürich <b> &   \\u0001 \\t  😀\"\n    }\n  ],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ]\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[{\"id\":\"c\",\"hopId\":null,\"source\":\"label\",\"header\":\"Zürich <b> &   \\u0001 \\t  😀\"}],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}"
+    },
+    {
+      "name": "empty arrays and null parent hop",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [\n    {\n      \"id\": \"h\",\n      \"parentHopId\": null,\n      \"propertyIri\": \"p\",\n      \"direction\": \"forward\",\n      \"targetClassIri\": \"t\"\n    }\n  ],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ]\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"id\":\"h\",\"parentHopId\":null,\"propertyIri\":\"p\",\"direction\":\"forward\",\"targetClassIri\":\"t\"}],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}"
+    },
+    {
+      "name": "aggregation without having",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ],\n  \"aggregation\": {\n    \"groupBy\": [],\n    \"measures\": []\n  }\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[]}}"
+    },
+    {
+      "name": "rule without optional fields",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ],\n  \"columnRules\": [\n    {\n      \"columnId\": \"c\",\n      \"color\": \"red\",\n      \"match\": {\n        \"op\": \"isEmpty\"\n      }\n    }\n  ]\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\",\"match\":{\"op\":\"isEmpty\"}}]}"
+    },
+    {
+      "name": "limit may be any number at parse time",
+      "text": "{\n  \"version\": 1,\n  \"root\": {\n    \"classIri\": \"https://x.test/o#A\",\n    \"includeSubclasses\": true\n  },\n  \"hops\": [],\n  \"filters\": [],\n  \"columns\": [],\n  \"sort\": [],\n  \"namespaces\": [\n    \"https://x.test/o\"\n  ],\n  \"limit\": -3.5\n}",
+      "ok": true,
+      "canonical": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"limit\":-3.5}"
+    },
+    {
+      "name": "not json",
+      "text": "{",
+      "ok": false,
+      "error": "Query model is not valid JSON"
+    },
+    {
+      "name": "empty text",
+      "text": "",
+      "ok": false,
+      "error": "Query model is not valid JSON"
+    },
+    {
+      "name": "array",
+      "text": "[]",
+      "ok": false,
+      "error": "Query model must be a JSON object"
+    },
+    {
+      "name": "null",
+      "text": "null",
+      "ok": false,
+      "error": "Query model must be a JSON object"
+    },
+    {
+      "name": "string",
+      "text": "\"x\"",
+      "ok": false,
+      "error": "Query model must be a JSON object"
+    },
+    {
+      "name": "version missing",
+      "text": "{\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: undefined"
+    },
+    {
+      "name": "version 2",
+      "text": "{\"version\":2,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: 2"
+    },
+    {
+      "name": "version string",
+      "text": "{\"version\":\"1\",\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: 1"
+    },
+    {
+      "name": "version null",
+      "text": "{\"version\":null,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: null"
+    },
+    {
+      "name": "version true",
+      "text": "{\"version\":true,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: true"
+    },
+    {
+      "name": "version array",
+      "text": "{\"version\":[1,2],\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: 1,2"
+    },
+    {
+      "name": "version object",
+      "text": "{\"version\":{},\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: [object Object]"
+    },
+    {
+      "name": "version fraction",
+      "text": "{\"version\":1.5,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "Unsupported query model version: 1.5"
+    },
+    {
+      "name": "root missing",
+      "text": "{\"version\":1,\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "root must be { classIri: string, includeSubclasses: boolean }"
+    },
+    {
+      "name": "root classIri not a string",
+      "text": "{\"version\":1,\"root\":{\"classIri\":1,\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "root must be { classIri: string, includeSubclasses: boolean }"
+    },
+    {
+      "name": "root includeSubclasses not a boolean",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"c\",\"includeSubclasses\":\"yes\"},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "root must be { classIri: string, includeSubclasses: boolean }"
+    },
+    {
+      "name": "root is an array",
+      "text": "{\"version\":1,\"root\":[],\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "root must be { classIri: string, includeSubclasses: boolean }"
+    },
+    {
+      "name": "namespaces not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":\"x\"}",
+      "ok": false,
+      "error": "namespaces must be an array of strings"
+    },
+    {
+      "name": "namespaces holds a non-string",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"a\",1]}",
+      "ok": false,
+      "error": "namespaces must be an array of strings"
+    },
+    {
+      "name": "hops not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":{},\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops must be an array"
+    },
+    {
+      "name": "hop not an object",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[\"x\"],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops contains a malformed entry"
+    },
+    {
+      "name": "hop id missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"parentHopId\":null,\"propertyIri\":\"p\",\"direction\":\"forward\",\"targetClassIri\":\"t\"}],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops contains a malformed entry"
+    },
+    {
+      "name": "hop parent undefined-ish number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"id\":\"h\",\"parentHopId\":3,\"propertyIri\":\"p\",\"direction\":\"forward\",\"targetClassIri\":\"t\"}],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops contains a malformed entry"
+    },
+    {
+      "name": "hop direction invalid",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"id\":\"h\",\"parentHopId\":null,\"propertyIri\":\"p\",\"direction\":\"sideways\",\"targetClassIri\":\"t\"}],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops contains a malformed entry"
+    },
+    {
+      "name": "hop target missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[{\"id\":\"h\",\"parentHopId\":null,\"propertyIri\":\"p\",\"direction\":\"forward\"}],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "hops contains a malformed entry"
+    },
+    {
+      "name": "filters not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":null,\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters must be an array"
+    },
+    {
+      "name": "filter op unknown",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"like\",\"value\":\"v\"}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter value a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":3}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter value null",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":null}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter value array holds a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":[\"a\",1]}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter orGroup empty",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":\"v\",\"orGroup\":\"\"}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter orGroup a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":\"v\",\"orGroup\":2}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter relativeTime a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":\"v\",\"relativeTime\":5}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter hopId missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"propertyIri\":\"p\",\"op\":\"eq\",\"value\":\"v\"}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "filter propertyIri a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[{\"id\":\"f\",\"hopId\":null,\"propertyIri\":1,\"op\":\"eq\",\"value\":\"v\"}],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "filters contains a malformed entry"
+    },
+    {
+      "name": "columns not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":\"c\",\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "columns must be an array"
+    },
+    {
+      "name": "column source unknown word",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[{\"id\":\"c\",\"hopId\":null,\"source\":\"other\",\"header\":\"H\"}],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "columns contains a malformed entry"
+    },
+    {
+      "name": "column source object without propertyIri",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[{\"id\":\"c\",\"hopId\":null,\"source\":{},\"header\":\"H\"}],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "columns contains a malformed entry"
+    },
+    {
+      "name": "column header missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[{\"id\":\"c\",\"hopId\":null,\"source\":\"label\"}],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "columns contains a malformed entry"
+    },
+    {
+      "name": "column not an object",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[null],\"sort\":[],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "columns contains a malformed entry"
+    },
+    {
+      "name": "sort not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":{},\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "sort must be an array"
+    },
+    {
+      "name": "sort direction invalid",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[{\"columnId\":\"c\",\"direction\":\"up\"}],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "sort contains a malformed entry"
+    },
+    {
+      "name": "sort columnId missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[{\"direction\":\"asc\"}],\"namespaces\":[\"https://x.test/o\"]}",
+      "ok": false,
+      "error": "sort contains a malformed entry"
+    },
+    {
+      "name": "limit a string",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"limit\":\"5\"}",
+      "ok": false,
+      "error": "limit must be a number"
+    },
+    {
+      "name": "limit null",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"limit\":null}",
+      "ok": false,
+      "error": "limit must be a number"
+    },
+    {
+      "name": "top-level having",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"having\":[]}",
+      "ok": false,
+      "error": "having belongs inside aggregation"
+    },
+    {
+      "name": "aggregation not an object",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":[]}",
+      "ok": false,
+      "error": "aggregation must be { groupBy: string[], measures: [] }"
+    },
+    {
+      "name": "aggregation groupBy missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"measures\":[]}}",
+      "ok": false,
+      "error": "aggregation must be { groupBy: string[], measures: [] }"
+    },
+    {
+      "name": "aggregation measures not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":{}}}",
+      "ok": false,
+      "error": "aggregation must be { groupBy: string[], measures: [] }"
+    },
+    {
+      "name": "measure fn unknown",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[{\"fn\":\"median\",\"of\":\"root\",\"alias\":\"a\"}]}}",
+      "ok": false,
+      "error": "aggregation.measures contains a malformed entry"
+    },
+    {
+      "name": "measure alias missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[{\"fn\":\"sum\",\"of\":\"c\"}]}}",
+      "ok": false,
+      "error": "aggregation.measures contains a malformed entry"
+    },
+    {
+      "name": "having not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[],\"having\":{}}}",
+      "ok": false,
+      "error": "aggregation.having must be an array"
+    },
+    {
+      "name": "having op unknown",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[],\"having\":[{\"measure\":\"m\",\"op\":\"like\",\"value\":1}]}}",
+      "ok": false,
+      "error": "aggregation.having contains a malformed entry"
+    },
+    {
+      "name": "having value a string",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"aggregation\":{\"groupBy\":[],\"measures\":[],\"having\":[{\"measure\":\"m\",\"op\":\"gt\",\"value\":\"1\"}]}}",
+      "ok": false,
+      "error": "aggregation.having contains a malformed entry"
+    },
+    {
+      "name": "columnRules not an array",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":{}}",
+      "ok": false,
+      "error": "columnRules must be an array"
+    },
+    {
+      "name": "rule match op unknown",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\",\"match\":{\"op\":\"regex\"}}]}",
+      "ok": false,
+      "error": "columnRules contains a malformed entry"
+    },
+    {
+      "name": "rule match value a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\",\"match\":{\"op\":\"eq\",\"value\":1}}]}",
+      "ok": false,
+      "error": "columnRules contains a malformed entry"
+    },
+    {
+      "name": "rule chip a string",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\",\"match\":{\"op\":\"eq\",\"value\":\"x\"},\"chip\":\"yes\"}]}",
+      "ok": false,
+      "error": "columnRules contains a malformed entry"
+    },
+    {
+      "name": "rule row a number",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\",\"match\":{\"op\":\"eq\",\"value\":\"x\"},\"row\":1}]}",
+      "ok": false,
+      "error": "columnRules contains a malformed entry"
+    },
+    {
+      "name": "rule match missing",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":[],\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":[\"https://x.test/o\"],\"columnRules\":[{\"columnId\":\"c\",\"color\":\"red\"}]}",
+      "ok": false,
+      "error": "columnRules contains a malformed entry"
+    },
+    {
+      "name": "first failing section wins",
+      "text": "{\"version\":1,\"root\":{\"classIri\":\"https://x.test/o#A\",\"includeSubclasses\":true},\"hops\":5,\"filters\":[],\"columns\":[],\"sort\":[],\"namespaces\":5}",
+      "ok": false,
+      "error": "namespaces must be an array of strings"
+    }
+  ],
+  "isShortId": [
+    {
+      "input": "aZ09aZ09aZ",
+      "valid": true
+    },
+    {
+      "input": "0123456789",
+      "valid": true
+    },
+    {
+      "input": "",
+      "valid": false
+    },
+    {
+      "input": "short",
+      "valid": false
+    },
+    {
+      "input": "aZ09aZ09aZ1",
+      "valid": false
+    },
+    {
+      "input": "aZ09aZ09a>",
+      "valid": false
+    },
+    {
+      "input": "aZ09aZ09a ",
+      "valid": false
+    },
+    {
+      "input": "aZ09aZ09a/",
+      "valid": false
+    },
+    {
+      "input": "aZ09aZ09a\n",
+      "valid": false
+    },
+    {
+      "input": "äZ09aZ09aZ",
+      "valid": false
+    }
+  ],
+  "newShortId": [
+    {
+      "name": "maps bytes onto the alphabet and skips biased bytes",
+      "batches": [
+        [
+          255,
+          0,
+          1,
+          2,
+          61,
+          62,
+          247,
+          250,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14
+        ]
+      ],
+      "id": "ABC9A9DEFG"
+    },
+    {
+      "name": "asks for another batch when the first has too few usable bytes",
+      "batches": [
+        [
+          248,
+          249,
+          250,
+          251,
+          252,
+          253,
+          254,
+          255,
+          248,
+          249,
+          250,
+          251,
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7
+        ],
+        [
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ]
+      ],
+      "id": "ABCDEFGHMN"
+    }
+  ]
+}

@@ -10097,9 +10097,11 @@ describe('SparqlConnector — facts keep annotations consistent through edits an
 describe('shared queries (STORY-261)', () => {
 	it('refuses a malformed id before any request', async () => {
 		const f = vi.fn();
-		const c = new SparqlConnector('/api/sparql', f as never);
+		vi.stubGlobal('fetch', f);
+		const c = new SparqlConnector('/api/sparql');
 		await expect(c.insertSharedQuery('bad> } #', '{}')).rejects.toThrow('Invalid share id');
 		expect(await c.fetchSharedQuery('bad> } #')).toBeNull();
 		expect(f).not.toHaveBeenCalled();
+		vi.unstubAllGlobals();
 	});
 });

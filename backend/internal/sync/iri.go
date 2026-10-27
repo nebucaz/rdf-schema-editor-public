@@ -3,6 +3,8 @@ package sync
 import (
 	"fmt"
 	"strings"
+
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/sparqlsafe"
 )
 
 // namespaceGraphs mirrors `app/src/lib/config.ts`'s `namespaceGraphs()`: a namespace's two storage
@@ -14,18 +16,8 @@ type namespaceGraphs struct {
 }
 
 func deriveNamespaceGraphs(baseIRI string) namespaceGraphs {
-	base := strings.TrimSuffix(baseIRI, "/")
-	return namespaceGraphs{instances: base, schema: base + "/schema"}
-}
-
-// unsafeSparqlIRIChars mirrors `sparql-connector.ts`'s `UNSAFE_SPARQL_IRI_CHARS` — characters
-// excluded from the SPARQL 1.1 IRIREF grammar production.
-func isUnsafeSparqlIRIByte(b byte) bool {
-	switch b {
-	case '<', '>', '"', '{', '}', '|', '^', '`', '\\':
-		return true
-	}
-	return b <= 0x20
+	g := sparqlsafe.NamespaceGraphs(baseIRI)
+	return namespaceGraphs{instances: g.Instances, schema: g.Schema}
 }
 
 // sanitizeLocalNameSegment percent-encodes any byte outside the IRI-unreserved set, so an external,
@@ -55,29 +47,12 @@ func sanitizeLocalNameSegment(s string) string {
 // value outright is correct here, since it's used as a whole IRI term, not folded into one this
 // package itself mints.
 func isSafeSparqlIRI(iri string) bool {
-	if iri == "" {
-		return false
-	}
-	for i := 0; i < len(iri); i++ {
-		if isUnsafeSparqlIRIByte(iri[i]) {
-			return false
-		}
-	}
-	return true
+	return iri != "" && sparqlsafe.SafeIRI(iri)
 }
 
-// escapeString mirrors `sparql-connector.ts`'s private `escapeString` — escapes `"`/`\` so a literal
-// can be safely embedded in a double-quoted SPARQL string term.
+// escapeString escapes a literal for embedding in a double-quoted SPARQL string term.
 func escapeString(s string) string {
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '"' || c == '\\' {
-			b.WriteByte('\\')
-		}
-		b.WriteByte(c)
-	}
-	return b.String()
+	return sparqlsafe.EscapeString(s)
 }
 
 // sourceNamespaceBaseIRI is the namespace a source's own bootstrap infrastructure lives under — its

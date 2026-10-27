@@ -8,10 +8,10 @@ See `spec/setup/plan.md` for the full implementation plan, architecture decision
 
 ## How it's organized
 
-- **`app/`** — the web application (SvelteKit + Svelte 5 + TypeScript). This is the primary user-facing
-  piece; see below for running it.
-- **`backend/`** — a standalone Go service that talks to GraphDB on the app's behalf (a SPARQL gateway
-  passthrough today, growing into more later — see `spec/report/plan.md`). See `backend/README.md`.
+- **`app/`** — the web application (SvelteKit + Svelte 5 + TypeScript), built as static files and served by
+  nginx — no Node at runtime. This is the primary user-facing piece; see below for running it.
+- **`backend/`** — a standalone Go service that talks to GraphDB on the app's behalf (SPARQL gateway, user
+  sessions, annotations, share links, Backstage sync — see `spec/report/plan.md`). See `backend/README.md`.
 - **`spec/`** — design notes, architecture decisions, and the sprint/story plan.
 
 ## Running a local GraphDB instance (Docker)
@@ -76,8 +76,8 @@ Requires Go 1.25+ (`go version` to check).
 
    Leave `GRAPHDB_USER`/`GRAPHDB_PASSWORD` blank for an unauthenticated repository (the default from
    the Docker setup above); `PORT` is optional and defaults to `8090`. `AUTH_JWT_SECRET` is
-   **required** — the backend refuses to start without it (every route but `/health` needs a signed
-   bearer JWT, see `backend/README.md`'s "Authentication" section). Generate one with
+   **required** — the backend refuses to start without it (the data routes need a signed bearer JWT,
+   see "Tokens" below and `backend/README.md`'s "Authentication" section). Generate one with
    `openssl rand -base64 32`.
 
 2. **Run it:**
@@ -90,11 +90,35 @@ Requires Go 1.25+ (`go version` to check).
 
    Alternatively, build and run a standalone binary: `go build -o backend-server ./cmd/server &&
    ./backend-server`. Or via Docker Compose from the repo root: `docker compose up --build backend`
-   (reads the same `backend/.env`; no database service of its own — GraphDB is the only store).
+   (needs the root `.env` from "Running the whole stack" below, because compose validates the whole file; reads the same `backend/.env`; no database service of its own — GraphDB is the only store).
 
 3. **Run its tests** (optional): `go test ./...` from `backend/`.
 
 See `backend/README.md` for more detail.
+
+## Running the whole stack (Docker Compose)
+
+`docker-compose.yml` runs the Go backend and the frontend (nginx serving the static build). GraphDB is not part
+of it — run it separately as described above. Only the frontend is published; the **backend has no host
+port** and is reachable only on the compose network, which is what makes the model sound: nginx adds the
+service token and forwards the user's cookie, so a client that could reach the backend directly could skip both.
+
+1. `cp backend/.env.example backend/.env` and fill it in (see "Running the backend" and "Tokens" below). Inside
+   a container `localhost` is the container itself, so point `GRAPHDB_ENDPOINT_URL` at the host's GraphDB with
+   e.g. `http://host.docker.internal:7201/repositories/rdfschema`.
+2. `cp .env.example .env` and set `BACKEND_AUTH_TOKEN` to a service token signed with the backend's
+   `AUTH_JWT_SECRET` (see "Tokens"). `.env` is git-ignored; compose refuses to start without the token.
+3. `docker compose up --build`, then open `http://localhost:8080` (`FRONTEND_PORT` in `.env` changes the port).
+
+Checks: `curl http://localhost:8080/api/config` returns JSON; `curl http://localhost:8090/health` from the host
+must fail (connection refused); opening `http://localhost:8080/reports/<id>` directly loads the report.
+For development without nginx use `bun run dev` (next section).
+
+**Security headers.** nginx sets a Content-Security-Policy (`script-src 'self'` plus the hash of SvelteKit's inline
+bootstrap script, computed at image build time; `style-src` allows inline styles for the canvas libraries;
+no `unsafe-eval`), `X-Content-Type-Options`, `Referrer-Policy`, and `X-Frame-Options`/`frame-ancestors`. HSTS is
+off by default; set `ENABLE_HSTS=true` on the `frontend` service **only** when TLS is terminated in front of it.
+If something is blocked, the browser console names the violated directive.
 
 ## Running the app in dev mode
 
@@ -107,20 +131,21 @@ The app lives in `app/` and expects the backend above running.
    bun install
    ```
 
-2. **Configure the backend URL.** Copy the example env file and point it at the backend started above
-   (this replaces the old `SPARQL_ENDPOINT_URL`/`SPARQL_USER`/`SPARQL_PASSWORD` vars, which now live in
-   `backend/.env` instead — see above):
+2. **Configure the dev proxy.** `bun run dev` has no nginx in front of it, so the Vite dev server proxies
+   `/api/*` to the Go backend (stripping the `/api` prefix) and adds the service token itself. Copy the
+   example env file and fill in the token (the old `SPARQL_*` vars live in `backend/.env` now — see above):
 
    ```sh
    cp .env.example .env
    ```
 
    ```
-   BACKEND_URL=http://localhost:8090
+   DEV_BACKEND_URL=http://localhost:8090
+   DEV_BACKEND_AUTH_TOKEN=<service token, see "Tokens" below>
    ```
 
-   If you have an existing `app/.env` from before this change, edit it the same way — drop the old
-   `SPARQL_*` vars and add `BACKEND_URL`.
+   Both are read by `vite.config.ts` only and never reach the client bundle. If unset, they fall back to
+   `BACKEND_URL` / `BACKEND_AUTH_TOKEN`.
 
 3. **Start the dev server:**
 
@@ -129,7 +154,60 @@ The app lives in `app/` and expects the backend above running.
    # or: bun run dev -- --open   (also opens a browser tab)
    ```
 
-   The app is served by Vite (SvelteKit), typically at `http://localhost:5173`.
+   The app is served by Vite, typically at `http://localhost:5173`, with `/api` proxied to the backend. Log in with
+   **Login with user role** on the "Sign in required" screen (needs `DEV_LOGIN_ENABLED=true` in `backend/.env`).
+
+### Tokens
+
+Two different tokens are involved. Only the first one is ever pasted into a file; the second is created for you.
+
+| | Service token | User token |
+|---|---|---|
+| **Says** | "this request comes from our own frontend" | "this is user *X*" |
+| **Needed by** | the data routes: `/sparql`, `/sparql/update`, `/sources/*`, `/validation/report`, `/shared-queries`, `/annotations` | `/sparql*`, `/validation/report`, `/shared-queries`, `/annotations` — each also needs a signed-in user (401 "Sign in required" otherwise). `/sources/*` does not (the sync worker and `importctl` have no user) |
+| **Signed with** | `AUTH_JWT_SECRET` (`backend/.env`) | `USER_JWT_SECRET` (`backend/.env`) |
+| **Sent as** | `Authorization: Bearer …` header | HttpOnly cookie `Oglala` |
+| **In production** | nginx adds it to every `/api/` request | issued by the corporate SSO |
+| **In dev** | the Vite proxy adds it from `app/.env` | the "Login with user role" button creates it |
+
+While signed out the app shows a "Sign in required" screen instead of the workbench.
+
+`/config`, `/me` and the dev login/logout routes need **no** service token — the login button works before
+any token is configured.
+
+**Dev setup, step by step**
+
+1. In `backend/.env`:
+
+   ```
+   AUTH_JWT_SECRET=<openssl rand -base64 32>
+   USER_JWT_SECRET=<a different openssl rand -base64 32>
+   DEV_LOGIN_ENABLED=true     # shows the "Login with user role" button on the sign-in screen; refused when APP_ENV=production
+   COOKIE_SECURE=false        # plain http on localhost
+   ```
+
+   Restart `go run ./cmd/server` after any change.
+
+2. Mint the service token (same `AUTH_JWT_SECRET`) and put it in `app/.env` as `DEV_BACKEND_AUTH_TOKEN`:
+
+   ```sh
+   cd backend
+   AUTH_JWT_SECRET=<value from backend/.env> go run ./cmd/cli mint-token --sub frontend-app
+   ```
+
+   It is valid for one year by default (`--ttl` changes that). Re-mint it if you change `AUTH_JWT_SECRET`.
+
+3. Start `bun run dev` (restart it after editing `app/.env`), open `http://localhost:5173` and click
+   **Login with user role** on the "Sign in required" screen. You never create or paste a user token: the backend signs one and sets the
+   cookie. **Logout** in the hamburger menu clears it.
+
+**Checking it**
+
+- `http://localhost:5173/api/config` → JSON with `"devLoginEnabled": true` (no token needed). `false` means
+  `DEV_LOGIN_ENABLED` is not set in the backend that is actually running.
+- `http://localhost:5173/api/me` → `{"user":null}` before login, your user after.
+- Data requests (loading the canvas) failing with 401 → `DEV_BACKEND_AUTH_TOKEN` is missing, expired or signed
+  with a different `AUTH_JWT_SECRET`.
 
 Other useful scripts (run from `app/`):
 

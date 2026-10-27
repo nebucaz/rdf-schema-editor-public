@@ -1,8 +1,8 @@
 <script lang="ts">
 	/**
 	 * object-browser (STORY-255): the Columns dialog. The body is the multi-pane
-	 * `ObjectBrowser`; Save hands the whole selection (picks, plus existing columns that were unticked)
-	 * to `onSave`, which folds it into the model in one step. Nothing is applied until Save, so
+	 * `ObjectBrowser`; Apply hands the whole selection (picks, plus existing columns that were unticked)
+	 * to `onSave`, which folds it into the model in one step. Nothing is applied until Apply, so
 	 * Cancel/Escape/backdrop leave the model untouched.
 	 *
 	 * `initialTarget` (`'group:root'` / `'group:<hopId>'`) opens the browser on that group's class — the
@@ -62,7 +62,7 @@
 		<div class="actions">
 			<button type="button" onclick={onClose} data-testid="add-column-cancel">Cancel</button>
 			<button type="button" class="primary" disabled={!canSave} onclick={save} data-testid="add-column-save">
-				Save
+				Apply
 			</button>
 		</div>
 	</div>

@@ -1,3 +1,6 @@
 tmp/
 .claude/
 threat-model/
+
+# docker compose variables (BACKEND_AUTH_TOKEN) — see .env.example
+/.env

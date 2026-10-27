@@ -1,6 +1,8 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { page } from '$app/state';
+	import { invalidateAll } from '$app/navigation';
+	import SignInRequired from '$lib/components/SignInRequired.svelte';
+	import { devLogout } from '$lib/services/auth-client';
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { ModeWatcher, toggleMode, mode } from 'mode-watcher';
@@ -17,7 +19,7 @@
 	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
 	import ImportResultView from '$lib/components/ImportResultView.svelte';
 	import ImportTurtleDialog from '$lib/components/ImportTurtleDialog.svelte';
-	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
+	import { DEFAULT_NAMESPACE_BASE_IRI, DEV_LOGIN_ENABLED } from '$lib/config';
 	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
 	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
 	import SettingsView from '$lib/components/SettingsView.svelte';
@@ -79,7 +81,18 @@
 	/** Menu items that operate on canvas state and are hidden on both non-canvas "area" routes. */
 	const hideCanvasOnlyItems = $derived(isIdentitiesView || isWorkbenchView || routeView.isReportView);
 
-	onMount(() => {
+	let logoutFailed = $state(false);
+
+	async function handleLogout() {
+		const result = await devLogout();
+		logoutFailed = !result.ok;
+		if (result.ok) await invalidateAll();
+	}
+
+	// The data routes refuse a signed-out caller, so load only once a user exists (and again after a
+	// login: ensureLoaded is a no-op once it has run).
+	$effect(() => {
+		if (!page.data.user) return;
 		void namespaceStore.ensureLoaded();
 		void workspaceStore.ensureLoaded();
 		void externalVocabStore.ensureLoaded();
@@ -172,7 +185,8 @@
 	}
 </script>
 
-<ModeWatcher defaultMode="system" />
+<!-- The head script it would inject is inline (blocked by the CSP) and pointless in a client-only app. -->
+<ModeWatcher defaultMode="system" disableHeadScriptInjection />
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
@@ -183,221 +197,232 @@
 	<header class="app-header">
 		<a href="/" class="app-title">RDF Schema Editor</a>
 		<div class="app-header-actions">
-			{#if isCanvasView}
-				{#if namespaceStore.namespaces.length > 0}
-					<select
-						class="namespace-select"
-						aria-label="Active namespace"
-						title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
-						value={workbenchActions.activeNamespace}
-						onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
-					>
-						{#each namespaceStore.namespaces as ns (ns.baseIri)}
-							<option value={ns.baseIri}>{ns.prefix}</option>
-						{/each}
-					</select>
+			{#if page.data.user}
+				{#if isCanvasView}
+					{#if namespaceStore.namespaces.length > 0}
+						<select
+							class="namespace-select"
+							aria-label="Active namespace"
+							title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
+							value={workbenchActions.activeNamespace}
+							onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
+						>
+							{#each namespaceStore.namespaces as ns (ns.baseIri)}
+								<option value={ns.baseIri}>{ns.prefix}</option>
+							{/each}
+						</select>
+					{/if}
+					{#if workspaceStore.workspaces.length > 0}
+						<select
+							class="workspace-select"
+							aria-label="Active workspace"
+							title="Active workspace — which diagram is shown on the canvas"
+							value={workbenchActions.activeWorkspace}
+							onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
+						>
+							{#each workspaceStore.workspaces as ws (ws.iri)}
+								<option value={ws.iri}>{ws.label}</option>
+							{/each}
+						</select>
+					{/if}
+					<ViewModeToggle
+						viewMode={workbenchActions.viewMode}
+						onChange={(mode) => workbenchActions.setViewMode(mode)}
+					/>
+					<DescriptionVisibilityToggle />
+					<InheritedAttributesVisibilityToggle />
+					<ReverseRelationsVisibilityToggle />
+					<NamespaceFilter
+						namespaces={filterListedNamespaces(namespaceStore.namespaces)}
+						hiddenNamespaces={workbenchActions.hiddenNamespaces}
+						onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
+					/>
+				{:else if isValidationView}
+					<NamespaceFilter
+						namespaces={filterListedNamespaces(namespaceStore.namespaces)}
+						hiddenNamespaces={validationReportFilterStore.hiddenNamespaces}
+						onToggle={(baseIri) => validationReportFilterStore.toggle(baseIri)}
+					/>
 				{/if}
-				{#if workspaceStore.workspaces.length > 0}
-					<select
-						class="workspace-select"
-						aria-label="Active workspace"
-						title="Active workspace — which diagram is shown on the canvas"
-						value={workbenchActions.activeWorkspace}
-						onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
-					>
-						{#each workspaceStore.workspaces as ws (ws.iri)}
-							<option value={ws.iri}>{ws.label}</option>
-						{/each}
-					</select>
-				{/if}
-				<ViewModeToggle
-					viewMode={workbenchActions.viewMode}
-					onChange={(mode) => workbenchActions.setViewMode(mode)}
-				/>
-				<DescriptionVisibilityToggle />
-				<InheritedAttributesVisibilityToggle />
-				<ReverseRelationsVisibilityToggle />
-				<NamespaceFilter
-					namespaces={filterListedNamespaces(namespaceStore.namespaces)}
-					hiddenNamespaces={workbenchActions.hiddenNamespaces}
-					onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
-				/>
-			{:else if isValidationView}
-				<NamespaceFilter
-					namespaces={filterListedNamespaces(namespaceStore.namespaces)}
-					hiddenNamespaces={validationReportFilterStore.hiddenNamespaces}
-					onToggle={(baseIri) => validationReportFilterStore.toggle(baseIri)}
+				<HamburgerMenu>
+					{#snippet children()}
+						<a
+							href="/identities"
+							class="menu-item menu-link"
+							aria-disabled={isIdentitiesView}
+							onclick={(e) => {
+								if (isIdentitiesView) e.preventDefault();
+							}}
+						>
+							Identities
+						</a>
+						<a
+							href="/"
+							class="menu-item menu-link"
+							aria-disabled={isCanvasView}
+							onclick={(e) => {
+								if (isCanvasView) e.preventDefault();
+							}}
+						>
+							Schema Editor
+						</a>
+						<a
+							href="/workbench"
+							class="menu-item menu-link"
+							aria-disabled={isWorkbenchView}
+							onclick={(e) => {
+								if (isWorkbenchView) e.preventDefault();
+							}}
+						>
+							Query Workbench
+						</a>
+						<a
+							href="/validation"
+							class="menu-item menu-link"
+							aria-disabled={isValidationView}
+							onclick={(e) => {
+								if (isValidationView) e.preventDefault();
+							}}
+						>
+							Validation Report
+						</a>
+						<hr class="menu-divider" />
+						<HamburgerSubmenuGroup label="Manage">
+							{#snippet children()}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => (showNamespaceManagement = true)}
+								>
+									Namespaces
+								</button>
+								{#if !hideCanvasOnlyItems}
+									<button
+										type="button"
+										class="menu-item"
+										onclick={() => (showWorkspaceManagement = true)}
+									>
+										Workspaces
+									</button>
+								{/if}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => (showExternalVocabManagement = true)}
+								>
+									External Vocabularies
+								</button>
+							{/snippet}
+						</HamburgerSubmenuGroup>
+						<HamburgerSubmenuGroup label="Import / Export">
+							{#snippet children()}
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => void handleExportQuads()}
+									disabled={exportingQuads}
+								>
+									{exportingQuads ? 'Exporting…' : 'Export quads'}
+								</button>
+								<button
+									type="button"
+									class="menu-item"
+									onclick={() => (showImportDialog = true)}
+									disabled={importing}
+								>
+									{importing ? 'Importing…' : 'Import Turtle…'}
+								</button>
+								{#if isCanvasView}
+									<button
+										type="button"
+										class="menu-item"
+										onclick={() => importWorkspaceFileInput?.click()}
+										disabled={importingWorkspace}
+										title="Merge a workspace-export bundle (STORY-090) — recreates the workspace, layout, and notes"
+									>
+										{importingWorkspace ? 'Importing…' : 'Import Workspace…'}
+									</button>
+								{/if}
+								{#if isCanvasView}
+									<button
+										type="button"
+										class="menu-item"
+										onclick={() => workbenchActions.exportSvg()}
+										disabled={workbenchActions.exportingSvg}
+										title="Export the whole canvas as SVG — or, if any entities are selected, just the selection and the relations between them. The exported file embeds HTML (foreignObject) for node visuals, so it may not open correctly in every external vector/PDF tool."
+									>
+										{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
+									</button>
+									<button
+										type="button"
+										class="menu-item"
+										onclick={() => workbenchActions.exportErd()}
+										title="Export the workspace as a strict-SVG ERD in Crow's Foot, Chen or UML notation — opens cleanly in Inkscape, Illustrator and Figma."
+									>
+										Export ERD…
+									</button>
+								{/if}
+							{/snippet}
+						</HamburgerSubmenuGroup>
+						<hr class="menu-divider" />
+						{#if !hideCanvasOnlyItems}
+							<button
+								type="button"
+								class="menu-item"
+								onclick={() => workbenchActions.reload()}
+								disabled={workbenchActions.loading}
+							>
+								{workbenchActions.loading ? 'Loading…' : '⟳ Reload from GraphDB'}
+							</button>
+						{/if}
+						{#if isCanvasView}
+							<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
+								{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
+							</button>
+						{/if}
+						<hr class="menu-divider" />
+						<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
+							Queries
+						</button>
+						{#if !hideCanvasOnlyItems}
+							<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
+								Missing Concepts
+							</button>
+						{/if}
+						<hr class="menu-divider" />
+						<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
+							Settings
+						</button>
+						<button type="button" class="menu-item" onclick={() => (showDocumentation = true)}>
+							Documentation
+						</button>
+						<hr class="menu-divider" />
+						<button type="button" class="menu-item" onclick={toggleMode}>
+							{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+						</button>
+						{#if DEV_LOGIN_ENABLED && page.data.user}
+							<button type="button" class="menu-item" onclick={handleLogout}>
+								{logoutFailed ? 'Logout failed – retry' : `Logout (${page.data.user.displayName})`}
+							</button>
+						{/if}
+					{/snippet}
+				</HamburgerMenu>
+				<input
+					bind:this={importWorkspaceFileInput}
+					type="file"
+					accept=".ttl"
+					class="import-file-input"
+					onchange={(e) => void handleImportWorkspaceFileSelected(e)}
 				/>
 			{/if}
-			<HamburgerMenu>
-				{#snippet children()}
-					<a
-						href="/identities"
-						class="menu-item menu-link"
-						aria-disabled={isIdentitiesView}
-						onclick={(e) => {
-							if (isIdentitiesView) e.preventDefault();
-						}}
-					>
-						Identities
-					</a>
-					<a
-						href="/"
-						class="menu-item menu-link"
-						aria-disabled={isCanvasView}
-						onclick={(e) => {
-							if (isCanvasView) e.preventDefault();
-						}}
-					>
-						Schema Editor
-					</a>
-					<a
-						href="/workbench"
-						class="menu-item menu-link"
-						aria-disabled={isWorkbenchView}
-						onclick={(e) => {
-							if (isWorkbenchView) e.preventDefault();
-						}}
-					>
-						Query Workbench
-					</a>
-					<a
-						href="/validation"
-						class="menu-item menu-link"
-						aria-disabled={isValidationView}
-						onclick={(e) => {
-							if (isValidationView) e.preventDefault();
-						}}
-					>
-						Validation Report
-					</a>
-					<hr class="menu-divider" />
-					<HamburgerSubmenuGroup label="Manage">
-						{#snippet children()}
-							<button
-								type="button"
-								class="menu-item"
-								onclick={() => (showNamespaceManagement = true)}
-							>
-								Namespaces
-							</button>
-							{#if !hideCanvasOnlyItems}
-								<button
-									type="button"
-									class="menu-item"
-									onclick={() => (showWorkspaceManagement = true)}
-								>
-									Workspaces
-								</button>
-							{/if}
-							<button
-								type="button"
-								class="menu-item"
-								onclick={() => (showExternalVocabManagement = true)}
-							>
-								External Vocabularies
-							</button>
-						{/snippet}
-					</HamburgerSubmenuGroup>
-					<HamburgerSubmenuGroup label="Import / Export">
-						{#snippet children()}
-							<button
-								type="button"
-								class="menu-item"
-								onclick={() => void handleExportQuads()}
-								disabled={exportingQuads}
-							>
-								{exportingQuads ? 'Exporting…' : 'Export quads'}
-							</button>
-							<button
-								type="button"
-								class="menu-item"
-								onclick={() => (showImportDialog = true)}
-								disabled={importing}
-							>
-								{importing ? 'Importing…' : 'Import Turtle…'}
-							</button>
-							{#if isCanvasView}
-								<button
-									type="button"
-									class="menu-item"
-									onclick={() => importWorkspaceFileInput?.click()}
-									disabled={importingWorkspace}
-									title="Merge a workspace-export bundle (STORY-090) — recreates the workspace, layout, and notes"
-								>
-									{importingWorkspace ? 'Importing…' : 'Import Workspace…'}
-								</button>
-							{/if}
-							{#if isCanvasView}
-								<button
-									type="button"
-									class="menu-item"
-									onclick={() => workbenchActions.exportSvg()}
-									disabled={workbenchActions.exportingSvg}
-									title="Export the whole canvas as SVG — or, if any entities are selected, just the selection and the relations between them. The exported file embeds HTML (foreignObject) for node visuals, so it may not open correctly in every external vector/PDF tool."
-								>
-									{workbenchActions.exportingSvg ? 'Exporting…' : 'Export SVG'}
-								</button>
-								<button
-									type="button"
-									class="menu-item"
-									onclick={() => workbenchActions.exportErd()}
-									title="Export the workspace as a strict-SVG ERD in Crow's Foot, Chen or UML notation — opens cleanly in Inkscape, Illustrator and Figma."
-								>
-									Export ERD…
-								</button>
-							{/if}
-						{/snippet}
-					</HamburgerSubmenuGroup>
-					<hr class="menu-divider" />
-					{#if !hideCanvasOnlyItems}
-						<button
-							type="button"
-							class="menu-item"
-							onclick={() => workbenchActions.reload()}
-							disabled={workbenchActions.loading}
-						>
-							{workbenchActions.loading ? 'Loading…' : '⟳ Reload from GraphDB'}
-						</button>
-					{/if}
-					{#if isCanvasView}
-						<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
-							{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
-						</button>
-					{/if}
-					<hr class="menu-divider" />
-					<button type="button" class="menu-item" onclick={() => (showQueryConsole = true)}>
-						Queries
-					</button>
-					{#if !hideCanvasOnlyItems}
-						<button type="button" class="menu-item" onclick={() => (showMissingConcepts = true)}>
-							Missing Concepts
-						</button>
-					{/if}
-					<hr class="menu-divider" />
-					<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
-						Settings
-					</button>
-					<button type="button" class="menu-item" onclick={() => (showDocumentation = true)}>
-						Documentation
-					</button>
-					<hr class="menu-divider" />
-					<button type="button" class="menu-item" onclick={toggleMode}>
-						{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-					</button>
-				{/snippet}
-			</HamburgerMenu>
-			<input
-				bind:this={importWorkspaceFileInput}
-				type="file"
-				accept=".ttl"
-				class="import-file-input"
-				onchange={(e) => void handleImportWorkspaceFileSelected(e)}
-			/>
 		</div>
 	</header>
 	<main class="app-main">
-		{@render children()}
+		{#if page.data.user}
+			{@render children()}
+		{:else}
+			<SignInRequired devLoginEnabled={DEV_LOGIN_ENABLED} onSignedIn={() => invalidateAll()} />
+		{/if}
 	</main>
 </div>
 

@@ -1,0 +1,60 @@
+# Rendered at container start by the nginx image's envsubst (see NGINX_ENVSUBST_FILTER in the
+# Dockerfile): only BACKEND_UPSTREAM and BACKEND_AUTH_TOKEN are substituted, so nginx's own $variables
+# below are left alone.
+
+# HSTS is opt-in (ENABLE_HSTS=true): only correct when TLS is terminated in front of this container.
+# An empty value makes nginx omit the header.
+map "${ENABLE_HSTS}" $hsts_header {
+    default "";
+    "true"  "max-age=31536000; includeSubDomains";
+}
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+
+    # Large Turtle imports and SPARQL updates travel through /api/.
+    client_max_body_size 64m;
+
+    # Hashed build output: safe to cache forever.
+    location /_app/immutable/ {
+        add_header Cache-Control "public, max-age=31536000, immutable" always;
+        include /etc/nginx/snippets/security-headers.conf;
+        try_files $uri =404;
+    }
+
+    # The SPA shell must always be revalidated so a deploy is picked up immediately.
+    location = /index.html {
+        add_header Cache-Control "no-store" always;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+
+    # SPA fallback: deep links such as /workbench or /reports/<id> are served by index.html.
+    location / {
+        # add_header in a location replaces inherited ones, so the security headers are included
+        # in every location rather than set once on the server.
+        include /etc/nginx/snippets/security-headers.conf;
+        try_files $uri /index.html;
+    }
+
+    # /api/<path> -> backend /<path>. nginx adds the service JWT here, so it never enters the static
+    # bundle; any Authorization header the client sends is replaced. The user's Oglala cookie is
+    # forwarded as-is. $http_host keeps the port so the backend's same-origin (CSRF) check, which
+    # compares Origin with Host, passes.
+    location /api/ {
+        proxy_pass http://${BACKEND_UPSTREAM}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Authorization "Bearer ${BACKEND_AUTH_TOKEN}";
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_connect_timeout 5s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+        proxy_request_buffering on;
+        include /etc/nginx/snippets/security-headers.conf;
+    }
+}

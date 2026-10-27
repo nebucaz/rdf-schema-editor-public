@@ -1,0 +1,1532 @@
+{
+  "defaultNamespaceBaseIri": "http://ld.pageagent.com/rdf-schema-editor",
+  "cases": [
+    {
+      "name": "text on a literal fact, empty graph: vocabulary, statement and annotation are all created",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "Production"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "checked by ops"
+      },
+      "answers": [
+        {
+          "ask": false
+        },
+        {
+          "ask": false
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "statement": "202603040506070890",
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class ; rdfs:label \"Annotation\" . } GRAPH <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class ; rdfs:label \"AnnotationLabel\" . } GRAPH <http://ld.pageagent.com/rdf-schema-editor> { <http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Verified\" . <http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Investigate\" . <http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Approved\" . <http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Deprecated\" . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Statement202603040506070890> a rdf:Statement ; rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement202603040506070890> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"checked by ops\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "text on an IRI fact, vocabulary present, statement reused",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#owner",
+        "object": {
+          "kind": "iri",
+          "iri": "https://example.com/annot#team1"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "owner confirmed"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "stmt": {
+                "type": "uri",
+                "value": "https://example.com/annot#Statement20250101000000000a"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#owner> ; rdf:object <https://example.com/annot#team1> . } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement20250101000000000a> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"owner confirmed\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "typed literal object",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#count",
+        "object": {
+          "kind": "literal",
+          "value": "42",
+          "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "looks right"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "statement": "202603040506070890",
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#count> ; rdf:object \"42\"^^<http://www.w3.org/2001/XMLSchema#integer> . } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Statement202603040506070890> a rdf:Statement ; rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#count> ; rdf:object \"42\"^^<http://www.w3.org/2001/XMLSchema#integer> . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement202603040506070890> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"looks right\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "language-tagged literal object",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#title",
+        "object": {
+          "kind": "literal",
+          "value": "Anwendung",
+          "lang": "de-CH"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "translation to check"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "statement": "202603040506070890",
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#title> ; rdf:object \"Anwendung\"@de-CH . } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Statement202603040506070890> a rdf:Statement ; rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#title> ; rdf:object \"Anwendung\"@de-CH . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement202603040506070890> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"translation to check\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "text is trimmed and escaped (quotes, backslash, newline, unicode)",
+      "action": "add",
+      "annotatedBy": "al\"ice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "say \"hi\"\\\n"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "  He said \"no\" \\ and\nleft — Zürich ✓  "
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "stmt": {
+                "type": "uri",
+                "value": "https://example.com/annot#Statement20250101000000000a"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"say \\\"hi\\\"\\\\\\n\" . } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement20250101000000000a> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"He said \\\"no\\\" \\\\ and\\nleft — Zürich ✓\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"al\\\"ice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "label annotation of an existing member",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "Production"
+        }
+      },
+      "annotation": {
+        "type": "label",
+        "labelIri": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "stmt": {
+                "type": "uri",
+                "value": "https://example.com/annot#Statement20250101000000000a"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK { GRAPH ?g { <http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement20250101000000000a> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"label\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> <http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "partly present vocabulary: only what is missing is inserted",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "Production"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": false
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "statement": "202603040506070890",
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class ; rdfs:label \"AnnotationLabel\" . } GRAPH <http://ld.pageagent.com/rdf-schema-editor> { <http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Investigate\" . <http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> ; rdfs:label \"Deprecated\" . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Statement202603040506070890> a rdf:Statement ; rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement202603040506070890> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"x\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "subject living in a /schema graph is mapped back to its namespace",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "Production"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot/schema"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot/schema"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "statement": "202603040506070890",
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Statement202603040506070890> a rdf:Statement ; rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"Production\" . } }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement202603040506070890> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"x\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "error: label is not an annotation label",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "label",
+        "labelIri": "https://example.com/annot#notALabel"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "ask": false
+        }
+      ],
+      "mint": {},
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK { GRAPH ?g { <https://example.com/annot#notALabel> a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> } }"
+          }
+        ],
+        "error": "The given IRI is not an annotation label"
+      }
+    },
+    {
+      "name": "error: subject is not an individual",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": []
+        }
+      ],
+      "mint": {},
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          }
+        ],
+        "error": "Cannot determine namespace: individual not found (https://example.com/annot#app1)"
+      }
+    },
+    {
+      "name": "error: empty text",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "   "
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Annotation text must not be empty"
+      }
+    },
+    {
+      "name": "error: text over 2000 characters",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Annotation text must be at most 2000 characters"
+      }
+    },
+    {
+      "name": "text of exactly 2000 characters passes",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+      },
+      "answers": [
+        {
+          "ask": true
+        },
+        {
+          "ask": true
+        },
+        {
+          "select": [
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelVerified"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelInvestigate"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelApproved"
+              }
+            },
+            {
+              "m": {
+                "type": "uri",
+                "value": "http://ld.pageagent.com/rdf-schema-editor#annotationLabelDeprecated"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "stmt": {
+                "type": "uri",
+                "value": "https://example.com/annot#Statement20250101000000000a"
+              }
+            }
+          ]
+        },
+        {
+          "select": [
+            {
+              "g": {
+                "type": "uri",
+                "value": "https://example.com/annot"
+              }
+            }
+          ]
+        }
+      ],
+      "mint": {
+        "annotation": "mmbkq9gx04fzzzx"
+      },
+      "expected": {
+        "ops": [
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> a owl:Class }"
+          },
+          {
+            "kind": "ask",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> ASK FROM <http://ld.pageagent.com/rdf-schema-editor/schema> { <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> a owl:Class }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?m FROM <http://ld.pageagent.com/rdf-schema-editor> WHERE { ?m a <http://ld.pageagent.com/rdf-schema-editor/schema#AnnotationLabel> }"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?stmt WHERE { GRAPH <https://example.com/annot> { ?stmt rdf:subject <https://example.com/annot#app1> ; rdf:predicate <https://example.com/annot#lifecycle> ; rdf:object \"v\" . } } LIMIT 1"
+          },
+          {
+            "kind": "select",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> SELECT ?g WHERE { GRAPH ?g { <https://example.com/annot#app1> a ?type } } LIMIT 1"
+          },
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> INSERT DATA { GRAPH <https://example.com/annot> { <https://example.com/annot#Annotationmmbkq9gx04fzzzx> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotates> <https://example.com/annot#Statement20250101000000000a> ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationType> \"text\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotationValue> \"yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedBy> \"alice\" ; <http://ld.pageagent.com/rdf-schema-editor/schema#annotatedAt> \"2026-03-04T05:06:07.089Z\"^^xsd:dateTime . } }"
+          }
+        ],
+        "iri": "https://example.com/annot#Annotationmmbkq9gx04fzzzx"
+      }
+    },
+    {
+      "name": "error: blank author",
+      "action": "add",
+      "annotatedBy": "  ",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "annotatedBy must not be empty"
+      }
+    },
+    {
+      "name": "error: timestamp is not a date",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "yesterday",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "annotatedAt must be an ISO timestamp"
+      }
+    },
+    {
+      "name": "error: unsafe subject IRI",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#a> } DROP ALL {",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid subject IRI: contains characters not allowed in a SPARQL IRI"
+      }
+    },
+    {
+      "name": "error: unsafe predicate IRI",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#p q",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid predicate IRI: contains characters not allowed in a SPARQL IRI"
+      }
+    },
+    {
+      "name": "error: unsafe object IRI",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "iri",
+          "iri": "https://example.com/annot#o\""
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid object IRI: contains characters not allowed in a SPARQL IRI"
+      }
+    },
+    {
+      "name": "error: unsafe label IRI",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v"
+        }
+      },
+      "annotation": {
+        "type": "label",
+        "labelIri": "https://example.com/annot#l>"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid annotation label IRI: contains characters not allowed in a SPARQL IRI"
+      }
+    },
+    {
+      "name": "error: datatype and language together",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v",
+          "datatype": "http://www.w3.org/2001/XMLSchema#string",
+          "lang": "en"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "A literal cannot have both a datatype and a language tag"
+      }
+    },
+    {
+      "name": "error: bad language tag",
+      "action": "add",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "fact": {
+        "subjectIri": "https://example.com/annot#app1",
+        "predicateIri": "https://example.com/annot#lifecycle",
+        "object": {
+          "kind": "literal",
+          "value": "v",
+          "lang": "en_US"
+        }
+      },
+      "annotation": {
+        "type": "text",
+        "text": "x"
+      },
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid language tag"
+      }
+    },
+    {
+      "name": "delete removes an annotation node",
+      "action": "delete",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "annotationIri": "https://example.com/annot#Annotation1abc",
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [
+          {
+            "kind": "update",
+            "text": "PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#> PREFIX owl: <http://www.w3.org/2002/07/owl#> PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> PREFIX sh: <http://www.w3.org/ns/shacl#> DELETE { GRAPH ?g { <https://example.com/annot#Annotation1abc> ?p ?o } } WHERE { GRAPH ?g { <https://example.com/annot#Annotation1abc> a <http://ld.pageagent.com/rdf-schema-editor/schema#Annotation> ; ?p ?o } }"
+          }
+        ]
+      }
+    },
+    {
+      "name": "delete rejects an unsafe IRI",
+      "action": "delete",
+      "annotatedBy": "alice",
+      "annotatedAt": "2026-03-04T05:06:07.089Z",
+      "now": "2026-03-04T05:06:07.089Z",
+      "random": 0.123456789,
+      "annotationIri": "https://example.com/annot#A> } ; DROP ALL ; <",
+      "answers": [],
+      "mint": {},
+      "expected": {
+        "ops": [],
+        "error": "Invalid annotation IRI: contains characters not allowed in a SPARQL IRI"
+      }
+    }
+  ]
+}

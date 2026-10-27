@@ -890,16 +890,9 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
  */
 export class SparqlConnector {
 	private apiUrl: string;
-	private fetchImpl: typeof fetch;
 
-	/**
-	 * `fetchImpl` lets server code pass SvelteKit's `event.fetch` (which resolves relative `/api/...`
-	 * URLs in-process); it defaults to a late-bound global `fetch` so browser use and test stubs
-	 * (`vi.stubGlobal('fetch', ...)`) are unaffected.
-	 */
-	constructor(apiUrl: string = '/api/sparql', fetchImpl?: typeof fetch) {
+	constructor(apiUrl: string = '/api/sparql') {
 		this.apiUrl = apiUrl;
-		this.fetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
 	}
 
 	/** Execute a raw SPARQL SELECT query, returning parsed SPARQL-JSON results. Pass
@@ -917,7 +910,7 @@ export class SparqlConnector {
 
 	/** Execute a raw SPARQL Update (INSERT DATA, DELETE DATA, DELETE/INSERT WHERE, etc.). */
 	async executeUpdate(update: string): Promise<void> {
-		const response = await this.fetchImpl(`${this.apiUrl}/update`, {
+		const response = await fetch(`${this.apiUrl}/update`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ update })
@@ -7485,7 +7478,7 @@ export class SparqlConnector {
 	}
 
 	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
-		const response = await this.fetchImpl(this.apiUrl, {
+		const response = await fetch(this.apiUrl, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })

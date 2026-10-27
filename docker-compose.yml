@@ -1,9 +1,14 @@
-# Backend service definition (spec/report story-001). GraphDB itself is not part of this compose
-# file — it runs as its own container per the root README's "Running a local GraphDB instance"
-# section, independent of this project's other services.
+# Backend + frontend. GraphDB itself is not part of this compose file — it runs as its own
+# container per the root README's "Running a local GraphDB instance" section.
 #
 # Usage:
-#   docker compose up --build backend
+#   cp .env.example .env            # BACKEND_AUTH_TOKEN (and optionally FRONTEND_PORT)
+#   cp backend/.env.example backend/.env
+#   docker compose up --build       # app at http://localhost:${FRONTEND_PORT:-8080}
+#
+# Only the frontend (nginx) is published. The backend is reachable solely on the compose network —
+# nginx adds the service JWT and forwards the user's cookie, so a client that could reach the backend
+# directly could bypass both.
 
 services:
   backend:
@@ -22,3 +27,19 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+
+  frontend:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      BACKEND_UPSTREAM: backend:8090
+      # Service JWT nginx injects as `Authorization: Bearer` on /api/. Must verify against the
+      # backend's AUTH_JWT_SECRET: `go run ./cmd/cli mint-token --sub frontend-app` (backend/).
+      BACKEND_AUTH_TOKEN: ${BACKEND_AUTH_TOKEN:?set BACKEND_AUTH_TOKEN in .env (see .env.example)}
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"

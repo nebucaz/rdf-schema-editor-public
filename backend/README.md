@@ -1,9 +1,20 @@
 # backend
 
-A standalone Go service, sibling to `app/`, that sits between the SvelteKit app and GraphDB. It
-starts as a SPARQL gateway passthrough (`POST /sparql`, `POST /sparql/update`) and is the deployable
-substrate later stories attach Backstage-sync routes and a background worker to — see
-`spec/report/plan.md`.
+A standalone Go service, sibling to `app/`, that sits between the browser (via nginx, or the Vite dev
+proxy) and GraphDB. It is a SPARQL gateway passthrough (`POST /sparql`, `POST /sparql/update`) plus the
+Backstage-sync routes and worker, the user-identity/session routes, and the annotation and short-link logic
+the frontend used to run in SvelteKit — see `spec/report/plan.md` and `spec/static-frontend/plan.md`.
+
+```
+POST /sparql          {"query": string, "infer"?: false}
+POST /sparql/update   {"update": string}
+```
+
+Both accept `Content-Type: application/json` (the browser's contract); form-encoded `query`/`update`/
+`infer` bodies are still accepted for non-browser callers. A successful response is GraphDB's body
+relayed unchanged. Every error is JSON `{"message": string}`: `400` for a missing/invalid parameter
+or malformed body, `502` if GraphDB is unreachable, and GraphDB's own status (message = its error
+text) otherwise.
 
 It also serves source-parameterized ingestion routes resolved against an in-process registry
 (`internal/sync.Registry`) — `backstage` is the first registered source:
@@ -41,17 +52,105 @@ in progress (dry runs are exempt), `502` if the upstream source is unreachable. 
 `BackstageSyncWorker` also ticks a real sync automatically on `BACKSTAGE_SYNC_INTERVAL` (default
 `1h`, see `.env.example`) — this route is for on-demand/CLI-triggered runs, not a replacement for it.
 
+## Route overview
+
+| Route | Service JWT | Signed-in user | Notes |
+|-------|:-----------:|:--------------:|-------|
+| `GET /health` | – | – | liveness |
+| `GET /config` | – | – | `{defaultNamespaceBaseIri, devLoginEnabled}` |
+| `GET /me` | – | – | `{user}` or `{user: null}` |
+| `POST /auth/dev-login`, `POST /auth/logout` | – | – | only when `DEV_LOGIN_ENABLED=true` |
+| `POST /sparql`, `POST /sparql/update` | ✔ | ✔ | GraphDB passthrough |
+| `GET /validation/report` | ✔ | ✔ | |
+| `POST /shared-queries`, `GET /shared-queries/{id}` | ✔ | ✔ | short share links |
+| `POST /annotations`, `DELETE /annotations` | ✔ | ✔ | server-side stamping |
+| `GET /sources/{source}/discover`, `GET …/raw/{kind}`, `POST …/sync` | ✔ | – | sync worker and `importctl` have no user |
+
+"Signed-in user" = a verified `Oglala` cookie (`handler.RequireUser`, otherwise JSON 401 `"Sign in required"`).
+
+```
+POST /shared-queries        {"model": <QueryModel>}  ->  {"id": string}
+GET  /shared-queries/{id}                            ->  {"model": <QueryModel>}  (404 if unknown)
+```
+
+The model is validated with the Go port of the frontend's `parseQueryModel` (`internal/querymodel`, at most
+200 000 characters, else `413`) and stored as a `SharedQuery` node in the default namespace's `/schema` graph; `createdBy`
+(the cookie user's `sub`) and `createdAt` are stamped here and any client-supplied values ignored. Ids are
+10-character short-link ids (`internal/shortlinks`); a malformed id is rejected before any SPARQL runs.
+
+```
+POST   /annotations   {"fact": {...}, "annotation": {...}}  ->  {"iri", "annotatedBy", "annotatedAt"}
+DELETE /annotations   {"iri": string}                       ->  {"success": true}
+```
+
+Stores the reified annotation (`internal/annotations`); `annotatedBy`/`annotatedAt` are stamped from the cookie
+user and the server clock. `DELETE` only removes nodes typed `Annotation`. Bad input is `400`, GraphDB failures
+`502`.
+
+The SPARQL guards, query-model validation, short-link ids and annotation SPARQL are mirrored in the frontend;
+`testdata/golden/*.json` are shared fixtures that both `go test` and Vitest consume.
+
+## Environment variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GRAPHDB_ENDPOINT_URL` | – (required) | GraphDB repository URL. In a container use `host.docker.internal`, not `localhost` |
+| `GRAPHDB_USER`, `GRAPHDB_PASSWORD` | empty | Basic auth, if the repository needs it |
+| `AUTH_JWT_SECRET` | – (required) | HS256 secret for the service JWT |
+| `PORT` | `8090` | listen port |
+| `PUBLIC_SCHEMA_NAMESPACE` | built-in default | default namespace; served to the frontend by `/config` |
+| `BACKSTAGE_BASE_URL`, `BACKSTAGE_TOKEN` | empty | Backstage source |
+| `BACKSTAGE_SYNC_INTERVAL` | `1h` | background sync period |
+| `USER_JWT_SECRET` | empty | HS256 secret verifying the `Oglala` cookie; unset = nobody is ever signed in |
+| `DEV_LOGIN_ENABLED` | `false` | route the dev login/logout; needs `USER_JWT_SECRET`, refused when `APP_ENV=production` |
+| `COOKIE_SECURE` | `false` | `Secure` attribute on the dev-login cookie (set with HTTPS) |
+| `APP_ENV` | empty | `production` forbids the dev login |
+| `ALLOWED_ORIGINS` | empty | extra origins the CSRF guard accepts (comma-separated) |
+
 ## Authentication
 
-Every route except `/health` requires a signed JWT: `Authorization: Bearer <jwt>`, HS256-signed
+Every route except `/health` and the session routes (`GET /config`, `GET /me`, `POST /auth/dev-login`, `POST /auth/logout`) requires a signed service JWT: `Authorization: Bearer <jwt>`, HS256-signed
 against `AUTH_JWT_SECRET`. A missing header, malformed header, bad signature, or expired token all
 get a `401` (see `spec/threat-mitigation/plan.md`). This is a deliberate placeholder — a static,
 per-caller identity minted ahead of time, not a per-human login — until real end-user identity
 arrives from the embedding framework the app is expected to run inside.
 
 Mint a token with the `importctl mint-token` subcommand (see below): one for the frontend
-(`--sub frontend-app`, configured as `app/.env`'s `BACKEND_AUTH_TOKEN`), and a distinct one for
-`importctl` itself (`--sub importctl`, configured as `IMPORTCTL_AUTH_TOKEN`).
+(`--sub frontend-app`; nginx injects it from the root `.env`'s `BACKEND_AUTH_TOKEN`, the Vite dev proxy from
+`app/.env`'s `DEV_BACKEND_AUTH_TOKEN`), and a distinct one for `importctl` itself (`--sub importctl`,
+configured as `IMPORTCTL_AUTH_TOKEN`). The data routes additionally need the signed-in user described next.
+
+### User identity (`GET /me`)
+
+The end user is identified by an HS256 JWT in the `Oglala` cookie, verified with `USER_JWT_SECRET`
+(separate from `AUTH_JWT_SECRET`). `GET /me` returns `{"user": {sub, displayName, email, department,
+groups}}`, or `{"user": null}` (status 200) for an absent, invalid or expired cookie — or when
+`USER_JWT_SECRET` is unset. `handler.UserFromRequest(r)` gives later handlers the verified user, and
+`handler.RequireUser` refuses the request with `401 {"message": "Sign in required"}` when there is none.
+
+### Dev login (`POST /auth/dev-login`, `POST /auth/logout`)
+
+Only routed when `DEV_LOGIN_ENABLED=true` (otherwise `404`); startup is refused with
+`APP_ENV=production` or without `USER_JWT_SECRET`. `dev-login` takes an optional JSON body
+`{"sub"?: string}` (default `dev-user`) and sets the `Oglala` cookie — an 8-hour HS256 token with the
+same claims as an SSO one (`groups: []`), `HttpOnly; SameSite=Lax; Path=/`, plus `Secure` when
+`COOKIE_SECURE=true`. `logout` expires the cookie. Send `Content-Type: application/json` from a
+browser (see CSRF guard). The SSO "auth token" counterpart is not implemented (open question in the spec).
+
+### Runtime config (`GET /config`)
+
+Replies `{"defaultNamespaceBaseIri", "devLoginEnabled"}` — the default namespace base IRI derived
+from `PUBLIC_SCHEMA_NAMESPACE` (same derivation as `app/src/lib/config.ts`'s `defaultNamespaceBaseIriFrom`), and
+whether the dev login is on. No secrets; no service token needed.
+
+### CSRF guard
+
+Every non-`GET` route (including the session routes) also passes `handler.CSRFGuard`. A request carrying any of
+`Cookie`, `Origin` or `Sec-Fetch-Site` (i.e. from a browser) must be `Content-Type: application/json`
+(`415` otherwise), have an `Origin` equal to the request `Host` or listed in `ALLOWED_ORIGINS`, and
+not be `Sec-Fetch-Site: cross-site` (`403`). Requests with none of those headers (`importctl`) are
+unaffected. Rejections are JSON `{"message"}` and audit-logged. When a reverse proxy sits in front,
+forward the original `Host` or set `ALLOWED_ORIGINS`.
 
 ### Audit log
 
@@ -132,8 +231,8 @@ curl http://localhost:8090/health
 # {"status":"ok"}
 ```
 
-`app/`'s `bun run dev` expects this service running alongside it (via `BACKEND_URL` in
-`app/.env`) — see the root README.md.
+`app/`'s `bun run dev` expects this service running alongside it (its Vite proxy targets
+`DEV_BACKEND_URL` in `app/.env`) — see the root README.md, including "Tokens".
 
 ## Testing
 
@@ -143,9 +242,10 @@ go test ./...
 
 ## Docker Compose
 
-A `backend` service definition lives in the root `docker-compose.yml`, sibling to GraphDB. It has no
-database of its own — GraphDB is the only store, reached over `GRAPHDB_ENDPOINT_URL`.
+The root `docker-compose.yml` defines `backend` (this service, **no published port**) and `frontend` (nginx
+serving the static app and proxying `/api/` here). It has no database of its own — GraphDB is the only store,
+reached over `GRAPHDB_ENDPOINT_URL` (use `host.docker.internal` for a GraphDB on the host).
 
 ```sh
-docker compose up --build backend
+docker compose up --build        # needs the root .env with BACKEND_AUTH_TOKEN, see the root README
 ```
