@@ -1,7 +1,7 @@
 # Import / Export
 
-The ways schema and instance content moves in and out of the app, mostly reached from the hamburger
-menu.
+The ways schema and instance content moves in and out of the app, mostly reached from the Settings menu (cog),
+under **Import / Export**.
 
 ## Import
 

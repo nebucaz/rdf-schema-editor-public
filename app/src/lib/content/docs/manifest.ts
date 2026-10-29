@@ -119,6 +119,7 @@ const sectionMetas: DocSectionMeta[] = [
 	},
 
 	// Panels & Views
+	{ id: 'app-header', title: 'App Header', category: 'Panels & Views', order: 5, file: 'app-header.md' },
 	{ id: 'triples-panel', title: 'Triples Panel', category: 'Panels & Views', order: 10, file: 'triples-panel.md' },
 	{
 		id: 'namespace-management-view',
@@ -162,7 +163,7 @@ const sectionMetas: DocSectionMeta[] = [
 		order: 70,
 		file: 'missing-concepts-panel.md'
 	},
-	{ id: 'settings-view', title: 'Settings View', category: 'Panels & Views', order: 80, file: 'settings-view.md' },
+	{ id: 'settings-view', title: 'Catalog Settings View', category: 'Panels & Views', order: 80, file: 'settings-view.md' },
 	{
 		id: 'provenance-report-view',
 		title: 'Provenance Report View',

@@ -2,10 +2,20 @@
 	import type { Snippet } from 'svelte';
 
 	interface Props {
-		children: Snippet;
+		/** Toggle icon; the button itself supplies size, border and hover styling. */
+		icon: Snippet;
+		/** Becomes the toggle's `aria-label` and `title`. */
+		label: string;
+		/** Tooltip; defaults to `label`. */
+		title?: string;
+		/** Which toggle edge the panel is anchored to (it opens toward the opposite side). */
+		align?: 'left' | 'right';
+		/** Receives `close` so an entry that must outlive its own click (e.g. a retryable action) can
+		 *  stop the click from bubbling to the panel and close the menu itself later. */
+		children: Snippet<[() => void]>;
 	}
 
-	let { children }: Props = $props();
+	let { icon, label, title, align = 'right', children }: Props = $props();
 
 	let isOpen = $state(false);
 
@@ -32,38 +42,34 @@
 
 <svelte:window onkeydown={isOpen ? handleKeydown : undefined} />
 
-<div class="hamburger-wrapper">
+<div class="dropdown-wrapper">
 	<button
-		class="hamburger-toggle"
+		class="dropdown-toggle"
 		onclick={toggleOpen}
-		aria-label="Menu"
+		aria-label={label}
 		aria-haspopup="true"
 		aria-expanded={isOpen}
-		title="Menu"
+		title={title ?? label}
 	>
-		<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-			<path d="M3 6h18" />
-			<path d="M3 12h18" />
-			<path d="M3 18h18" />
-		</svg>
+		{@render icon()}
 	</button>
 
 	{#if isOpen}
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div class="hamburger-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="presentation" tabindex="-1"></div>
+		<div class="dropdown-backdrop" onclick={handleBackdropClick} onkeydown={handleKeydown} role="presentation" tabindex="-1"></div>
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div class="hamburger-panel" role="menu" tabindex="-1" onclick={close} onkeydown={handleKeydown}>
-			{@render children()}
+		<div class="dropdown-panel" class:align-left={align === 'left'} role="menu" tabindex="-1" onclick={close} onkeydown={handleKeydown}>
+			{@render children(close)}
 		</div>
 	{/if}
 </div>
 
 <style>
-	.hamburger-wrapper {
+	.dropdown-wrapper {
 		position: relative;
 	}
 
-	.hamburger-toggle {
+	.dropdown-toggle {
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -77,12 +83,12 @@
 		transition: background var(--transition), border-color var(--transition);
 	}
 
-	.hamburger-toggle:hover {
+	.dropdown-toggle:hover {
 		background: var(--color-hover);
 		border-color: var(--color-text-muted);
 	}
 
-	.hamburger-backdrop {
+	.dropdown-backdrop {
 		position: fixed;
 		top: 0;
 		left: 0;
@@ -92,11 +98,17 @@
 		z-index: 1000;
 	}
 
-	.hamburger-panel {
+	.dropdown-panel.align-left {
+		left: 0;
+		right: auto;
+	}
+
+	.dropdown-panel {
 		position: absolute;
 		top: calc(100% + 0.5rem);
 		right: 0;
 		min-width: 200px;
+		max-width: calc(100vw - 1rem);
 		background: var(--color-bg-secondary);
 		border: 1px solid var(--color-border);
 		border-radius: 8px;

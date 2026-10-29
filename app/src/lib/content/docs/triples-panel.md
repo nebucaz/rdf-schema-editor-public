@@ -2,7 +2,7 @@
 
 The **Triples Panel** shows the raw generated Turtle behind a class, a Workspace, or the whole graph —
 and, for a single class, lets you edit it directly. Opened from an Entity/Individual Node's "View
-triples" menu entry, or the whole-graph hamburger-menu entry.
+triples" menu entry, or the whole-graph entry in the Settings menu (cog).
 
 ## Scope
 

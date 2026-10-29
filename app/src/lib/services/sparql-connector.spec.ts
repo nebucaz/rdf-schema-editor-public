@@ -2680,7 +2680,7 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 		]);
 	});
 
-	it('fetchNameableEntities lists untyped (Unclassified) individuals as addable individuals', async () => {
+	it('fetchNameableEntities does not offer untyped (Unclassified) individuals for a Workspace', async () => {
 		const connector = new SparqlConnector('/api/sparql');
 		vi.spyOn(connector, 'fetchAllReifiedStatements').mockResolvedValue([]);
 		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
@@ -2693,7 +2693,7 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 			individualClassRelations: [],
 			individualIndividualRelations: []
 		});
-		expect(await connector.fetchNameableEntities()).toEqual([{ iri: 'urn:U', label: 'U', kind: 'individual' }]);
+		expect(await connector.fetchNameableEntities()).toEqual([]);
 	});
 
 	it('fetchNameableEntities appends reified statements as the "relationInstance" kind', async () => {

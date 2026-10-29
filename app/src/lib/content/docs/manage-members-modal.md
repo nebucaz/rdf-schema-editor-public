@@ -18,7 +18,7 @@ Every individual currently belonging to this class, by label.
 Since every member here belongs to the same class, the form always shows that class's own+inherited
 attributes and relation fields. This modal has no **Class** selector: to move an individual to a
 different class, or to give a class to an *Unclassified* one, edit it from its [Individual
-Node](individual-node) (Instances view) or from the [Identities area](identities-area) — see
+Node](individual-node) (Instances view) or from the [Identities area](identities-area) (the only place Unclassified ones appear) — see
 [Member Form](member-form).
 
 ## Related

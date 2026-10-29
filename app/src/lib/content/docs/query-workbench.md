@@ -1,7 +1,7 @@
 # Query Workbench
 
-A visual way to ask questions of your data without writing SPARQL — reachable from the hamburger menu's
-**Query Workbench** entry or the `/workbench` route. The [Query Console View](query-console-view) stays
+A visual way to ask questions of your data without writing SPARQL — reachable from the **Report** tab in the
+navigation strip or the `/workbench` route. The [Query Console View](query-console-view) stays
 available as the advanced, free-form alternative.
 
 ## Building a query

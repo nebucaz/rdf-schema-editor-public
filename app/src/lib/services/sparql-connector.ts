@@ -3717,12 +3717,6 @@ export class SparqlConnector {
 			})),
 			...schema.objectProperties.map((p) => ({ iri: p.iri, label: p.label, kind: 'relation' as const })),
 			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const })),
-			// Unclassified individuals must be addable to a Workspace too, or they stay hidden.
-			...(schema.untypedIndividuals ?? []).map((i) => ({
-				iri: i.iri,
-				label: i.label,
-				kind: 'individual' as const
-			})),
 			...relationInstances
 		];
 		const byIri = new Map(all.map((e) => [e.iri, e]));
@@ -6754,7 +6748,7 @@ export class SparqlConnector {
 
 	/**
 	 * STORY-036: every registered namespace's instance/schema/shapes graph triples, each quad
-	 * graph-tagged with its originating graph IRI — the "Export quads" hamburger menu action's data
+	 * graph-tagged with its originating graph IRI — the "Export quads" settings menu action's data
 	 * source. Bounded to registered namespaces only (`research.md` §12 Decision 9), never a raw
 	 * repository-wide `GRAPH ?g {}` scan.
 	 */

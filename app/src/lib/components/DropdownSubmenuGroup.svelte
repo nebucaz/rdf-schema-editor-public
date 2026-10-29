@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy, type Snippet } from 'svelte';
-	import { getHamburgerSubmenuCoordinator } from './hamburger-submenu-context.svelte';
+	import { getDropdownSubmenuCoordinator } from './dropdown-submenu-context.svelte';
 
 	interface Props {
 		label: string;
@@ -10,7 +10,7 @@
 	let { label, children }: Props = $props();
 
 	const id = $props.id();
-	const coordinator = getHamburgerSubmenuCoordinator();
+	const coordinator = getDropdownSubmenuCoordinator();
 	const isOpen = $derived(coordinator.openId === id);
 
 	let toggleEl: HTMLButtonElement | undefined = $state();
@@ -30,9 +30,9 @@
 	}
 
 	/** Anchors the flyout to open toward the left of the trigger row (plan.md's Risk Assessment —
-	 *  `.hamburger-panel` is right-aligned, so a right-opening flyout would have less room), mirroring
+	 *  `.dropdown-panel` is right-aligned, so a right-opening flyout would have less room), mirroring
 	 *  `NodeMenu.svelte`'s `getBoundingClientRect()`-based positioning minus the portal: neither of
-	 *  `NodeMenu`'s clipping/transform constraints apply to `.hamburger-panel`. */
+	 *  `NodeMenu`'s clipping/transform constraints apply to `.dropdown-panel`. */
 	function updatePosition() {
 		if (!toggleEl) return;
 		const rect = toggleEl.getBoundingClientRect();
@@ -120,7 +120,7 @@
 		font-size: 0.75rem;
 	}
 
-	/* position: fixed, not portaled — `.hamburger-panel` is neither clipped nor inside a transformed
+	/* position: fixed, not portaled — `.dropdown-panel` is neither clipped nor inside a transformed
 	   ancestor, so screen-space coordinates from `getBoundingClientRect()` are enough (see
 	   `updatePosition` above). */
 	.submenu-panel {

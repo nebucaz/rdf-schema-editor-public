@@ -9,9 +9,10 @@ view (see [View Mode Toggle](view-mode-toggle)).
 A pill-shaped node showing the individual's label and, underneath, the name of the class it belongs
 to. Hover the label to see the individual's own IRI.
 
-An individual that has a label but no class is shown as **Unclassified** (red italic class line) and
-has no [Instance-Of Edge](instance-of-edge). Unclassified individuals appear in Instances view in every
-workspace; give them a class with the **Class** selector in the [Member Form](member-form).
+An individual that has a label but no class is **Unclassified**. Unclassified individuals are never
+shown on the canvas or added to a Workspace; find them under **Unclassified (no class)** in the
+[Identities area](identities-area) and give them a class with the **Class** selector in the
+[Member Form](member-form).
 
 If the individual was created by **Backstage catalog sync** rather than by hand, it carries a badge:
 - `⇄ backstage` — currently present in the upstream catalog.

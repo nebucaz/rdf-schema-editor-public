@@ -24,6 +24,6 @@ Form](member-form)) that actually own that data.
 
 ## Related
 
-- [Settings View](settings-view) — where the Catalog marker class gating this report's availability is
+- [Catalog Settings View](settings-view) — where the Catalog marker class gating this report's availability is
   configured.
 - [Is-Master-For Edge](is-master-for-edge) — where `isMasterFor`/contributor assertions are made.

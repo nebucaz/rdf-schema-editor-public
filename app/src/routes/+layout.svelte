@@ -6,8 +6,11 @@
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
 	import { ModeWatcher, toggleMode, mode } from 'mode-watcher';
-	import HamburgerMenu from '$lib/components/HamburgerMenu.svelte';
-	import HamburgerSubmenuGroup from '$lib/components/HamburgerSubmenuGroup.svelte';
+	import AppNav from '$lib/components/AppNav.svelte';
+	import UserMenu from '$lib/components/UserMenu.svelte';
+	import ProfileView from '$lib/components/ProfileView.svelte';
+	import DropdownMenu from '$lib/components/DropdownMenu.svelte';
+	import DropdownSubmenuGroup from '$lib/components/DropdownSubmenuGroup.svelte';
 	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
 	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
 	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
@@ -64,29 +67,29 @@
 
 	/** STORY-118/119's Identities area is a separate surface from the canvas — no `viewMode`,
 	 *  namespace/workspace selection, or canvas-visibility toggles apply there, and several
-	 *  hamburger-menu actions (reload, triples, SVG export, workspace import) operate on
+	 *  settings-menu actions (reload, triples, SVG export, workspace import) operate on
 	 *  canvas-only state that isn't even mounted on this route. */
 	const routeView = $derived(resolveRouteView(page.url.pathname));
 	const isIdentitiesView = $derived(routeView.isIdentitiesView);
-	/** STORY-133: same plain-link pattern as `isIdentitiesView` — the Validation Report is its own
-	 *  route, not a modal, so its hamburger-menu entry needs the same "already here" disabled state. */
+	/** STORY-133: the Validation Report is its own route, not a modal; it shows only the namespace
+	 *  filter in the header actions. */
 	const isValidationView = $derived(routeView.isValidationView);
 	/** STORY-185: the Query Workbench is its own route too, and — like Identities — has no canvas
 	 *  state mounted, so the same canvas-only menu items are hidden there. */
 	const isWorkbenchView = $derived(routeView.isWorkbenchView);
 	/** True only on the canvas ("/") route — none of Identities, Validation or Workbench. Canvas-only
-	 *  menu items (View Triples, Export SVG, Import Workspace) and the "Schema Editor" link's own
-	 *  "already here" disabled state must key off actually being on the canvas. */
+	 *  menu items (View Triples, Export SVG, Import Workspace) must key off actually being on the
+	 *  canvas. */
 	const isCanvasView = $derived(routeView.isCanvasView);
 	/** Menu items that operate on canvas state and are hidden on both non-canvas "area" routes. */
 	const hideCanvasOnlyItems = $derived(isIdentitiesView || isWorkbenchView || routeView.isReportView);
 
-	let logoutFailed = $state(false);
+	let showProfile = $state(false);
 
 	async function handleLogout() {
 		const result = await devLogout();
-		logoutFailed = !result.ok;
 		if (result.ok) await invalidateAll();
+		return result;
 	}
 
 	// The data routes refuse a signed-out caller, so load only once a user exists (and again after a
@@ -196,6 +199,9 @@
 <div class="app-container">
 	<header class="app-header">
 		<a href="/" class="app-title">RDF Schema Editor</a>
+		{#if page.data.user}
+			<AppNav {routeView} />
+		{/if}
 		<div class="app-header-actions">
 			{#if page.data.user}
 				{#if isCanvasView}
@@ -244,50 +250,15 @@
 						onToggle={(baseIri) => validationReportFilterStore.toggle(baseIri)}
 					/>
 				{/if}
-				<HamburgerMenu>
+				<DropdownMenu label="Settings">
+					{#snippet icon()}
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+							<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+							<circle cx="12" cy="12" r="3" />
+						</svg>
+					{/snippet}
 					{#snippet children()}
-						<a
-							href="/identities"
-							class="menu-item menu-link"
-							aria-disabled={isIdentitiesView}
-							onclick={(e) => {
-								if (isIdentitiesView) e.preventDefault();
-							}}
-						>
-							Identities
-						</a>
-						<a
-							href="/"
-							class="menu-item menu-link"
-							aria-disabled={isCanvasView}
-							onclick={(e) => {
-								if (isCanvasView) e.preventDefault();
-							}}
-						>
-							Schema Editor
-						</a>
-						<a
-							href="/workbench"
-							class="menu-item menu-link"
-							aria-disabled={isWorkbenchView}
-							onclick={(e) => {
-								if (isWorkbenchView) e.preventDefault();
-							}}
-						>
-							Query Workbench
-						</a>
-						<a
-							href="/validation"
-							class="menu-item menu-link"
-							aria-disabled={isValidationView}
-							onclick={(e) => {
-								if (isValidationView) e.preventDefault();
-							}}
-						>
-							Validation Report
-						</a>
-						<hr class="menu-divider" />
-						<HamburgerSubmenuGroup label="Manage">
+						<DropdownSubmenuGroup label="Manage">
 							{#snippet children()}
 								<button
 									type="button"
@@ -313,8 +284,8 @@
 									External Vocabularies
 								</button>
 							{/snippet}
-						</HamburgerSubmenuGroup>
-						<HamburgerSubmenuGroup label="Import / Export">
+						</DropdownSubmenuGroup>
+						<DropdownSubmenuGroup label="Import / Export">
 							{#snippet children()}
 								<button
 									type="button"
@@ -363,7 +334,7 @@
 									</button>
 								{/if}
 							{/snippet}
-						</HamburgerSubmenuGroup>
+						</DropdownSubmenuGroup>
 						<hr class="menu-divider" />
 						{#if !hideCanvasOnlyItems}
 							<button
@@ -391,7 +362,7 @@
 						{/if}
 						<hr class="menu-divider" />
 						<button type="button" class="menu-item" onclick={() => (showSettings = true)}>
-							Settings
+							Catalog settings…
 						</button>
 						<button type="button" class="menu-item" onclick={() => (showDocumentation = true)}>
 							Documentation
@@ -400,13 +371,14 @@
 						<button type="button" class="menu-item" onclick={toggleMode}>
 							{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 						</button>
-						{#if DEV_LOGIN_ENABLED && page.data.user}
-							<button type="button" class="menu-item" onclick={handleLogout}>
-								{logoutFailed ? 'Logout failed – retry' : `Logout (${page.data.user.displayName})`}
-							</button>
-						{/if}
 					{/snippet}
-				</HamburgerMenu>
+				</DropdownMenu>
+				<UserMenu
+					user={page.data.user}
+					logoutEnabled={DEV_LOGIN_ENABLED}
+					onProfile={() => (showProfile = true)}
+					onLogout={handleLogout}
+				/>
 				<input
 					bind:this={importWorkspaceFileInput}
 					type="file"
@@ -446,6 +418,12 @@
 	dismissible={false}
 >
 	<MissingConceptsPanel namespaces={namespaceStore.namespaces} onCreated={() => workbenchActions.reload()} />
+</Modal>
+
+<Modal isOpen={showProfile} title="Profile" onClose={() => (showProfile = false)}>
+	{#if page.data.user}
+		<ProfileView user={page.data.user} />
+	{/if}
 </Modal>
 
 <Modal isOpen={showSettings} title="Settings" onClose={() => (showSettings = false)} dismissible={false}>
@@ -544,7 +522,7 @@
 	.app-header {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 1.5rem;
 		height: var(--nav-height);
 		padding: 0 1.5rem;
 		border-bottom: 1px solid var(--color-border);
@@ -552,6 +530,8 @@
 	}
 
 	.app-title {
+		flex-shrink: 0;
+		white-space: nowrap;
 		font-weight: 600;
 		color: inherit;
 		text-decoration: none;
@@ -572,6 +552,7 @@
 	}
 
 	.app-header-actions {
+		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
@@ -585,40 +566,6 @@
 		background: var(--color-bg-secondary);
 		color: var(--color-text);
 		font-size: 0.85rem;
-	}
-
-	.menu-item {
-		display: block;
-		width: 100%;
-		text-align: left;
-		padding: 0.5rem 0.75rem;
-		border-radius: 6px;
-		background: transparent;
-		border: none;
-		color: var(--color-text);
-		font-size: 0.875rem;
-		white-space: nowrap;
-		cursor: pointer;
-	}
-
-	.menu-item:hover {
-		background: var(--color-hover);
-	}
-
-	.menu-link {
-		text-decoration: none;
-		box-sizing: border-box;
-	}
-
-	.menu-item:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-
-	.menu-link[aria-disabled='true'] {
-		opacity: 0.6;
-		cursor: default;
-		pointer-events: none;
 	}
 
 	.menu-divider {

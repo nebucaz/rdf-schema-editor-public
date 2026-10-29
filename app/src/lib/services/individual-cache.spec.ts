@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addIndividualToSchema, removeIndividualFromSchema, renameIndividualInSchema, setIndividualClassInSchema, unclassifiedNotShown, withUnclassifiedMembers } from './individual-cache';
+import { addIndividualToSchema, removeIndividualFromSchema, renameIndividualInSchema, setIndividualClassInSchema } from './individual-cache';
 import type { FetchedIndividual, FetchedSchema } from './sparql-connector';
 
 const individual = (iri: string, over: Partial<FetchedIndividual> = {}): FetchedIndividual => ({
@@ -97,25 +97,6 @@ describe('untyped individuals in the cache helpers', () => {
 	});
 });
 
-describe('withUnclassifiedMembers', () => {
-	it('adds every unclassified individual to the member set without mutating it', () => {
-		const members = new Set(['http://x#a']);
-		const schema: FetchedSchema = {
-			...schemaWith([]),
-			untypedIndividuals: [{ iri: 'http://x#u', label: 'U', namespaceBaseIri: 'http://x' }]
-		};
-		const next = withUnclassifiedMembers(members, schema);
-		expect([...next].sort()).toEqual(['http://x#a', 'http://x#u']);
-		expect(members.size).toBe(1);
-	});
-
-	it('returns the members unchanged when there is no schema or no unclassified individual', () => {
-		const members = new Set(['http://x#a']);
-		expect(withUnclassifiedMembers(members, null)).toBe(members);
-		expect(withUnclassifiedMembers(members, schemaWith([]))).toBe(members);
-	});
-});
-
 describe('setIndividualClassInSchema', () => {
 	const untyped = { iri: 'http://x#u', label: 'U', namespaceBaseIri: 'http://x' };
 
@@ -142,21 +123,6 @@ describe('setIndividualClassInSchema', () => {
 		expect(next.individuals[0].classIri).toBe('http://x/D');
 		expect(next.individualClassRelations).toEqual([]);
 		expect(next.individualIndividualRelations).toHaveLength(1);
-	});
-});
-
-describe('unclassifiedNotShown', () => {
-	const u = (n: number) =>
-		Array.from({ length: n }, (_, k) => ({ iri: `http://x#u${k}`, label: `U${k}`, namespaceBaseIri: 'http://x' }));
-
-	it('is the total minus what the canvas holds', () => {
-		expect(unclassifiedNotShown({ ...schemaWith([]), untypedIndividuals: u(200), untypedTotal: 1200 })).toBe(1000);
-	});
-
-	it('is zero at or under the cap, without a total, or without a schema', () => {
-		expect(unclassifiedNotShown({ ...schemaWith([]), untypedIndividuals: u(3), untypedTotal: 3 })).toBe(0);
-		expect(unclassifiedNotShown({ ...schemaWith([]), untypedIndividuals: u(3) })).toBe(0);
-		expect(unclassifiedNotShown(null)).toBe(0);
 	});
 });
 

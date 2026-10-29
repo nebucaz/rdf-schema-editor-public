@@ -1,6 +1,6 @@
-# Settings View
+# Catalog Settings View
 
-App-wide settings — opened from the hamburger menu's **Settings** entry.
+App-wide settings — opened from the Settings menu (cog)'s **Catalog settings…** entry.
 
 ## Fields
 

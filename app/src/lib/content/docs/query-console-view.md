@@ -1,6 +1,6 @@
 # Query Console View
 
-A free-form SPARQL query console — opened from the hamburger menu's **Query Console** entry. Useful
+A free-form SPARQL query console — opened from the Settings menu (cog)'s **Query Console** entry. Useful
 for ad hoc questions the canvas UI doesn't have a dedicated view for.
 
 ## What you can do

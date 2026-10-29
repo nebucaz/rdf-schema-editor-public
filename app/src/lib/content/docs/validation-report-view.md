@@ -1,7 +1,7 @@
 # Validation Report View
 
 A read-only SHACL constraint-violation report. Available inline and as the dedicated **Validation
-Report** route from the hamburger menu.
+Report** route, via the **Validation** tab in the navigation strip.
 
 ## What you see
 

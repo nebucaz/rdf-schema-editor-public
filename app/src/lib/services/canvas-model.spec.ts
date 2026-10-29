@@ -1080,19 +1080,15 @@ describe('buildCanvasModel — instances view mode (data-catalog Story 005/006)'
 		});
 	});
 
-	it('"instances" mode emits an unclassified node with no instanceOf edge and no entity member', () => {
+	it('"instances" mode never puts an Unclassified individual on the canvas', () => {
 		const person = classIri('Person');
-		const strayIri = `${NS}#stray`;
 		const schema = emptySchema({
 			classes: [fetchedClass(person, 'Person')],
-			untypedIndividuals: [{ iri: strayIri, label: 'Stray', namespaceBaseIri: NS }]
+			untypedIndividuals: [{ iri: `${NS}#stray`, label: 'Stray', namespaceBaseIri: NS }]
 		});
 		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
-		const node = model.nodes.find((n) => n.kind === 'individual' && n.iri === strayIri);
-		expect(node).toMatchObject({ label: 'Stray', unclassified: true, classIri: '', namespace: NS });
+		expect(model.nodes.some((n) => n.kind === 'individual')).toBe(false);
 		expect(model.edges.filter((e) => e.kind === 'instanceOf')).toEqual([]);
-		const entity = model.nodes.find((n) => n.kind === 'entity' && n.iri === person);
-		expect(entity && entity.kind === 'entity' ? entity.members : null).toEqual([]);
 	});
 
 	it('typed individuals are not flagged unclassified', () => {

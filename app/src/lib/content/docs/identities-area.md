@@ -1,7 +1,7 @@
 # The /identities Area
 
-A dedicated, off-canvas way to search, browse, and inspect individuals — reachable from the hamburger
-menu's **Identities** entry or the `/identities` route directly. Unlike the canvas's Instances view,
+A dedicated, off-canvas way to search, browse, and inspect individuals — reachable from the **Identities** link in
+the navigation strip or the `/identities` route directly. Unlike the canvas's Instances view,
 it isn't scoped to a Workspace and doesn't require selecting a class first.
 
 ## Search & browse

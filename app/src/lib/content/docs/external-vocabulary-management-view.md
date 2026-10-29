@@ -1,7 +1,7 @@
 # External Vocabulary Management View
 
-CRUD for registered external vocabularies — opened from the hamburger menu's **External
-Vocabularies** entry.
+CRUD for registered external vocabularies — opened from the Settings menu (cog): **Manage ▸ External
+Vocabularies**.
 
 ## What you see
 

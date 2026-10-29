@@ -1,6 +1,6 @@
 # Namespace Management View
 
-CRUD for registered namespaces — opened from the hamburger menu's **Namespaces** entry.
+CRUD for registered namespaces — opened from the Settings menu (cog): **Manage ▸ Namespaces**.
 
 ## What you see
 

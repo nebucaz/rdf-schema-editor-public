@@ -583,18 +583,6 @@ export function buildCanvasModel(
 		isStale: individual.syncStatus === 'stale'
 	}));
 
-	const unclassifiedNodes: IndividualNodeSpec[] = (schema.untypedIndividuals ?? []).map((individual) => ({
-		kind: 'individual',
-		iri: individual.iri,
-		label: individual.label,
-		classIri: '',
-		className: 'Unclassified',
-		namespace: individual.namespaceBaseIri,
-		syncSource: null,
-		unclassified: true,
-		isStale: false
-	}));
-
 	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = [
 		...schema.individualClassRelations.map(
 			(relation): IndividualClassRelationEdgeSpec => ({
@@ -629,7 +617,7 @@ export function buildCanvasModel(
 	}));
 
 	return {
-		nodes: [...individualNodes, ...unclassifiedNodes, ...entityNodes],
+		nodes: [...individualNodes, ...entityNodes],
 		edges: [...instanceOfEdges, ...individualRelationEdges],
 		associationClassIris,
 		authoritativeEntityIris,

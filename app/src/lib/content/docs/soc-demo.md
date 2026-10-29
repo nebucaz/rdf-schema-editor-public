@@ -12,9 +12,9 @@ hostnames end in `example.com`.
 
 ## Load it
 
-1. Hamburger menu → **Namespaces** → **Add**: prefix `soc`, base IRI
+1. Settings menu (cog) → **Manage ▸ Namespaces** → **Add**: prefix `soc`, base IRI
    `http://ld.pageagent.com/example/soc`.
-2. Hamburger menu → **Import Turtle…**, choosing `soc` as the **Target graph** each time, in this order:
+2. Settings menu (cog) → **Import / Export ▸ Import Turtle…**, choosing `soc` as the **Target graph** each time, in this order:
    1. `examples/soc/soc-schema.ttl`
    2. `examples/soc/soc-shapes.ttl`
    3. `examples/soc/soc-data.ttl`

@@ -75,18 +75,3 @@ export function setIndividualClassInSchema(
 		)
 	};
 }
-
-/**
- * Workspace members plus every Unclassified individual. An individual without a class has no way
- * to be found and placed otherwise, so it is visible in every workspace until it gets a class.
- */
-export function withUnclassifiedMembers(members: Set<string>, schema: FetchedSchema | null): Set<string> {
-	if (!schema?.untypedIndividuals?.length) return members;
-	return new Set([...members, ...schema.untypedIndividuals.map((i) => i.iri)]);
-}
-
-/** How many Unclassified individuals exist but are not on the canvas (it holds at most the cap). */
-export function unclassifiedNotShown(schema: FetchedSchema | null): number {
-	if (!schema?.untypedTotal) return 0;
-	return Math.max(0, schema.untypedTotal - (schema.untypedIndividuals?.length ?? 0));
-}

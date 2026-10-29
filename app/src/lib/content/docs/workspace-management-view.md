@@ -1,7 +1,7 @@
 # Workspace Management View
 
-CRUD for Workspaces — named, savable views of a subset of the canvas — opened from the hamburger
-menu's **Workspaces** entry.
+CRUD for Workspaces — named, savable views of a subset of the canvas — opened from the Settings
+menu (cog): **Manage ▸ Workspaces**.
 
 ## What you see
 

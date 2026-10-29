@@ -198,4 +198,16 @@ describe('svelte-markdown rendering', () => {
 		expect(body).toContain('Entity Node');
 		expect(body).toContain('owl:Class');
 	});
+
+	it('registers the app header section', () => {
+		const header = docSections.find((s) => s.id === 'app-header');
+		expect(header).toBeDefined();
+		for (const term of ['navigation strip', 'Settings menu', 'user menu', 'Profile']) {
+			expect(header?.content).toContain(term);
+		}
+	});
+
+	it('no section refers to the retired hamburger menu', () => {
+		for (const section of docSections) expect(section.content.toLowerCase()).not.toContain('hamburger');
+	});
 });

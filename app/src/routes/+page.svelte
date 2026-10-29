@@ -95,14 +95,11 @@
 	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
 	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
 	import { classifyAddedElement } from '$lib/services/workspace-add';
-	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl } from '$lib/utils/identity-search-url';
 	import {
 		addIndividualToSchema,
 		removeIndividualFromSchema,
 		renameIndividualInSchema,
-		setIndividualClassInSchema,
-		unclassifiedNotShown,
-		withUnclassifiedMembers
+		setIndividualClassInSchema
 	} from '$lib/services/individual-cache';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
@@ -434,9 +431,8 @@
 
 	let viewMode = $state<ViewMode>(viewModeStore.getViewMode());
 	let lastFetchedSchema = $state<FetchedSchema | null>(null);
-	/** `workspaceMembers` plus Unclassified individuals, which are shown in every workspace. */
-	const unclassifiedHidden = $derived(unclassifiedNotShown(lastFetchedSchema));
-	const visibleMembers = $derived(withUnclassifiedMembers(workspaceMembers, lastFetchedSchema));
+	/** Unclassified individuals are never on a canvas — they are managed on the Identities page. */
+	const visibleMembers = $derived(workspaceMembers);
 
 	/**
 	 * Sprint 6 Story 019: individual-relation edges (create/edit/delete, plus assertion add/remove
@@ -500,7 +496,7 @@
 	let showTriplesPanel = $state(false);
 
 	/** STORY-039: the Triples panel's scope is intentionally decoupled from canvas selection — the
-	 *  hamburger's "View Triples" always opens to the whole graph (`null`) regardless of what's
+	 *  settings menu's "View Triples" always opens to the whole graph (`null`) regardless of what's
 	 *  selected on canvas, so a stale canvas selection can't silently filter the panel.
 	 *  STORY-043's per-entity Triples icon will set this explicitly instead. */
 	let triplesPanelScopeIri = $state<string | null>(null);
@@ -514,7 +510,7 @@
 	let triplesPanelNamespaceBaseIri = $state<string | undefined>(undefined);
 
 	/** Data-catalog Story 014: which tab the Triples panel opens onto. Only "View catalog" ever
-	 *  requests `'catalog'`; every other opener (hamburger "View Triples", per-node "View triples")
+	 *  requests `'catalog'`; every other opener (settings menu "View Triples", per-node "View triples")
 	 *  requests `'schema'`, matching pre-Story-014 behavior. */
 	let triplesPanelInitialTab = $state<'schema' | 'shapes' | 'catalog'>('schema');
 
@@ -3232,7 +3228,7 @@
 		}
 	}
 
-	// -- Move Reload/View Triples to the hamburger menu (STORY-034) ------------------------------
+	// -- Move Reload/View Triples to the settings menu (STORY-034) ------------------------------
 	// The menu lives in `+layout.svelte`, a sibling of this page's rendered content rather than an
 	// ancestor of it, so it can't reach these handlers via props/context. `workbenchActions` bridges
 	// them across instead — see that store's doc comment.
@@ -3407,11 +3403,6 @@
 		onpointerleave={handleCanvasPointerLeave}
 		role="presentation"
 	>
-		{#if viewMode === 'instances' && unclassifiedHidden > 0}
-			<a class="unclassified-overflow" href={buildIdentitySearchUrl({ classIri: UNCLASSIFIED_FACET })}>
-				{unclassifiedHidden.toLocaleString()} more Unclassified individuals. Manage them in Identities
-			</a>
-		{/if}
 		<SvelteFlow
 			bind:nodes
 			bind:edges
@@ -4112,24 +4103,6 @@
 	.canvas-wrap {
 		flex: 1;
 		position: relative;
-	}
-
-	.unclassified-overflow {
-		position: absolute;
-		top: 0.5rem;
-		left: 0.5rem;
-		z-index: 5;
-		padding: 0.3rem 0.65rem;
-		border-radius: 999px;
-		font-size: 0.8rem;
-		color: var(--color-text);
-		background: var(--color-bg-secondary);
-		border: 1px solid var(--color-border);
-		text-decoration: none;
-	}
-
-	.unclassified-overflow:hover {
-		background: var(--color-hover);
 	}
 
 	.warning-list {

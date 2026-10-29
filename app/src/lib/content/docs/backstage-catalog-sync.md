@@ -22,7 +22,7 @@ that class's DCAT catalog entry from current data at any time via its **Regenera
 
 ## Settings that drive it
 
-Set from the [Settings View](settings-view):
+Set from the [Catalog Settings View](settings-view):
 
 - **Catalog marker class** — which class marks its direct subclasses as catalog-eligible.
 - **Represents-predicate** — the `owl:ObjectProperty` used to link a synced individual back to the
@@ -31,6 +31,6 @@ Set from the [Settings View](settings-view):
 ## Related
 
 - [Missing Concepts Panel](missing-concepts-panel) — the discover step.
-- [Settings View](settings-view) — the marker class and represents-predicate settings.
+- [Catalog Settings View](settings-view) — the marker class and represents-predicate settings.
 - [Entity Form](entity-form) — where a class's Backstage `kind` mapping is set.
 - [Triples Panel](triples-panel) — where a catalog entry is regenerated, on the Catalog tab.

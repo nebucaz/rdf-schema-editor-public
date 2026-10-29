@@ -1,6 +1,6 @@
 /**
  * Bridges page-owned canvas actions — reload from GraphDB, toggle the Triples panel — into
- * `+layout.svelte`'s hamburger menu (STORY-034), plus the reverse direction: opening the
+ * `+layout.svelte`'s settings menu (STORY-034), plus the reverse direction: opening the
  * layout-owned "External Vocabularies" modal (STORY-046) from `ExternalClassForm`'s "Manage
  * vocabularies" link, which lives inside `+page.svelte`'s canvas modals. Either way, the layout and
  * the page are siblings under `+layout.svelte`'s `children` snippet, not ancestor/descendant, so
@@ -72,7 +72,7 @@ function createWorkbenchActionsStore() {
 			consoleInitialQuery = value;
 		},
 		/** STORY-067: mirrors `loading`/`triplesOpen` — `+page.svelte` owns the export (it needs the
-		 *  canvas's `nodes`/`edges`/DOM), the hamburger menu (`+layout.svelte`) triggers it. */
+		 *  canvas's `nodes`/`edges`/DOM), the settings menu (`+layout.svelte`) triggers it. */
 		get exportingSvg() {
 			return exportingSvg;
 		},
