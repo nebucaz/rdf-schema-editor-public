@@ -7,6 +7,8 @@
 	 * connector method itself).
 	 */
 	import type { FetchedClass, FetchedNamespace } from '$lib/services/sparql-connector';
+	import { untrack } from 'svelte';
+	import { UNCLASSIFIED_FACET } from '$lib/utils/identity-search-url';
 
 	export interface IdentityFacetValues {
 		query: string;
@@ -36,7 +38,9 @@
 	// Keep the local form state in sync when the URL changes underneath us (deep link, Back/Forward)
 	// rather than only ever reading `values` once at mount.
 	$effect(() => {
-		query = values.query;
+		// Not while the box already holds the same text plus whitespace the search trimmed away,
+		// or typing "Bulk " would lose its space mid-word.
+		if (values.query !== untrack(() => query).trim()) query = values.query;
 		classIri = values.classIri ?? '';
 		namespaceBaseIri = values.namespaceBaseIri ?? '';
 		syncSource = values.syncSource ?? '';
@@ -76,12 +80,25 @@
 		};
 	}
 
+	const LIVE_SEARCH_DELAY_MS = 300;
+	let liveTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** With Unclassified selected the list can hold hundreds of thousands of rows, so the box searches
+	 *  as the user types (debounced) instead of waiting for the Search button. */
+	function handleQueryInput() {
+		clearTimeout(liveTimer);
+		if (classIri !== UNCLASSIFIED_FACET) return;
+		liveTimer = setTimeout(() => onSearch(currentValues()), LIVE_SEARCH_DELAY_MS);
+	}
+
 	function handleSubmit(event: Event) {
 		event.preventDefault();
+		clearTimeout(liveTimer);
 		if (!isLoading) onSearch(currentValues());
 	}
 
 	function handleFacetChange() {
+		clearTimeout(liveTimer);
 		if (!isLoading) onSearch(currentValues());
 	}
 
@@ -118,7 +135,7 @@
 			type="text"
 			placeholder="Search identities by label…"
 			bind:value={query}
-			disabled={isLoading}
+			oninput={handleQueryInput}
 			aria-label="Search identities"
 		/>
 	</div>
@@ -134,6 +151,7 @@
 			onchange={handleFacetChange}
 		>
 			<option value="">Any class</option>
+			<option value={UNCLASSIFIED_FACET}>Unclassified (no class)</option>
 			{#each sortedClasses as c (c.iri)}
 				<option value={c.iri}>{classOptionLabel(c)}</option>
 			{/each}

@@ -9,15 +9,21 @@ view (see [View Mode Toggle](view-mode-toggle)).
 A pill-shaped node showing the individual's label and, underneath, the name of the class it belongs
 to. Hover the label to see the individual's own IRI.
 
+An individual that has a label but no class is shown as **Unclassified** (red italic class line) and
+has no [Instance-Of Edge](instance-of-edge). Unclassified individuals appear in Instances view in every
+workspace; give them a class with the **Class** selector in the [Member Form](member-form).
+
 If the individual was created by **Backstage catalog sync** rather than by hand, it carries a badge:
 - `⇄ backstage` — currently present in the upstream catalog.
 - `⚠ backstage` (amber) — was synced before but is no longer seen in the latest sync run ("stale").
 
 ## What you can do
 
-- **Edit** (pencil icon, on hover) — opens the [Member Form](member-form) to rename the individual or
-  change its attribute values and relation assignments. Disabled for synced individuals, since any
+- **Edit** (pencil icon, on hover) — opens the [Member Form](member-form) to rename the individual,
+  change its class, or change its attribute values and relation assignments. Disabled for synced individuals, since any
   manual edit would just be overwritten on the next sync.
+- **Delete** (trash icon, on hover) — deletes the individual after a confirmation. Disabled for synced
+  individuals.
 - **View triples** — opens the Triples panel scoped to just this individual's own assertions.
 - Drag from any side to start a relation to another individual or to a class (see [Is-Master-For
   Edge](is-master-for-edge)).

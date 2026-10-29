@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
 	SparqlConnector,
+	UNCLASSIFIED_CANVAS_CAP,
 	factKeyString,
 	ANNOTATION_MAX_TEXT_LENGTH,
 	type SparqlBinding
@@ -2677,6 +2678,22 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 			{ iri: 'urn:R', label: 'R', kind: 'relation' },
 			{ iri: 'urn:I', label: 'I', kind: 'individual' }
 		]);
+	});
+
+	it('fetchNameableEntities lists untyped (Unclassified) individuals as addable individuals', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchAllReifiedStatements').mockResolvedValue([]);
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue({
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [],
+			untypedIndividuals: [{ iri: 'urn:U', label: 'U', namespaceBaseIri: NS_CORE }],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		});
+		expect(await connector.fetchNameableEntities()).toEqual([{ iri: 'urn:U', label: 'U', kind: 'individual' }]);
 	});
 
 	it('fetchNameableEntities appends reified statements as the "relationInstance" kind', async () => {
@@ -10103,5 +10120,492 @@ describe('shared queries (STORY-261)', () => {
 		expect(await c.fetchSharedQuery('bad> } #')).toBeNull();
 		expect(f).not.toHaveBeenCalled();
 		vi.unstubAllGlobals();
+	});
+});
+
+describe('SparqlConnector — changeIndividualClass', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const iri = 'https://example.com/ssi#alice';
+	const ns = 'https://example.com/ssi';
+	const newClass = 'https://example.com/ssi/schema#Person';
+
+	/** Like `mockIndividualFetch`, plus a configurable sync marker and an untyped fallback lookup. */
+	function mockRetypeFetch(fixture: { synced?: boolean; untyped?: boolean } = {}) {
+		const updates: string[] = [];
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response(JSON.stringify({ success: true }), { status: 200 });
+			}
+			const q: string = body.query;
+			queries.push(q);
+			const bind = (vars: string[], bindings: unknown[]) =>
+				new Response(JSON.stringify({ head: { vars }, results: { bindings } }), { status: 200 });
+			if (q.includes('a ?type }')) {
+				return fixture.untyped ? bind(['g'], []) : bind(['g'], [{ g: { type: 'uri', value: ns } }]);
+			}
+			if (q.includes('rdfs:label ?l')) return bind(['g'], [{ g: { type: 'uri', value: ns } }]);
+			if (q.includes('syncSource') || q.includes('syncsource') || q.includes('SYNC')) {
+				return bind(['s'], fixture.synced ? [{ s: { type: 'literal', value: 'backstage' } }] : []);
+			}
+			return bind([], []);
+		});
+		return { fn, updates, queries };
+	}
+
+	it('replaces the rdf:type in the individual\'s own instances graph', async () => {
+		const { fn, updates } = mockRetypeFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').changeIndividualClass(iri, newClass);
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`GRAPH <${ns}>`);
+		expect(updates[0]).toContain(`<${iri}> rdf:type ?oldType`);
+		expect(updates[0]).toContain(`<${iri}> a <${newClass}>`);
+		expect(updates[0]).not.toContain('rdfs:label');
+	});
+
+	it('retypes an untyped individual (resolved through its label)', async () => {
+		const { fn, updates } = mockRetypeFetch({ untyped: true });
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').changeIndividualClass(iri, newClass);
+		expect(updates[0]).toContain(`GRAPH <${ns}>`);
+		expect(updates[0]).toContain(`<${iri}> a <${newClass}>`);
+	});
+
+	it('deletes only the listed dropped predicates', async () => {
+		const { fn, updates } = mockRetypeFetch();
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').changeIndividualClass(iri, newClass, {
+			dropPredicateIris: ['https://example.com/ssi/schema#oldAttr']
+		});
+		expect(updates[0]).toContain('<https://example.com/ssi/schema#oldAttr> ?o');
+		expect(updates[0]).not.toContain('<https://example.com/ssi/schema#keptAttr>');
+	});
+
+	it('rejects a synced individual before any update runs', async () => {
+		const { fn, updates } = mockRetypeFetch({ synced: true });
+		vi.stubGlobal('fetch', fn);
+		await expect(new SparqlConnector('/api/sparql').changeIndividualClass(iri, newClass)).rejects.toThrow(/synced/i);
+		expect(updates).toEqual([]);
+	});
+
+	it('rejects unsafe IRIs without any request', async () => {
+		const { fn } = mockRetypeFetch();
+		vi.stubGlobal('fetch', fn);
+		const c = new SparqlConnector('/api/sparql');
+		await expect(c.changeIndividualClass('not safe', newClass)).rejects.toThrow(/Invalid/);
+		await expect(c.changeIndividualClass(iri, 'bad>class')).rejects.toThrow(/Invalid/);
+		await expect(c.changeIndividualClass(iri, newClass, { dropPredicateIris: ['x y'] })).rejects.toThrow(/Invalid/);
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — fetchUntypedIndividuals (instances-issues STORY-004)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('queries the namespace instances graph for labelled subjects without rdf:type, excluding vocabulary and blank nodes', async () => {
+		const ns = 'https://example.com/ssi';
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			queries.push(JSON.parse(opts.body).query as string);
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['i', 'label'] },
+					results: { bindings: [{ i: { type: 'uri', value: `${ns}#stray` }, label: { type: 'literal', value: 'Stray' } }] }
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+
+		const result = await new SparqlConnector('/api/sparql').fetchUntypedIndividuals(ns);
+
+		expect(result).toEqual([{ iri: `${ns}#stray`, label: 'Stray', namespaceBaseIri: ns }]);
+		const q = queries[0];
+		expect(q).toContain(`GRAPH <${ns}>`);
+		expect(q).toContain('?i rdfs:label ?label');
+		expect(q).toMatch(/FILTER NOT EXISTS \{ \?i rdf:type \?t \}/);
+		expect(q).toContain('!isBlank(?i)');
+		expect(q).toContain('STRSTARTS');
+		expect(q).not.toMatch(/\bFROM\b/);
+	});
+});
+
+describe('SparqlConnector — untyped individuals are unique and never namespace declarations', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const ns = 'https://example.com/ssi';
+	const binding = (iri: string, label: string) => ({
+		i: { type: 'uri', value: iri },
+		label: { type: 'literal', value: label }
+	});
+
+	it('fetchUntypedIndividuals returns one entry per IRI even with several labels', async () => {
+		const fn = vi.fn(async () =>
+			new Response(
+				JSON.stringify({
+					head: { vars: ['i', 'label'] },
+					results: { bindings: [binding(`${ns}#a`, 'A'), binding(`${ns}#a`, 'A2')] }
+				}),
+				{ status: 200 }
+			)
+		);
+		vi.stubGlobal('fetch', fn);
+		const result = await new SparqlConnector('/api/sparql').fetchUntypedIndividuals(ns);
+		expect(result.map((r) => r.iri)).toEqual([`${ns}#a`]);
+	});
+
+	it('fetchUntypedIndividuals excludes the namespace\'s own base IRI in the query', async () => {
+		const queries: string[] = [];
+		const fn = vi.fn(async (_u: string, opts: { body: string }) => {
+			queries.push(JSON.parse(opts.body).query as string);
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').fetchUntypedIndividuals(ns);
+		expect(queries[0]).toContain(`FILTER(?i != <${ns}>)`);
+	});
+
+	it('fetchFullSchemaForAllNamespaces drops untyped entries that are namespace base IRIs or duplicated', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([
+			{ prefix: 'a', baseIri: ns, description: '' },
+			{ prefix: 'b', baseIri: `${ns}/b`, description: '' }
+		] as never);
+		const empty = {
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		};
+		vi.spyOn(connector, 'fetchFullSchema').mockImplementation(async (base) => ({
+			...empty,
+			untypedIndividuals: [
+				{ iri: `${ns}/b`, label: 'declaration', namespaceBaseIri: base as string },
+				{ iri: `${ns}#shared`, label: 'S', namespaceBaseIri: base as string }
+			]
+		}));
+		const result = await connector.fetchFullSchemaForAllNamespaces();
+		expect(result.untypedIndividuals?.map((u) => u.iri)).toEqual([`${ns}#shared`]);
+	});
+});
+
+describe('SparqlConnector — searchIndividuals and Unclassified individuals (instances-issues STORY-007)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function capture(bindings: unknown[] = []) {
+		const queries: string[] = [];
+		const fn = vi.fn(async (_u: string, opts: { body: string }) => {
+			queries.push(JSON.parse(opts.body).query as string);
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		return queries;
+	}
+
+	it('an unfiltered search returns typed individuals only', async () => {
+		const queries = capture();
+		await new SparqlConnector('/api/sparql').searchIndividuals({ query: 'Unclassified' });
+		expect(queries[0]).not.toContain('UNION');
+		expect(queries[0]).not.toContain('FILTER NOT EXISTS { ?i rdf:type ?t }');
+		expect(queries[0]).toContain('?type a owl:Class');
+	});
+
+	it('unclassified: true searches only the untyped branch', async () => {
+		const queries = capture([
+			{
+				i: { type: 'uri', value: 'urn:u' },
+				label: { type: 'literal', value: 'U' },
+				ig: { type: 'uri', value: 'urn:ns' }
+			}
+		]);
+		const page = await new SparqlConnector('/api/sparql').searchIndividuals({ unclassified: true });
+		expect(queries[0]).not.toContain('UNION');
+		expect(queries[0]).not.toContain('?type a owl:Class');
+		expect(page.results).toEqual([
+			{ iri: 'urn:u', label: 'U', classIri: '', namespaceBaseIri: 'urn:ns', syncSource: null, syncStatus: null }
+		]);
+	});
+
+	it('a class filter or the all-strings search never includes untyped individuals', async () => {
+		const queries = capture();
+		const c = new SparqlConnector('/api/sparql');
+		await c.searchIndividuals({ classIris: ['urn:C'] });
+		await c.searchIndividuals({ query: 'abc', matchAllStringProperties: true });
+		expect(queries.every((q) => !q.includes('UNION'))).toBe(true);
+	});
+});
+
+describe('SparqlConnector — assertions of an Unclassified individual', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('fetchAssertionsForIndividual resolves the namespace from the rdfs:label graph when there is no rdf:type', async () => {
+		const queries: string[] = [];
+		const answers = [[], [{ g: { type: 'uri', value: 'urn:ns' } }], []];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				queries.push(JSON.parse(opts.body).query as string);
+				const bindings = answers[queries.length - 1] ?? [];
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			})
+		);
+		await new SparqlConnector('/api/sparql').fetchAssertionsForIndividual('urn:ns#u');
+		expect(queries[1]).toContain('rdfs:label ?l');
+		expect(queries[2]).toContain('urn:ns');
+	});
+});
+
+describe('SparqlConnector — Unclassified individuals at scale (instances-issues STORY-008)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const ns = 'https://example.com/ssi';
+
+	function capture(bindings: unknown[] = []) {
+		const queries: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				queries.push(JSON.parse(opts.body).query as string);
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			})
+		);
+		return queries;
+	}
+
+	it('fetchUntypedIndividuals asks for at most the canvas cap, in a stable order', async () => {
+		const queries = capture();
+		await new SparqlConnector('/api/sparql').fetchUntypedIndividuals(ns);
+		expect(queries[0]).toContain(`LIMIT ${UNCLASSIFIED_CANVAS_CAP}`);
+		expect(queries[0]).toContain('ORDER BY ?label ?i');
+	});
+
+	it('fetchUntypedIndividualCount counts the same set', async () => {
+		const queries = capture([{ n: { type: 'literal', value: '123456' } }]);
+		const total = await new SparqlConnector('/api/sparql').fetchUntypedIndividualCount(ns);
+		expect(total).toBe(123456);
+		expect(queries[0]).toContain('COUNT(DISTINCT ?i)');
+		expect(queries[0]).toContain(`GRAPH <${ns}>`);
+		expect(queries[0]).toContain('FILTER NOT EXISTS { ?i rdf:type ?t }');
+		expect(queries[0]).toContain(`FILTER(?i != <${ns}>)`);
+	});
+
+	it('fetchFullSchemaForAllNamespaces sums the totals and keeps at most the cap, by label', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([
+			{ prefix: 'a', baseIri: ns, description: '' },
+			{ prefix: 'b', baseIri: `${ns}/b`, description: '' }
+		] as never);
+		const empty = {
+			classes: [],
+			datatypeProperties: [],
+			objectProperties: [],
+			subClassOf: [],
+			individuals: [],
+			individualClassRelations: [],
+			individualIndividualRelations: []
+		};
+		const many = (base: string, n: number) =>
+			Array.from({ length: n }, (_, k) => ({
+				iri: `${base}#u${k}`,
+				label: `L${String(k).padStart(4, '0')}`,
+				namespaceBaseIri: base
+			}));
+		vi.spyOn(connector, 'fetchFullSchema').mockImplementation(async (base) => ({
+			...empty,
+			untypedIndividuals: many(base as string, UNCLASSIFIED_CANVAS_CAP),
+			untypedTotal: 1000
+		}));
+		const result = await connector.fetchFullSchemaForAllNamespaces();
+		expect(result.untypedTotal).toBe(2000);
+		expect(result.untypedIndividuals).toHaveLength(UNCLASSIFIED_CANVAS_CAP);
+	});
+});
+
+describe('SparqlConnector — countUnclassified and keyset paging (instances-issues STORY-008)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	function capture(bindings: unknown[] = []) {
+		const queries: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				queries.push(JSON.parse(opts.body).query as string);
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			})
+		);
+		return queries;
+	}
+
+	it('countUnclassified counts across graphs and applies the namespace and text filters', async () => {
+		const queries = capture([{ n: { type: 'literal', value: '42' } }]);
+		const n = await new SparqlConnector('/api/sparql').countUnclassified({
+			query: 'abc',
+			namespaceBaseIri: 'https://example.com/ssi'
+		});
+		expect(n).toBe(42);
+		expect(queries[0]).toContain('COUNT(DISTINCT ?i)');
+		expect(queries[0]).toContain('FILTER NOT EXISTS { ?i rdf:type ?t }');
+		expect(queries[0]).toContain('FILTER(?ig = <https://example.com/ssi>)');
+		expect(queries[0]).toContain('CONTAINS(LCASE(STR(?label)), LCASE("abc"))');
+	});
+
+	it('countUnclassified without filters has no namespace or text filter', async () => {
+		const queries = capture([{ n: { type: 'literal', value: '0' } }]);
+		await new SparqlConnector('/api/sparql').countUnclassified({});
+		expect(queries[0]).not.toContain('CONTAINS');
+		expect(queries[0]).not.toContain('FILTER(?ig =');
+	});
+
+	it('countUnclassified rejects an unsafe namespace IRI', async () => {
+		capture();
+		await expect(
+			new SparqlConnector('/api/sparql').countUnclassified({ namespaceBaseIri: 'x> } DROP' })
+		).rejects.toThrow();
+	});
+
+	it('an Unclassified search with `after` pages by keyset and has no OFFSET', async () => {
+		const queries = capture();
+		await new SparqlConnector('/api/sparql').searchIndividuals({
+			unclassified: true,
+			after: { label: 'Bob', iri: 'urn:b' },
+			offset: 0
+		});
+		expect(queries[0]).not.toContain('OFFSET');
+		expect(queries[0]).toContain('ORDER BY STR(?label) STR(?i)');
+		expect(queries[0]).toContain('STR(?label) > "Bob"');
+		expect(queries[0]).toContain('STR(?label) = "Bob" && STR(?i) > "urn:b"');
+	});
+
+	it('the keyset values are escaped', async () => {
+		const queries = capture();
+		await new SparqlConnector('/api/sparql').searchIndividuals({
+			unclassified: true,
+			after: { label: 'a"b', iri: 'urn:b' }
+		});
+		expect(queries[0]).toContain('a\\"b');
+	});
+
+	it('an Unclassified search without `after` still orders by the same key', async () => {
+		const queries = capture();
+		await new SparqlConnector('/api/sparql').searchIndividuals({ unclassified: true });
+		expect(queries[0]).toContain('ORDER BY STR(?label) STR(?i)');
+	});
+});
+
+describe('SparqlConnector — bulk class assignment (instances-issues STORY-010)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	/** Answers each count query from `remaining` in turn and records every update. */
+	function bulkMock(remaining: number[]) {
+		const updates: string[] = [];
+		const queries: string[] = [];
+		let n = 0;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				const body = JSON.parse(opts.body);
+				if (body.update !== undefined) {
+					updates.push(body.update);
+					return new Response('', { status: 200 });
+				}
+				queries.push(body.query);
+				const value = String(remaining[Math.min(n++, remaining.length - 1)]);
+				return new Response(
+					JSON.stringify({ head: { vars: ['n'] }, results: { bindings: [{ n: { type: 'literal', value } }] } }),
+					{ status: 200 }
+				);
+			})
+		);
+		return { updates, queries };
+	}
+	const C = 'https://example.com/ssi#Person';
+
+	it('runs chunked INSERTs until nothing matches and reports progress', async () => {
+		const { updates } = bulkMock([12, 7, 2, 0]);
+		const progress: number[] = [];
+		const r = await new SparqlConnector('/api/sparql').assignClassToUnclassified({ query: 'abc' }, C, {
+			chunkSize: 5,
+			onProgress: (p) => progress.push(p.assigned)
+		});
+		expect(r).toEqual({ assigned: 12, cancelled: false });
+		expect(updates).toHaveLength(3);
+		expect(progress).toEqual([5, 10, 12]);
+		expect(updates[0]).toContain(`?i a <${C}>`);
+		expect(updates[0]).toContain('LIMIT 5');
+		expect(updates[0]).toContain('FILTER NOT EXISTS { ?i rdf:type ?t }');
+		expect(updates[0]).toContain('CONTAINS(LCASE(STR(?label)), LCASE("abc"))');
+	});
+
+	it('writes nothing when nothing matches', async () => {
+		const { updates } = bulkMock([0]);
+		const r = await new SparqlConnector('/api/sparql').assignClassToUnclassified({}, C);
+		expect(r).toEqual({ assigned: 0, cancelled: false });
+		expect(updates).toHaveLength(0);
+	});
+
+	it('stops after a chunk that made no progress instead of looping forever', async () => {
+		const { updates } = bulkMock([10, 10]);
+		const r = await new SparqlConnector('/api/sparql').assignClassToUnclassified({}, C, { chunkSize: 5 });
+		expect(updates).toHaveLength(1);
+		expect(r.assigned).toBe(0);
+	});
+
+	it('stops between chunks when cancelled, and a re-run only sees what is left', async () => {
+		const { updates } = bulkMock([12, 7]);
+		const ctl = new AbortController();
+		const r = await new SparqlConnector('/api/sparql').assignClassToUnclassified({}, C, {
+			chunkSize: 5,
+			signal: ctl.signal,
+			onProgress: () => ctl.abort()
+		});
+		expect(r).toEqual({ assigned: 5, cancelled: true });
+		expect(updates).toHaveLength(1);
+	});
+
+	it('excludes synced individuals', async () => {
+		const { updates, queries } = bulkMock([1, 0]);
+		await new SparqlConnector('/api/sparql').assignClassToUnclassified({}, C);
+		expect(updates[0]).toContain('FILTER NOT EXISTS { ?i <');
+		expect(updates[0]).toContain('syncSource');
+		expect(queries[0]).toContain('syncSource');
+	});
+
+	it('restricts an explicit selection to its IRIs', async () => {
+		const { updates } = bulkMock([2, 0]);
+		await new SparqlConnector('/api/sparql').assignClassToUnclassified(
+			{ iris: ['https://example.com/ssi#a', 'https://example.com/ssi#b'] },
+			C
+		);
+		expect(updates[0]).toContain('VALUES ?i { <https://example.com/ssi#a> <https://example.com/ssi#b> }');
+	});
+
+	it('rejects unsafe IRIs and escapes the text filter', async () => {
+		const { updates } = bulkMock([1, 0]);
+		const c = new SparqlConnector('/api/sparql');
+		await expect(c.assignClassToUnclassified({}, 'x> } DROP')).rejects.toThrow();
+		await expect(c.assignClassToUnclassified({ iris: ['x> } DROP'] }, C)).rejects.toThrow();
+		await expect(c.assignClassToUnclassified({ namespaceBaseIri: 'x> } DROP' }, C)).rejects.toThrow();
+		await c.assignClassToUnclassified({ query: 'a"b' }, C);
+		expect(updates[0]).toContain('a\\"b');
+	});
+
+	it('undo removes the added type only where it is still that class', async () => {
+		const { updates } = bulkMock([0]);
+		await new SparqlConnector('/api/sparql').unassignClassFromIndividuals(['https://example.com/ssi#a'], C);
+		expect(updates[0]).toContain('DELETE');
+		expect(updates[0]).toContain('VALUES ?i { <https://example.com/ssi#a> }');
+		expect(updates[0]).toContain(`?i a <${C}>`);
+	});
+
+	it('undo refuses more than 5,000 individuals', async () => {
+		bulkMock([0]);
+		const iris = Array.from({ length: 5001 }, (_, k) => `https://example.com/ssi#i${k}`);
+		await expect(new SparqlConnector('/api/sparql').unassignClassFromIndividuals(iris, C)).rejects.toThrow(/5,?000/);
 	});
 });

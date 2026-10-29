@@ -10,6 +10,10 @@ A search box plus facet filters (**class**, **namespace**, **Backstage sync sour
 narrow a paginated results list. Every search state is reflected in the URL, so a search (or a
 specific individual) can be bookmarked or shared as a link.
 
+The class filter's **Unclassified (no class)** option lists only individuals that have a label but no
+class; they are grouped under "Unclassified" and are not included in **All classes**. Open one and use
+**Edit** to give it a class — it then leaves the Unclassified list. See [Member Form](member-form).
+
 ## Resource page
 
 Selecting an individual opens a read-only resource page: its label, type(s), and every outgoing
@@ -29,6 +33,21 @@ as an interactive force-directed graph:
 
 This view is read-only and ephemeral — it always starts fresh from the seed individual's neighborhood
 and never persists layout or the expanded set.
+
+## Giving many Unclassified individuals a class
+
+With **Unclassified (no class)** selected, every row has a checkbox and a bar above the list offers:
+
+- **Select this page** — ticks the rows on screen. If more individuals match, **Select all N matching**
+  selects everything matching the current search text and namespace, not just the rows loaded.
+- **Set class…** — pick a class. The dialog shows how many individuals will be changed; above 1,000 you
+  must type that number to confirm. **Cancel** changes nothing.
+- A large run is done in chunks with a progress bar and a **Cancel run** button. If it stops, run it
+  again: individuals that already got the class are no longer Unclassified, so only the rest is touched.
+- **Undo** is offered after assigning a hand-picked selection of up to 5,000 individuals; it removes the
+  class again where it is still that class. There is no undo for "all matching".
+
+Synced individuals are never changed. Typed individuals are not bulk-edited.
 
 ## Related
 

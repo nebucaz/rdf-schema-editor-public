@@ -95,6 +95,15 @@
 	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
 	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
 	import { classifyAddedElement } from '$lib/services/workspace-add';
+	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl } from '$lib/utils/identity-search-url';
+	import {
+		addIndividualToSchema,
+		removeIndividualFromSchema,
+		renameIndividualInSchema,
+		setIndividualClassInSchema,
+		unclassifiedNotShown,
+		withUnclassifiedMembers
+	} from '$lib/services/individual-cache';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
 
@@ -358,10 +367,10 @@
 			// external-stub gates below, which don't apply to it at all.
 			if (n.type === 'note') return n;
 			const ns = nodeNamespaces.get(n.id);
-			if (ns !== undefined) return { ...n, hidden: hiddenNamespaces.has(ns) || !workspaceMembers.has(n.id) };
+			if (ns !== undefined) return { ...n, hidden: hiddenNamespaces.has(ns) || !visibleMembers.has(n.id) };
 			return {
 				...n,
-				hidden: isExternalNodeHidden(externalReferencingSources.get(n.id), nodeNamespaces, hiddenNamespaces, workspaceMembers)
+				hidden: isExternalNodeHidden(externalReferencingSources.get(n.id), nodeNamespaces, hiddenNamespaces, visibleMembers)
 			};
 		});
 		edges = edges.map((e) => {
@@ -372,7 +381,7 @@
 				nodeNamespaces,
 				hiddenNamespaces,
 				externalReferencingSources,
-				workspaceMembers
+				visibleMembers
 			);
 			const reverseHidden = !!(e.data as RelationEdgeData | undefined)?.generatedReverseOf && !showReverseRelations;
 			return { ...e, hidden: namespaceHidden || reverseHidden };
@@ -425,6 +434,9 @@
 
 	let viewMode = $state<ViewMode>(viewModeStore.getViewMode());
 	let lastFetchedSchema = $state<FetchedSchema | null>(null);
+	/** `workspaceMembers` plus Unclassified individuals, which are shown in every workspace. */
+	const unclassifiedHidden = $derived(unclassifiedNotShown(lastFetchedSchema));
+	const visibleMembers = $derived(withUnclassifiedMembers(workspaceMembers, lastFetchedSchema));
 
 	/**
 	 * Sprint 6 Story 019: individual-relation edges (create/edit/delete, plus assertion add/remove
@@ -1125,8 +1137,26 @@
 		}
 		const position = nextPosition();
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
+		graphDbLayoutStore.setPosition(iri, position.x, position.y);
 		workspaceMembers = new Set([...workspaceMembers, iri]);
-		updateNodeData(manageMembersClassIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
+		if (lastFetchedSchema) {
+			// Instances view draws individuals from `lastFetchedSchema.individuals`, so the cache is
+			// updated and the canvas rebuilt from it (this also refreshes the entity node's members).
+			// `insertIndividual` reports only `{iri}`, so the actual namespace is resolved afresh.
+			const landedNamespaceBaseIri = await sparqlConnector.findNamespaceOfIndividual(iri);
+			lastFetchedSchema = addIndividualToSchema(lastFetchedSchema, {
+				iri,
+				label,
+				classIri: manageMembersClassIri,
+				namespaceBaseIri: landedNamespaceBaseIri,
+				syncSource: null,
+				syncStatus: null
+			});
+			buildAndApplyCanvasModel(lastFetchedSchema);
+			applyNoteNodesAndEdges();
+		} else {
+			updateNodeData(manageMembersClassIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
+		}
 	}
 
 	async function handleEditMember(
@@ -1148,26 +1178,68 @@
 		if (relationSubmissions.length > 0) {
 			await applyRelationSubmissions(member.iri, relationSubmissions);
 		}
-		updateNodeData(manageMembersClassIri, (d) => ({
-			...d,
-			members: d.members.map((m) => (m.iri === member.iri ? { ...m, label } : m))
-		}));
+		if (lastFetchedSchema) {
+			lastFetchedSchema = renameIndividualInSchema(lastFetchedSchema, member.iri, label);
+			buildAndApplyCanvasModel(lastFetchedSchema);
+			applyNoteNodesAndEdges();
+		} else {
+			updateNodeData(manageMembersClassIri, (d) => ({
+				...d,
+				members: d.members.map((m) => (m.iri === member.iri ? { ...m, label } : m))
+			}));
+		}
 	}
 
 	async function handleDeleteMember(member: EntityMemberVM) {
 		if (!manageMembersClassIri) return;
-		// See handleEditMember's comment: member.iri's own namespace, resolved by the connector, not
-		// guessed from manageMembersClassIri — a wrong guess previously made this DELETE WHERE match
-		// zero triples silently while the UI still removed the member from the canvas.
-		await sparqlConnector.deleteIndividual(member.iri);
-		updateNodeData(manageMembersClassIri, (d) => ({
-			...d,
-			members: d.members.filter((m) => m.iri !== member.iri)
-		}));
+		await deleteIndividualAndSync(member.iri, manageMembersClassIri);
+	}
+
+	/** Deletes an individual in GraphDB, then drops it from the cached schema and canvas. Shared by
+	 *  Manage instances and the Individual node's own delete action. */
+	async function deleteIndividualAndSync(iri: string, ownerClassIri: string) {
+		// The individual's own namespace, resolved by the connector, not guessed from the class — a
+		// wrong guess previously made this DELETE WHERE match zero triples silently while the UI still
+		// removed the member from the canvas.
+		// An unclassified individual has no `rdf:type`, so its graph can't be looked up by type: pass
+		// the namespace the canvas already knows.
+		const untypedNamespace = lastFetchedSchema?.untypedIndividuals?.find((i) => i.iri === iri)?.namespaceBaseIri;
+		await sparqlConnector.deleteIndividual(iri, untypedNamespace);
 		// STORY-083: mirror the connector's own noteLinkedElement-unlink cascade client-side (see
 		// handleDeleteEntityConfirm's identical comment).
-		noteRecords = noteRecords.map((n) => (n.linkedElementIri === member.iri ? { ...n, linkedElementIri: null } : n));
+		noteRecords = noteRecords.map((n) => (n.linkedElementIri === iri ? { ...n, linkedElementIri: null } : n));
+		if (lastFetchedSchema) {
+			// Drops the individual node, its `instanceOf` edge and any relation touching it.
+			lastFetchedSchema = removeIndividualFromSchema(lastFetchedSchema, iri);
+			buildAndApplyCanvasModel(lastFetchedSchema);
+		} else {
+			updateNodeData(ownerClassIri, (d) => ({
+				...d,
+				members: d.members.filter((m) => m.iri !== iri)
+			}));
+		}
 		applyNoteNodesAndEdges();
+	}
+
+	/** The Individual node awaiting delete confirmation, set by its trash button. */
+	let deleteIndividualTarget = $state<{ iri: string; label: string; classIri: string } | null>(null);
+	let deleteIndividualBusy = $state(false);
+	let deleteIndividualError = $state<string | null>(null);
+
+	async function handleDeleteIndividualConfirm() {
+		const target = deleteIndividualTarget;
+		if (!target) return;
+		deleteIndividualBusy = true;
+		deleteIndividualError = null;
+		try {
+			await deleteIndividualAndSync(target.iri, target.classIri);
+			if (editIndividualId === target.iri) editIndividualId = null;
+			deleteIndividualTarget = null;
+		} catch (e) {
+			deleteIndividualError = e instanceof Error ? e.message : 'Failed to delete';
+		} finally {
+			deleteIndividualBusy = false;
+		}
 	}
 
 	// -- Generic instance assertion editor (data-catalog Story 019) ------------------------------
@@ -1411,12 +1483,26 @@
 		_namespaceBaseIri?: string,
 		attributeSubmissions: AttributeValueSubmission[] = [],
 		_identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = []
+		relationSubmissions: RelationValueSubmission[] = [],
+		classChange?: { classIri: string; dropPredicateIris: string[] }
 	) {
 		if (!editIndividualId) return;
 		// editIndividualId's own namespace, resolved by the connector — see handleEditMember's
 		// identical comment.
-		await sparqlConnector.renameIndividual(editIndividualId, label);
+		const untypedNamespace = lastFetchedSchema?.untypedIndividuals?.find(
+			(i) => i.iri === editIndividualId
+		)?.namespaceBaseIri;
+		if (classChange) {
+			// retype first, so the value writes below land on the individual's new class; values the new
+			// class lacks were just deleted and must not be written back
+			await sparqlConnector.changeIndividualClass(editIndividualId, classChange.classIri, {
+				dropPredicateIris: classChange.dropPredicateIris
+			});
+			const dropped = new Set(classChange.dropPredicateIris);
+			attributeSubmissions = attributeSubmissions.filter((a) => !dropped.has(a.attributeIri));
+			relationSubmissions = relationSubmissions.filter((r) => !dropped.has(r.predicateIri));
+		}
+		await sparqlConnector.renameIndividual(editIndividualId, label, untypedNamespace);
 		if (attributeSubmissions.length > 0) {
 			await sparqlConnector.applyAttributeSubmissions(editIndividualId, attributeSubmissions);
 		}
@@ -1424,7 +1510,38 @@
 			await applyRelationSubmissions(editIndividualId, relationSubmissions);
 		}
 		const iri = editIndividualId;
-		nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
+		if (lastFetchedSchema) {
+			lastFetchedSchema = renameIndividualInSchema(lastFetchedSchema, iri, label);
+			if (classChange) {
+				lastFetchedSchema = setIndividualClassInSchema(
+					lastFetchedSchema,
+					iri,
+					classChange.classIri,
+					classChange.dropPredicateIris
+				);
+			}
+			buildAndApplyCanvasModel(lastFetchedSchema);
+			applyNoteNodesAndEdges();
+		} else {
+			nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
+		}
+		// `MemberForm` captures its field baseline at mount, so a retyped individual reopens fresh
+		if (classChange) editIndividualId = null;
+	}
+
+	/** Classes the Individual edit form can assign: every non-association class of every namespace,
+	 *  prefixed with its namespace to tell same-named classes apart. */
+	const individualClassOptions = $derived.by(() =>
+		(lastFetchedSchema?.classes ?? [])
+			.filter((c) => !lastAssociationClassIris.has(c.iri))
+			.map((c) => ({ iri: c.iri, label: `[${namespacePrefixFor(c.namespaceBaseIri)}] ${c.label}` }))
+			.sort((a, b) => a.label.localeCompare(b.label))
+	);
+
+	/** Own+inherited attribute and relation fields of `classIri`, from the merged canvas model. */
+	function fieldsOfClass(classIriValue: string): { iri: string; name: string }[] {
+		const data = findEntityNode(classIriValue)?.data;
+		return [...(data?.attributes ?? []), ...(data?.relationFields ?? [])].map((f) => ({ iri: f.iri, name: f.name }));
 	}
 
 	// -- Unified relation edit modal (change relation + assertions), any node-type combination ---
@@ -2669,7 +2786,7 @@
 					id: spec.iri,
 					type: 'entity',
 					position,
-					hidden: hiddenNamespaces.has(spec.namespace) || !workspaceMembers.has(spec.iri),
+					hidden: hiddenNamespaces.has(spec.namespace) || !visibleMembers.has(spec.iri),
 					data: makeNodeData(
 						spec.iri,
 						spec.name,
@@ -2687,15 +2804,20 @@
 					id: spec.iri,
 					type: 'individual',
 					position,
-					hidden: hiddenNamespaces.has(spec.namespace) || !workspaceMembers.has(spec.iri),
+					hidden: hiddenNamespaces.has(spec.namespace) || !visibleMembers.has(spec.iri),
 					data: {
 						label: spec.label,
 						classIri: spec.classIri,
 						className: spec.className,
 						syncSource: spec.syncSource,
+						unclassified: spec.unclassified,
 						isStale: spec.isStale,
 						onEdit: () => {
 							editIndividualId = spec.iri;
+						},
+						onDelete: () => {
+							deleteIndividualError = null;
+							deleteIndividualTarget = { iri: spec.iri, label: spec.label, classIri: spec.classIri };
 						},
 						onViewTriples: () => {
 							triplesPanelWorkspaceScope = null;
@@ -2715,7 +2837,7 @@
 					externalReferencingSources.get(spec.iri),
 					newNodeNamespaces,
 					hiddenNamespaces,
-					workspaceMembers
+					visibleMembers
 				),
 				data: {
 					prefixedName: spec.prefixedName,
@@ -2735,7 +2857,7 @@
 					newNodeNamespaces,
 					hiddenNamespaces,
 					externalReferencingSources,
-					workspaceMembers
+					visibleMembers
 				);
 				return {
 					id: edgeId,
@@ -2767,7 +2889,7 @@
 						newNodeNamespaces,
 						hiddenNamespaces,
 						externalReferencingSources,
-						workspaceMembers
+						visibleMembers
 					),
 					data: makeAttributedLinkEdgeData(spec.iri, spec.propName, spec.required, spec.repeatable)
 				};
@@ -2785,7 +2907,7 @@
 						newNodeNamespaces,
 						hiddenNamespaces,
 						externalReferencingSources,
-						workspaceMembers
+						visibleMembers
 					),
 					data: makeIndividualRelationEdgeData(edgeId, spec.source, spec.predicateIri, spec.target, spec.name)
 				};
@@ -2802,7 +2924,7 @@
 						newNodeNamespaces,
 						hiddenNamespaces,
 						externalReferencingSources,
-						workspaceMembers
+						visibleMembers
 					)
 				};
 			}
@@ -2818,7 +2940,7 @@
 					newNodeNamespaces,
 					hiddenNamespaces,
 					externalReferencingSources,
-					workspaceMembers
+					visibleMembers
 				),
 				data: {
 					onDelete: () => {
@@ -3285,6 +3407,11 @@
 		onpointerleave={handleCanvasPointerLeave}
 		role="presentation"
 	>
+		{#if viewMode === 'instances' && unclassifiedHidden > 0}
+			<a class="unclassified-overflow" href={buildIdentitySearchUrl({ classIri: UNCLASSIFIED_FACET })}>
+				{unclassifiedHidden.toLocaleString()} more Unclassified individuals. Manage them in Identities
+			</a>
+		{/if}
 		<SvelteFlow
 			bind:nodes
 			bind:edges
@@ -3621,6 +3748,10 @@
 			labelRequired={lastLabelRequiredClassIris.has(editIndividualNode.data.classIri)}
 			relationFields={editIndividualRelationFields}
 			relationTargetOptions={editIndividualRelationTargetOptions}
+			classOptions={individualClassOptions}
+			classIri={editIndividualNode.data.classIri}
+			classLocked={editIndividualNode.data.syncSource !== null}
+			onPlanClassChange={fieldsOfClass}
 			onAddAssertion={async (predicateLabel, objectIri) => {
 				if (!editIndividualId) return;
 				await handleAddAssertion(editIndividualId, predicateLabel, objectIri);
@@ -3632,6 +3763,27 @@
 				await reloadEditIndividualAssertions();
 			}}
 		/>
+	{/if}
+</Modal>
+
+<Modal
+	isOpen={deleteIndividualTarget !== null}
+	title="Delete instance"
+	onClose={() => (deleteIndividualTarget = null)}
+>
+	{#if deleteIndividualTarget}
+		<p>Delete <strong>{deleteIndividualTarget.label}</strong>? This cannot be undone.</p>
+		{#if deleteIndividualError}
+			<p class="error-banner">{deleteIndividualError}</p>
+		{/if}
+		<div class="choice-actions">
+			<button class="secondary" onclick={() => (deleteIndividualTarget = null)} disabled={deleteIndividualBusy}>
+				Cancel
+			</button>
+			<button class="danger" onclick={handleDeleteIndividualConfirm} disabled={deleteIndividualBusy}>
+				{deleteIndividualBusy ? 'Deleting…' : 'Delete'}
+			</button>
+		</div>
 	{/if}
 </Modal>
 
@@ -3960,6 +4112,24 @@
 	.canvas-wrap {
 		flex: 1;
 		position: relative;
+	}
+
+	.unclassified-overflow {
+		position: absolute;
+		top: 0.5rem;
+		left: 0.5rem;
+		z-index: 5;
+		padding: 0.3rem 0.65rem;
+		border-radius: 999px;
+		font-size: 0.8rem;
+		color: var(--color-text);
+		background: var(--color-bg-secondary);
+		border: 1px solid var(--color-border);
+		text-decoration: none;
+	}
+
+	.unclassified-overflow:hover {
+		background: var(--color-hover);
 	}
 
 	.warning-list {

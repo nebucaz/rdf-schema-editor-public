@@ -9,6 +9,9 @@
 		 *  CRUD) via the pencil button below. Disabled (see `syncSource`) rather than removed for a
 		 *  synced individual — Story 010. */
 		onEdit: () => void;
+		/** Asks to delete this individual (the page shows a confirm step first). Disabled for a synced
+		 *  individual, like `onEdit`. */
+		onDelete: () => void;
 		/** Opens the Triples panel scoped to this individual's own IRI — the only way to see an
 		 *  individual's own assertions in isolation (`selectScope`'s subject-only fallback branch
 		 *  already supports this; entity nodes have had the equivalent button since STORY-043). */
@@ -19,6 +22,8 @@
 		 *  machine-owned and overwritten on the next sync regardless of any manual edit, so editing
 		 *  is disabled rather than silently reverted later. */
 		syncSource: string | null;
+		/** `true` for an individual with no `rdf:type` — renders an "Unclassified" marker. */
+		unclassified: boolean;
 		/** `true` when this synced individual disappeared from its upstream source's latest run
 		 *  (Story 009/010) — renders a visually distinct badge state from a normal synced individual. */
 		isStale: boolean;
@@ -62,6 +67,16 @@
 	</button>
 	<button
 		type="button"
+		class="delete-button"
+		onclick={data.syncSource ? undefined : data.onDelete}
+		disabled={!!data.syncSource}
+		aria-label={data.syncSource ? `${data.label} is synced and cannot be deleted` : `Delete ${data.label}`}
+		title={data.syncSource ? `Synced from ${data.syncSource} — managed by the sync` : 'Delete'}
+	>
+		<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+	</button>
+	<button
+		type="button"
 		class="view-triples-button"
 		onclick={data.onViewTriples}
 		aria-label={`View triples for ${data.label}`}
@@ -82,7 +97,7 @@
 		</span>
 	{/if}
 	<span class="label" title={data.classIri}>{data.label}</span>
-	<span class="class-name">{data.className}</span>
+	<span class="class-name" class:unclassified={data.unclassified}>{data.className}</span>
 </div>
 
 <style>
@@ -102,6 +117,7 @@
 
 	/* Hover-revealed, matching EntityNode's own convention for its header icons. */
 	.edit-button,
+	.delete-button,
 	.view-triples-button {
 		position: absolute;
 		top: -8px;
@@ -123,23 +139,31 @@
 		right: 14px;
 	}
 
+	.delete-button {
+		right: 36px;
+	}
+
 	.individual-node:hover .edit-button,
+	.individual-node:hover .delete-button,
 	.individual-node:hover .view-triples-button {
 		opacity: 1;
 	}
 
 	.edit-button:hover,
+	.delete-button:hover,
 	.view-triples-button:hover {
 		background: var(--color-hover);
 		color: var(--color-text);
 	}
 
-	.edit-button:disabled {
+	.edit-button:disabled,
+	.delete-button:disabled {
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
 
-	.edit-button:disabled:hover {
+	.edit-button:disabled:hover,
+	.delete-button:disabled:hover {
 		background: var(--color-bg-secondary);
 		color: var(--color-text-muted);
 	}
@@ -151,6 +175,11 @@
 	/* Story 010: badge distinguishing a machine-synced individual from a hand-authored one, with a
 	   distinct visual state (amber) once it's gone stale (Story 009) — readable in both themes via
 	   theme-token colors rather than fixed hex values. */
+	.class-name.unclassified {
+		font-style: italic;
+		color: var(--color-error);
+	}
+
 	.sync-badge {
 		display: inline-flex;
 		align-items: center;

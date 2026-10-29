@@ -104,6 +104,9 @@ export interface IndividualNodeSpec {
 	 *  individual (Story 007/010), or `null` for an ordinary hand-authored one — computed the same
 	 *  way `isAuthoritativeEntity` is derived from a marker triple, not inferred from IRI shape. */
 	syncSource: string | null;
+	/** `true` for an individual with no `rdf:type` (`classIri` is then `''` and `className`
+	 *  `'Unclassified'`); such a node has no `instanceOf` edge. */
+	unclassified: boolean;
 	/** `true` when this synced individual disappeared from its upstream source's latest sync run
 	 *  (`rse:syncStatus === 'stale'`, Story 009) — always `false` for a non-synced individual. */
 	isStale: boolean;
@@ -576,7 +579,20 @@ export function buildCanvasModel(
 		className: classByIri.get(individual.classIri)?.label ?? individual.classIri,
 		namespace: individual.namespaceBaseIri,
 		syncSource: individual.syncSource,
+		unclassified: false,
 		isStale: individual.syncStatus === 'stale'
+	}));
+
+	const unclassifiedNodes: IndividualNodeSpec[] = (schema.untypedIndividuals ?? []).map((individual) => ({
+		kind: 'individual',
+		iri: individual.iri,
+		label: individual.label,
+		classIri: '',
+		className: 'Unclassified',
+		namespace: individual.namespaceBaseIri,
+		syncSource: null,
+		unclassified: true,
+		isStale: false
 	}));
 
 	const individualRelationEdges: IndividualClassRelationEdgeSpec[] = [
@@ -613,7 +629,7 @@ export function buildCanvasModel(
 	}));
 
 	return {
-		nodes: [...individualNodes, ...entityNodes],
+		nodes: [...individualNodes, ...unclassifiedNodes, ...entityNodes],
 		edges: [...instanceOfEdges, ...individualRelationEdges],
 		associationClassIris,
 		authoritativeEntityIris,

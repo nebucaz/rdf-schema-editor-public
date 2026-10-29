@@ -371,6 +371,8 @@ export interface FetchedAssertion {
 export interface IndividualSearchParams {
 	/** Case-insensitive substring match against `rdfs:label`. */
 	query?: string;
+	/** Only individuals without any `rdf:type` (Unclassified); ignores the class filters. */
+	unclassified?: boolean;
 	/** Exact-type match only (`FILTER(?type = <classIri>)`) — selecting an abstract/parent class
 	 *  misses individuals typed only as one of its subclasses, since this repo runs no OWL2-RL
 	 *  reasoning to materialize supertype `rdf:type` triples itself. Pass `classIris` instead when the
@@ -394,6 +396,9 @@ export interface IndividualSearchParams {
 	matchAllStringProperties?: boolean;
 	limit?: number;
 	offset?: number;
+	/** Unclassified mode only: continue after this row (keyset paging, no `OFFSET`), so a deep page
+	 *  costs the same as the first. Takes precedence over `offset`. */
+	after?: { label: string; iri: string };
 }
 
 /** Minimum term length for the all-strings search — a 1-character substring scan over every literal
@@ -595,12 +600,52 @@ export function factKeyString(fact: FactKey): string {
 	return `${fact.subjectIri}\u0000${fact.predicateIri}\u0000${obj}`;
 }
 
+/** A labelled subject in a namespace's instances graph with no `rdf:type` at all — shown as an
+ *  "Unclassified" individual until a class is assigned (`instances-issues` STORY-004). */
+/** Labelled subjects with no `rdf:type` in their graph (`?ig`), the definition of Unclassified.
+ *  `?i != ?ig` drops a namespace's own declaration subject (its base IRI is its instances graph's IRI). */
+const unclassifiedBlock = () => `{
+				GRAPH ?ig {
+					?i rdfs:label ?label .
+					FILTER NOT EXISTS { ?i rdf:type ?t }
+					FILTER(!isBlank(?i))
+					FILTER(?i != ?ig)
+				}
+				${VOCAB_FILTER('?i')}
+			}`;
+
+export interface BulkUnclassifiedFilter {
+	query?: string;
+	namespaceBaseIri?: string;
+	/** An explicit selection; omitted means every individual matching the other filters. */
+	iris?: string[];
+}
+
+/** Largest explicit selection a bulk run can undo. */
+export const BULK_UNDO_LIMIT = 5000;
+
+/** The Instances view loads at most this many Unclassified individuals; the rest are reached from the
+ *  Identities page (`FetchedSchema.untypedTotal` says how many exist). */
+export const UNCLASSIFIED_CANVAS_CAP = 200;
+
+export interface FetchedUntypedIndividual {
+	iri: string;
+	label: string;
+	namespaceBaseIri: string;
+}
+
 export interface FetchedSchema {
 	classes: FetchedClass[];
 	datatypeProperties: FetchedProperty[];
 	objectProperties: FetchedObjectProperty[];
 	subClassOf: FetchedSubClassOf[];
 	individuals: FetchedIndividual[];
+	/** Individuals without any `rdf:type` — optional for the same reason as `labelRequiredClassIris`;
+	 *  always populated by `fetchFullSchema`. */
+	untypedIndividuals?: FetchedUntypedIndividual[];
+	/** How many Unclassified individuals exist in all; `untypedIndividuals` holds at most
+	 *  `UNCLASSIFIED_CANVAS_CAP` of them. */
+	untypedTotal?: number;
 	individualClassRelations: FetchedIndividualClassRelation[];
 	individualIndividualRelations: FetchedIndividualIndividualRelation[];
 	/** Class IRIs with their own `sh:property [sh:path rdfs:label; sh:minCount >= 1]` shape
@@ -1260,7 +1305,7 @@ export class SparqlConnector {
 	async renameIndividual(iri: string, newLabel: string, namespaceBaseIri?: string): Promise<void> {
 		if (!newLabel.trim()) throw new Error('Member name must not be empty');
 		this.assertSafeSparqlIri(iri, 'individual IRI');
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(iri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(iri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const escaped = this.escapeString(newLabel);
 
@@ -1273,6 +1318,46 @@ export class SparqlConnector {
 		`);
 	}
 
+	/**
+	 * Changes an individual's class: rewrites its `rdf:type` in its own instances graph (the type is
+	 * inserted even when it had none), and deletes the triples, reified statements and annotations of
+	 * `dropPredicateIris` (the values `planClassChange` reports as lost). IRI and `rdfs:label` are
+	 * untouched. A synced individual is machine-owned and is refused before anything is written.
+	 */
+	async changeIndividualClass(
+		iri: string,
+		newClassIri: string,
+		options: { dropPredicateIris?: string[] } = {}
+	): Promise<void> {
+		const dropPredicateIris = options.dropPredicateIris ?? [];
+		this.assertSafeSparqlIri(iri, 'individual IRI');
+		this.assertSafeSparqlIri(newClassIri, 'class IRI');
+		for (const p of dropPredicateIris) this.assertSafeSparqlIri(p, 'predicate IRI');
+
+		const synced = await this.selectQuery(
+			`${PREFIXES} SELECT ?syncSource WHERE { GRAPH ?g { <${iri}> <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource } } LIMIT 1`
+		);
+		if (synced.results.bindings.length > 0) {
+			throw new Error(`Cannot change the class of a synced individual (${iri})`);
+		}
+
+		const graphs = namespaceGraphs(await this.findNamespaceOfPossiblyUntypedIndividual(iri));
+		const ops = [
+			`DELETE WHERE { ${inGraph(`<${iri}> rdf:type ?oldType .`, graphs.instances)} }`,
+			`INSERT DATA { ${inGraph(`<${iri}> a <${newClassIri}> .`, graphs.instances)} }`
+		];
+		for (const predicateIri of dropPredicateIris) {
+			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${predicateIri}> ?o .`, graphs.instances)} }`);
+			ops.push(`${withGraph(graphs.instances)}
+				DELETE { ?stmt ?sp ?so . ?ann ?ap ?ao . }
+				WHERE {
+					?stmt rdf:subject <${iri}> ; rdf:predicate <${predicateIri}> ; ?sp ?so .
+					OPTIONAL { ?ann <${ANNOTATES_PREDICATE_IRI}> ?stmt . ?ann ?ap ?ao }
+				}`);
+		}
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
 	/** Removes the member entirely: its `rdf:type` and `rdfs:label` triples, plus (STORY-081) every
 	 *  `WorkspaceMembership` row referencing it, across every Workspace, plus (STORY-083) unlinking
 	 *  (not deleting) any Note whose `noteLinkedElement` pointed at it. `namespaceBaseIri` is
@@ -1282,7 +1367,7 @@ export class SparqlConnector {
 	 *  removed from the canvas/UI while its triples stayed in GraphDB untouched. */
 	async deleteIndividual(iri: string, namespaceBaseIri?: string): Promise<void> {
 		this.assertSafeSparqlIri(iri, 'individual IRI');
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(iri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(iri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		await this.executeUpdate(`
 			${PREFIXES}
@@ -1373,7 +1458,7 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		for (const attr of attributes) this.assertSafeSparqlIri(attr.iri, 'attribute IRI');
 		if (attributes.length === 0) return {};
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const repeatableByIri = new Map(attributes.map((a) => [a.iri, a.repeatable]));
 
@@ -1416,7 +1501,7 @@ export class SparqlConnector {
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		const cleanup = this.factCleanup(individualIri, attributeIri, '?old');
 
@@ -1457,7 +1542,7 @@ export class SparqlConnector {
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		await this.executeUpdate(
 			`${PREFIXES} INSERT DATA { ${inGraph(`<${individualIri}> <${attributeIri}> ${this.formatTypedLiteral(datatype, value)} .`, graphs.instances)} }`
@@ -1477,7 +1562,7 @@ export class SparqlConnector {
 	): Promise<void> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(attributeIri, 'attribute IRI');
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(individualIri));
 		const graphs = namespaceGraphs(resolvedNamespaceBaseIri);
 		// Only this value's statement and annotations go; other values of a multi-valued attribute keep theirs.
 		const literal = this.formatTypedLiteral(datatype, value);
@@ -1516,7 +1601,7 @@ export class SparqlConnector {
 		namespaceBaseIri?: string
 	): Promise<void> {
 		if (submissions.length === 0) return;
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfIndividual(individualIri));
+		const resolvedNamespaceBaseIri = namespaceBaseIri ?? (await this.findNamespaceOfPossiblyUntypedIndividual(individualIri));
 		for (const s of submissions) {
 			if (s.repeatable) {
 				for (const v of s.added ?? []) {
@@ -3132,7 +3217,7 @@ export class SparqlConnector {
 	 * matched graph is usually the base IRI already; the suffix-stripping here is defensive, mirroring
 	 * `findNamespaceOfSubject`.
 	 */
-	private async findNamespaceOfIndividual(individualIri: string): Promise<string> {
+	async findNamespaceOfIndividual(individualIri: string): Promise<string> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		const results = await this.selectQuery(
 			`${PREFIXES} SELECT ?g WHERE { GRAPH ?g { <${individualIri}> a ?type } } LIMIT 1`
@@ -3144,6 +3229,23 @@ export class SparqlConnector {
 		if (graphIri.endsWith('/schema')) return graphIri.slice(0, -'/schema'.length);
 		if (graphIri.endsWith('/shapes')) return graphIri.slice(0, -'/shapes'.length);
 		return graphIri;
+	}
+
+	/** `findNamespaceOfIndividual` for an individual that may have no `rdf:type` yet: falls back to
+	 *  the graph holding its `rdfs:label`. Kept separate because the annotation path's shared golden
+	 *  vectors script exactly the queries `findNamespaceOfIndividual` makes. */
+	private async findNamespaceOfPossiblyUntypedIndividual(individualIri: string): Promise<string> {
+		try {
+			return await this.findNamespaceOfIndividual(individualIri);
+		} catch (error) {
+			this.assertSafeSparqlIri(individualIri, 'individual IRI');
+			const labelled = await this.selectQuery(
+				`${PREFIXES} SELECT ?g WHERE { GRAPH ?g { <${individualIri}> rdfs:label ?l } } LIMIT 1`
+			);
+			const graphIri = labelled.results.bindings[0]?.g?.value;
+			if (!graphIri) throw error;
+			return graphIri;
+		}
 	}
 
 	/** Every individual asserting mastery over `classIri` (a class or an attribute IRI — Story 019
@@ -3228,7 +3330,7 @@ export class SparqlConnector {
 		if (!relationName.trim()) throw new Error('Relation name must not be empty');
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(classIri, 'class IRI');
-		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const predicateIri = await this.resolveOrMintPredicate(relationName, namespaceBaseIri);
 		this.assertSafeSparqlIri(predicateIri, 'relation predicate IRI');
 		const graphs = namespaceGraphs(namespaceBaseIri);
@@ -3243,7 +3345,7 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(predicateIri, 'relation predicate IRI');
 		this.assertSafeSparqlIri(classIri, 'class IRI');
-		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const cleanup = this.factCleanup(individualIri, predicateIri, `<${classIri}>`);
 		await this.executeUpdate(`
@@ -3524,7 +3626,7 @@ export class SparqlConnector {
 		if (!predicateLabel.trim()) throw new Error('Predicate name must not be empty');
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(objectIri, 'object IRI');
-		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const predicateIri = await this.resolveOrMintPredicate(predicateLabel, namespaceBaseIri);
 		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
 		const graphs = namespaceGraphs(namespaceBaseIri);
@@ -3539,7 +3641,7 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
 		this.assertSafeSparqlIri(predicateIri, 'predicate IRI');
 		this.assertSafeSparqlIri(objectIri, 'object IRI');
-		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const cleanup = this.factCleanup(individualIri, predicateIri, `<${objectIri}>`);
 		await this.executeUpdate(`
@@ -3568,7 +3670,7 @@ export class SparqlConnector {
 	 */
 	async fetchAssertionsForIndividual(individualIri: string): Promise<FetchedAssertion[]> {
 		this.assertSafeSparqlIri(individualIri, 'individual IRI');
-		const namespaceBaseIri = await this.findNamespaceOfIndividual(individualIri);
+		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES} SELECT ?p ?plabel ?o ?olabel WHERE {
@@ -3615,6 +3717,12 @@ export class SparqlConnector {
 			})),
 			...schema.objectProperties.map((p) => ({ iri: p.iri, label: p.label, kind: 'relation' as const })),
 			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const })),
+			// Unclassified individuals must be addable to a Workspace too, or they stay hidden.
+			...(schema.untypedIndividuals ?? []).map((i) => ({
+				iri: i.iri,
+				label: i.label,
+				kind: 'individual' as const
+			})),
 			...relationInstances
 		];
 		const byIri = new Map(all.map((e) => [e.iri, e]));
@@ -5945,6 +6053,57 @@ export class SparqlConnector {
 	}
 
 	/**
+	 * Labelled subjects in the namespace's instances graph that carry no `rdf:type`. Typed nodes
+	 * (Notes, Workspaces, annotations, reified statements, individuals typed with a non-class IRI)
+	 * are excluded by the missing-type rule itself; vocabulary IRIs and blank nodes are filtered out
+	 * explicitly. No `FROM`, matching `fetchAllIndividuals`.
+	 */
+	async fetchUntypedIndividuals(
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<FetchedUntypedIndividual[]> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?i ?label WHERE {
+				GRAPH <${graphs.instances}> {
+					?i rdfs:label ?label .
+					FILTER NOT EXISTS { ?i rdf:type ?t }
+					FILTER(!isBlank(?i))
+					FILTER(?i != <${namespaceBaseIri}>)
+					${VOCAB_FILTER('?i')}
+				}
+			}
+			ORDER BY ?label ?i
+			LIMIT ${UNCLASSIFIED_CANVAS_CAP}
+		`);
+		// One entry per IRI: a subject with several labels yields several rows, and a duplicate IRI
+		// would be a duplicate canvas node id.
+		const byIri = new Map<string, FetchedUntypedIndividual>();
+		for (const b of results.results.bindings) {
+			if (!byIri.has(b.i.value)) byIri.set(b.i.value, { iri: b.i.value, label: b.label.value, namespaceBaseIri });
+		}
+		return [...byIri.values()];
+	}
+
+	/** How many Unclassified individuals a namespace has — the same set `fetchUntypedIndividuals` caps. */
+	async fetchUntypedIndividualCount(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<number> {
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {
+				GRAPH <${graphs.instances}> {
+					?i rdfs:label ?label .
+					FILTER NOT EXISTS { ?i rdf:type ?t }
+					FILTER(!isBlank(?i))
+					FILTER(?i != <${namespaceBaseIri}>)
+					${VOCAB_FILTER('?i')}
+				}
+			}
+		`);
+		return Number(results.results.bindings[0]?.n?.value ?? 0);
+	}
+
+	/**
 	 * Fetches everything needed to reconstruct the canvas (STORY-009): all classes, all
 	 * datatype/object properties merged with their `sh:property` cardinality constraints, all
 	 * `rdfs:subClassOf` triples, and all enumerated individuals (STORY-019) — all scoped to one
@@ -5959,6 +6118,8 @@ export class SparqlConnector {
 			constraints,
 			subClassOf,
 			individuals,
+			untypedIndividuals,
+			untypedTotal,
 			genericObjectProperties,
 			individualClassRelations,
 			individualIndividualRelations,
@@ -5971,6 +6132,8 @@ export class SparqlConnector {
 			this.fetchAllShapesAndProperties(namespaceBaseIri),
 			this.fetchAllSubClassOf(namespaceBaseIri),
 			this.fetchAllIndividuals(namespaceBaseIri),
+			this.fetchUntypedIndividuals(namespaceBaseIri),
+			this.fetchUntypedIndividualCount(namespaceBaseIri),
 			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
 			this.fetchAllIndividualClassRelations(namespaceBaseIri),
 			this.fetchAllIndividualIndividualRelations(namespaceBaseIri),
@@ -6001,6 +6164,8 @@ export class SparqlConnector {
 			],
 			subClassOf,
 			individuals,
+			untypedIndividuals,
+			untypedTotal,
 			individualClassRelations,
 			individualIndividualRelations,
 			labelRequiredClassIris,
@@ -6023,6 +6188,19 @@ export class SparqlConnector {
 			objectProperties: schemas.flatMap((s) => s.objectProperties),
 			subClassOf: schemas.flatMap((s) => s.subClassOf),
 			individuals: schemas.flatMap((s) => s.individuals),
+			// A namespace's own base IRI is its declaration subject, never an individual; and the same
+			// IRI must not become two canvas nodes.
+			untypedIndividuals: [
+				...new Map(
+					schemas
+						.flatMap((s) => s.untypedIndividuals ?? [])
+						.filter((u) => !namespaces.some((n) => n.baseIri === u.iri))
+						.map((u) => [u.iri, u] as const)
+				).values()
+			]
+				.sort((a, b) => a.label.localeCompare(b.label) || a.iri.localeCompare(b.iri))
+				.slice(0, UNCLASSIFIED_CANVAS_CAP),
+			untypedTotal: schemas.reduce((sum, s) => sum + (s.untypedTotal ?? 0), 0),
 			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
 			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
 			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
@@ -6057,6 +6235,7 @@ export class SparqlConnector {
 	async searchIndividuals(params: IndividualSearchParams = {}): Promise<IndividualSearchPage> {
 		const { query, classIri: classIriFilter, classIris: classIrisFilter, namespaceBaseIri, syncSource, syncStatus } =
 			params;
+		const unclassifiedOnly = params.unclassified === true;
 		const limit = Math.max(1, Math.floor(params.limit ?? 50));
 		const offset = Math.max(0, Math.floor(params.offset ?? 0));
 		const matchAll = params.matchAllStringProperties === true;
@@ -6070,7 +6249,9 @@ export class SparqlConnector {
 		if (namespaceBaseIri) this.assertSafeSparqlIri(namespaceBaseIri, 'namespace base IRI');
 
 		const filters: string[] = [];
-		if (classIrisFilter && classIrisFilter.length > 0) {
+		if (unclassifiedOnly) {
+			// no class filter applies to an individual that has no class
+		} else if (classIrisFilter && classIrisFilter.length > 0) {
 			filters.push(`FILTER(?type IN (${classIrisFilter.map((c) => `<${c}>`).join(', ')}))`);
 		} else if (classIriFilter) {
 			filters.push(`FILTER(?type = <${classIriFilter}>)`);
@@ -6088,6 +6269,19 @@ export class SparqlConnector {
 			);
 		}
 		if (matchAll) filters.push('FILTER(?type != rdf:Statement)');
+		const keyset = unclassifiedOnly ? params.after : undefined;
+		if (keyset) {
+			const l = this.escapeString(keyset.label);
+			filters.push(
+				`FILTER(STR(?label) > "${l}" || (STR(?label) = "${l}" && STR(?i) > "${this.escapeString(keyset.iri)}"))`
+			);
+		}
+
+		// Unclassified individuals: labelled subjects with no `rdf:type` in their graph. Only returned when
+		// asked for explicitly; `?i != ?ig` drops a namespace's own declaration subject.
+		const includeUntyped = unclassifiedOnly;
+		const includeTyped = !unclassifiedOnly;
+		const untypedBlock = unclassifiedBlock();
 
 		const matchPattern = matchAll
 			? `?i ?mp ?mv .
@@ -6098,30 +6292,34 @@ export class SparqlConnector {
 			: '?i ?type ?label ?ig ?syncSource ?syncStatus';
 		const groupBy = matchAll ? 'GROUP BY ?i ?type ?label ?ig ?syncSource ?syncStatus' : '';
 
+		const typedBlock = `{
+					GRAPH ?ig {
+						?i a ?type .
+						${matchPattern}
+						OPTIONAL { ?i rdfs:label ?label }
+						OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
+						OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
+					}
+					GRAPH ?classGraph { ?type a owl:Class }
+					FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
+					${VOCAB_FILTER('?i')}
+				}`;
+
 		const results = await this.selectQuery(`
 			${PREFIXES}
 			SELECT ${selectVars} WHERE {
-				GRAPH ?ig {
-					?i a ?type .
-					${matchPattern}
-					OPTIONAL { ?i rdfs:label ?label }
-					OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
-					OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
-				}
-				GRAPH ?classGraph { ?type a owl:Class }
-				FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
-				${VOCAB_FILTER('?i')}
+				${[typedBlock, untypedBlock].filter((_, n) => (n === 0 ? includeTyped : includeUntyped)).join(' UNION ')}
 				${filters.join('\n\t\t\t\t')}
 			}
 			${groupBy}
-			ORDER BY ?label ?i
+			ORDER BY ${unclassifiedOnly ? 'STR(?label) STR(?i)' : '?label ?i'}
 			LIMIT ${limit + 1}
-			OFFSET ${offset}
+			${keyset ? '' : `OFFSET ${offset}`}
 		`);
 
 		const rows: IndividualSearchResult[] = results.results.bindings.map((b) => ({
 			iri: b.i.value,
-			classIri: b.type.value,
+			classIri: b.type?.value ?? '',
 			label: b.label?.value ?? extractLocalName(b.i.value),
 			namespaceBaseIri: b.ig.value,
 			syncSource: b.syncSource?.value ?? null,
@@ -6133,6 +6331,100 @@ export class SparqlConnector {
 
 		const hasMore = rows.length > limit;
 		return { results: hasMore ? rows.slice(0, limit) : rows, hasMore };
+	}
+
+	/** How many Unclassified individuals match the namespace and label-text filters (all namespaces by
+	 *  default) — the total behind the Identities page's Unclassified list. */
+	async countUnclassified(params: { query?: string; namespaceBaseIri?: string } = {}): Promise<number> {
+		const { query, namespaceBaseIri } = params;
+		if (namespaceBaseIri) this.assertSafeSparqlIri(namespaceBaseIri, 'namespace base IRI');
+		const filters: string[] = [];
+		if (namespaceBaseIri) filters.push(`FILTER(?ig = <${namespaceBaseIri}>)`);
+		if (query) {
+			filters.push(`FILTER(CONTAINS(LCASE(STR(?label)), LCASE("${this.escapeString(query)}")))`);
+		}
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE {
+				${unclassifiedBlock()}
+				${filters.join('\n\t\t\t\t')}
+			}
+		`);
+		return Number(results.results.bindings[0]?.n?.value ?? 0);
+	}
+
+	/** The pattern selecting the Unclassified individuals a bulk run applies to: the shared Unclassified
+	 *  block, the namespace/text/explicit-IRI filters, and never a synced individual. */
+	private bulkUnclassifiedPattern(filter: BulkUnclassifiedFilter): string {
+		const { query, namespaceBaseIri, iris } = filter;
+		if (namespaceBaseIri) this.assertSafeSparqlIri(namespaceBaseIri, 'namespace base IRI');
+		iris?.forEach((i) => this.assertSafeSparqlIri(i, 'individual IRI'));
+		const parts = [unclassifiedBlock()];
+		if (iris) parts.push(`VALUES ?i { ${iris.map((i) => `<${i}>`).join(' ')} }`);
+		if (namespaceBaseIri) parts.push(`FILTER(?ig = <${namespaceBaseIri}>)`);
+		if (query) parts.push(`FILTER(CONTAINS(LCASE(STR(?label)), LCASE("${this.escapeString(query)}")))`);
+		parts.push(`FILTER NOT EXISTS { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }`);
+		return parts.join('\n\t\t\t\t');
+	}
+
+	private async countBulkUnclassified(filter: BulkUnclassifiedFilter): Promise<number> {
+		if (filter.iris && filter.iris.length === 0) return 0;
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE { ${this.bulkUnclassifiedPattern(filter)} }
+		`);
+		return Number(results.results.bindings[0]?.n?.value ?? 0);
+	}
+
+	/**
+	 * Gives every Unclassified individual matching `filter` the class `classIri`, `chunkSize` at a time
+	 * (a single update over hundreds of thousands of rows would time out). Re-runnable: individuals that
+	 * already got the class stop matching, so a cancelled or failed run is finished by running it again.
+	 * Stops early when a chunk makes no progress, so it can never loop forever. Synced individuals and
+	 * namespace declaration subjects never match.
+	 */
+	async assignClassToUnclassified(
+		filter: BulkUnclassifiedFilter,
+		classIri: string,
+		options: {
+			chunkSize?: number;
+			signal?: AbortSignal;
+			onProgress?: (progress: { assigned: number; total: number }) => void;
+		} = {}
+	): Promise<{ assigned: number; cancelled: boolean }> {
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		const chunkSize = Math.max(1, Math.floor(options.chunkSize ?? 5000));
+		const pattern = this.bulkUnclassifiedPattern(filter);
+
+		let remaining = await this.countBulkUnclassified(filter);
+		const total = remaining;
+		let assigned = 0;
+		while (remaining > 0) {
+			if (options.signal?.aborted) return { assigned, cancelled: true };
+			await this.executeUpdate(`${PREFIXES}
+				INSERT { GRAPH ?ig { ?i a <${classIri}> } }
+				WHERE { SELECT DISTINCT ?i ?ig WHERE { ${pattern} } ORDER BY ?i LIMIT ${chunkSize} }`);
+			const after = await this.countBulkUnclassified(filter);
+			if (after >= remaining) break;
+			assigned += remaining - after;
+			remaining = after;
+			options.onProgress?.({ assigned, total });
+		}
+		return { assigned, cancelled: options.signal?.aborted === true && remaining > 0 };
+	}
+
+	/** Undo for an explicit selection: removes `classIri` from `iris`, only where it is still that class
+	 *  (an individual re-classed since keeps its newer class). Capped, because the caller keeps the IRIs. */
+	async unassignClassFromIndividuals(iris: string[], classIri: string): Promise<void> {
+		if (iris.length > BULK_UNDO_LIMIT) {
+			throw new Error(`Undo is limited to ${BULK_UNDO_LIMIT.toLocaleString('en-US')} individuals`);
+		}
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		iris.forEach((i) => this.assertSafeSparqlIri(i, 'individual IRI'));
+		if (iris.length === 0) return;
+		await this.executeUpdate(`${PREFIXES}
+			DELETE { GRAPH ?ig { ?i a <${classIri}> } }
+			WHERE { VALUES ?i { ${iris.map((i) => `<${i}>`).join(' ')} } GRAPH ?ig { ?i a <${classIri}> } }`);
 	}
 
 	/**

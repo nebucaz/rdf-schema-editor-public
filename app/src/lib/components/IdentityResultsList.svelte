@@ -22,6 +22,10 @@
 		namespaces: FetchedNamespace[];
 		onSelect: (result: IndividualSearchResult) => void;
 		onLoadMore: () => void;
+		/** Shows a checkbox per row (bulk class assignment). */
+		selectable?: boolean;
+		checkedIris?: ReadonlySet<string>;
+		onToggleChecked?: (iri: string) => void;
 	}
 
 	let {
@@ -33,7 +37,10 @@
 		classes,
 		namespaces,
 		onSelect,
-		onLoadMore
+		onLoadMore,
+		selectable = false,
+		checkedIris = new Set<string>(),
+		onToggleChecked
 	}: Props = $props();
 
 	interface ResultGroup {
@@ -46,6 +53,7 @@
 	const namespacePrefixByBaseIri = $derived(new Map(namespaces.map((ns) => [ns.baseIri, ns.prefix])));
 
 	function groupLabel(classIri: string): string {
+		if (classIri === '') return 'Unclassified';
 		const cls = classByIri.get(classIri);
 		const label = labelOrPrettify(cls?.label, classIri);
 		const prefix = cls && namespacePrefixByBaseIri.get(cls.namespaceBaseIri);
@@ -81,7 +89,16 @@
 				<h3>{group.label} ({group.items.length})</h3>
 				<ul>
 					{#each group.items as item (item.iri)}
-						<li>
+						<li class:selectable>
+							{#if selectable}
+								<input
+									type="checkbox"
+									class="row-check"
+									aria-label={`Select ${displayLabel(item.label)}`}
+									checked={checkedIris.has(item.iri)}
+									onchange={() => onToggleChecked?.(item.iri)}
+								/>
+							{/if}
 							<button
 								type="button"
 								class="result-row"
@@ -204,5 +221,13 @@
 
 	.no-results {
 		color: var(--color-text-muted);
+	}
+	li.selectable {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+	}
+	li.selectable .result-row {
+		flex: 1;
 	}
 </style>

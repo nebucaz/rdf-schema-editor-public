@@ -9,6 +9,14 @@ add/edit controls.
 - **Name & namespace** — the individual's `rdfs:label` and, in create mode, which registered namespace
   mints its IRI into. A create-mode-only **Identifier** field lets you pin the individual's local IRI
   name yourself instead of deriving one from the label.
+- **Class** *(edit mode, Individual Node and Identities edit dialogs)* — the individual's class. It is
+  empty for an **Unclassified** individual (one with a label but no `rdf:type`); pick a class and save
+  to assign one. To change an existing class, pick another and save: values the new class also defines
+  are kept, and if some would be lost a confirmation lists them — **Change class** applies it, **Back**
+  changes nothing. The attribute and relation fields below show the *current* class's fields and switch
+  to the new class's after the change. An Unclassified individual can still be saved without a class
+  (for example just to rename it). The selector is hidden for an identity with several types and
+  disabled for synced individuals.
 - **Attributes** — one input per attribute declared on the individual's class (own + inherited),
   matching that attribute's datatype/cardinality from the [Attribute Form](attribute-form) that
   defined it. Repeatable attributes render add/remove controls per row. Required attributes are

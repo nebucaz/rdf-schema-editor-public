@@ -7,6 +7,9 @@
  * colocated `*.spec.ts` convention).
  */
 
+/** The "Filter by class" facet value that selects individuals without any class (`?class=` in the URL). */
+export const UNCLASSIFIED_FACET = 'urn:rse:unclassified';
+
 export interface IdentitySearchUrlParams {
 	query: string;
 	classIri: string | null;

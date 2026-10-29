@@ -150,6 +150,7 @@ describe('buildErdModel — scope', () => {
 			className: 'Person',
 			namespace: NS_A,
 			syncSource: null,
+			unclassified: false,
 			isStale: false
 		};
 		const m = model(

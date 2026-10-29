@@ -1080,6 +1080,39 @@ describe('buildCanvasModel — instances view mode (data-catalog Story 005/006)'
 		});
 	});
 
+	it('"instances" mode emits an unclassified node with no instanceOf edge and no entity member', () => {
+		const person = classIri('Person');
+		const strayIri = `${NS}#stray`;
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			untypedIndividuals: [{ iri: strayIri, label: 'Stray', namespaceBaseIri: NS }]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'instances' });
+		const node = model.nodes.find((n) => n.kind === 'individual' && n.iri === strayIri);
+		expect(node).toMatchObject({ label: 'Stray', unclassified: true, classIri: '', namespace: NS });
+		expect(model.edges.filter((e) => e.kind === 'instanceOf')).toEqual([]);
+		const entity = model.nodes.find((n) => n.kind === 'entity' && n.iri === person);
+		expect(entity && entity.kind === 'entity' ? entity.members : null).toEqual([]);
+	});
+
+	it('typed individuals are not flagged unclassified', () => {
+		const person = classIri('Person');
+		const schema = emptySchema({
+			classes: [fetchedClass(person, 'Person')],
+			individuals: [individual(`${NS}#alice`, 'Alice', person)]
+		});
+		const node = buildCanvasModel(schema, undefined, { viewMode: 'instances' }).nodes.find((n) => n.kind === 'individual');
+		expect(node).toMatchObject({ unclassified: false });
+	});
+
+	it('"schema" mode never shows unclassified individuals', () => {
+		const schema = emptySchema({
+			untypedIndividuals: [{ iri: `${NS}#stray`, label: 'Stray', namespaceBaseIri: NS }]
+		});
+		const model = buildCanvasModel(schema, undefined, { viewMode: 'schema' });
+		expect(model.nodes.some((n) => n.kind === 'individual')).toBe(false);
+	});
+
 	it('computes a syncSource flag from the rse:syncSource marker triple (Story 010)', () => {
 		const person = classIri('Person');
 		const aliceIri = `${NS}#alice`;

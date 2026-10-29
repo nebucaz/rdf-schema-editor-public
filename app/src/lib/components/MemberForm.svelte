@@ -18,6 +18,8 @@
 		type RelationValueSubmission
 	} from '$lib/utils/relation-values';
 
+	import { planClassChange, type ClassChangeField } from '$lib/services/class-change';
+
 	interface PredicateOption {
 		iri: string;
 		label: string;
@@ -34,7 +36,8 @@
 			namespaceBaseIri?: string,
 			attributeSubmissions?: AttributeValueSubmission[],
 			identifier?: string,
-			relationSubmissions?: RelationValueSubmission[]
+			relationSubmissions?: RelationValueSubmission[],
+			classChange?: { classIri: string; dropPredicateIris: string[] }
 		) => Promise<void>;
 		onCancel: () => void;
 		/** data-catalog Story 019: the edited individual's own IRI — present only in edit mode, since
@@ -72,6 +75,15 @@
 		 *  the caller fetches these scoped to that field's own `targetClassIri` (STORY-114), unlike
 		 *  the Assertions section's `objectOptions`, which is every individual in the graph. */
 		relationTargetOptions?: Record<string, RelationTargetOption[]>;
+		/** Classes offered by the "Class" selector (edit mode). Omitted: no selector is shown. */
+		classOptions?: { iri: string; label: string }[];
+		/** The individual's current class; empty for an Unclassified individual. */
+		classIri?: string;
+		/** Disables the selector, e.g. for a synced (machine-owned) individual. */
+		classLocked?: boolean;
+		/** Own+inherited attribute and relation fields of the class being switched to, so the form
+		 *  can tell which current values survive the change. */
+		onPlanClassChange?: (newClassIri: string) => ClassChangeField[];
 	}
 
 	let {
@@ -93,7 +105,11 @@
 		attributeValues = {},
 		labelRequired = false,
 		relationFields = [],
-		relationTargetOptions = {}
+		relationTargetOptions = {},
+		classOptions,
+		classIri = '',
+		classLocked = false,
+		onPlanClassChange
 	}: Props = $props();
 
 	let label = $state(initialLabel);
@@ -184,8 +200,28 @@
 		formValues = { ...formValues, [attrIri]: rows };
 	}
 
+	// -- Class selector ----------------------------------------------------------------------------
+	let selectedClassIri = $state(classIri);
+	/** Set while the confirm step (values that would be lost) is showing. */
+	let pendingClassChange = $state<{ classIri: string; dropped: ClassChangeField[] } | null>(null);
+
+	function classChangeFor(): { classIri: string; dropped: ClassChangeField[] } | null {
+		if (!classOptions || classLocked || !selectedClassIri || selectedClassIri === classIri) return null;
+		const newFields = onPlanClassChange?.(selectedClassIri) ?? [];
+		const oldFields = [...attributes, ...relationFields].map((f) => ({ iri: f.iri, name: f.name }));
+		const currentValues: Record<string, string | string[]> = { ...originalAttributeValues };
+		for (const [relIri, objectIris] of Object.entries(originalRelationObjectIris)) {
+			currentValues[relIri] = objectIris;
+		}
+		return { classIri: selectedClassIri, dropped: planClassChange(oldFields, newFields, currentValues).dropped };
+	}
+
 	async function handleSubmit(event: SubmitEvent) {
 		event.preventDefault();
+		await submitForm(false);
+	}
+
+	async function submitForm(confirmed: boolean) {
 		if (!label.trim()) {
 			error = 'Label must not be empty';
 			return;
@@ -217,6 +253,12 @@
 		missingRelationFields = new Set();
 		invalidRelationFields = new Set();
 		if (!onSubmit) return;
+		const classChange = classChangeFor();
+		if (classChange && classChange.dropped.length > 0 && !confirmed) {
+			pendingClassChange = classChange;
+			return;
+		}
+		pendingClassChange = null;
 		error = null;
 		submitting = true;
 		try {
@@ -232,7 +274,10 @@
 				mode === 'create' ? namespaceBaseIri : undefined,
 				attributeSubmissions,
 				trimmedIdentifier || undefined,
-				relationSubmissions
+				relationSubmissions,
+				classChange
+					? { classIri: classChange.classIri, dropPredicateIris: classChange.dropped.map((f) => f.iri) }
+					: undefined
 			);
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
@@ -348,6 +393,25 @@
 			Label{#if labelRequired}<span class="required-mark"> *</span>{/if}
 			<input type="text" bind:value={label} placeholder="e.g. nutzt" />
 		</label>
+		{#if classOptions}
+			<label>
+				Class
+				<select
+					bind:value={selectedClassIri}
+					disabled={classLocked || pendingClassChange !== null}
+					title={classLocked ? 'Synced individuals cannot change class' : undefined}
+				>
+					{#if !classIri}
+						<option value="">— Unclassified —</option>
+					{:else}
+						<option value=""></option>
+					{/if}
+					{#each classOptions as c (c.iri)}
+						<option value={c.iri}>{c.label}</option>
+					{/each}
+				</select>
+			</label>
+		{/if}
 		{#if mode === 'create' && namespaceOptions.length > 0}
 			<label>
 				Namespace
@@ -455,10 +519,27 @@
 		{#if error}
 			<p class="error">{error}</p>
 		{/if}
-		<div class="actions">
-			<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
-			<button type="submit" class="primary" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
-		</div>
+		{#if pendingClassChange}
+			<div class="class-change-confirm">
+				<p>Changing the class will remove these values, which the new class does not have:</p>
+				<ul>
+					{#each pendingClassChange.dropped as f (f.iri)}
+						<li>{f.name}</li>
+					{/each}
+				</ul>
+			</div>
+			<div class="actions">
+				<button type="button" class="secondary" onclick={() => (pendingClassChange = null)} disabled={submitting}>Back</button>
+				<button type="button" class="primary" onclick={() => submitForm(true)} disabled={submitting}>
+					{submitting ? 'Saving…' : 'Change class'}
+				</button>
+			</div>
+		{:else}
+			<div class="actions">
+				<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
+				<button type="submit" class="primary" disabled={submitting}>{submitting ? 'Saving…' : submitLabel}</button>
+			</div>
+		{/if}
 	</form>
 {/if}
 
@@ -577,6 +658,22 @@
 	.optional-hint {
 		font-weight: normal;
 		color: var(--color-text-muted);
+	}
+
+	.class-change-confirm {
+		border: 1px solid var(--color-error);
+		border-radius: 6px;
+		padding: 0.5rem 0.75rem;
+		font-size: 0.85rem;
+	}
+
+	.class-change-confirm p {
+		margin: 0 0 0.35rem;
+	}
+
+	.class-change-confirm ul {
+		margin: 0;
+		padding-left: 1.2rem;
 	}
 
 	.attributes-section {

@@ -29,6 +29,7 @@
 	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '$lib/services/canvas-model';
 	import { resolveEditFormSpec, resolveGoverningClass } from '$lib/utils/identity-schema-index';
 	import { editIdentity } from '$lib/utils/identity-mutations';
+	import { SYNC_SOURCE_PREDICATE_IRI } from '$lib/utils/iri';
 	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
 	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
 
@@ -57,6 +58,8 @@
 		 *  it from the results list/breadcrumb and clear the selection — this component only owns the
 		 *  delete request itself, not what's shown once the identity it was showing no longer exists. */
 		onDeleted?: (iri: string) => void;
+		/** Fired after the edit form changed this identity's class, so the caller can move it in its list. */
+		onClassChanged?: (iri: string, classIri: string) => void;
 		/** Used to render each `rdf:type` badge as `prefix:ClassName` and color it by its owning
 		 *  namespace — same disambiguation `IdentitySearchBar`/`IdentityResultsList` apply, since a
 		 *  bare type name ("Application") can't distinguish two same-named classes in different
@@ -87,6 +90,7 @@
 		canGoBack = false,
 		onLoaded,
 		onDeleted,
+		onClassChanged,
 		classes = [],
 		namespaces = [],
 		classHierarchyIndex = EMPTY_CLASS_HIERARCHY_INDEX,
@@ -347,15 +351,47 @@
 		onLoaded?.({ iri, label: resolved.label });
 	}
 
+	/** Classes the edit form can assign: every entity class in the schema index, prefixed with its
+	 *  namespace to tell same-named classes apart. */
+	const editClassOptions = $derived(
+		[...entityNodeByClassIri.values()]
+			.map((c) => ({
+				iri: c.iri,
+				label: `[${namespacePrefixByBaseIri.get(c.namespace) ?? c.namespace}] ${c.name}`
+			}))
+			.sort((a, b) => a.label.localeCompare(b.label))
+	);
+	/** An identity with several `rdf:type`s has no single class to change, and a synced one is
+	 *  machine-owned: both leave the selector out / disabled. */
+	const editClassLocked = $derived(
+		(page?.outgoing ?? []).some((t) => t.predicateIri === SYNC_SOURCE_PREDICATE_IRI)
+	);
+
+	function fieldsOfClass(classIriValue: string): { iri: string; name: string }[] {
+		const spec = entityNodeByClassIri.get(classIriValue);
+		return [...(spec?.attributes ?? []), ...(spec?.relationFields ?? [])].map((f) => ({ iri: f.iri, name: f.name }));
+	}
+
 	async function handleEditSubmit(
 		label: string,
 		_namespaceBaseIri?: string,
 		attributeSubmissions: AttributeValueSubmission[] = [],
 		_identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = []
+		relationSubmissions: RelationValueSubmission[] = [],
+		classChange?: { classIri: string; dropPredicateIris: string[] }
 	) {
 		if (!header) return;
+		if (classChange) {
+			// retype first, so the writes below land on the new class; dropped values were just deleted
+			await sparqlConnector.changeIndividualClass(iri, classChange.classIri, {
+				dropPredicateIris: classChange.dropPredicateIris
+			});
+			const dropped = new Set(classChange.dropPredicateIris);
+			attributeSubmissions = attributeSubmissions.filter((a) => !dropped.has(a.attributeIri));
+			relationSubmissions = relationSubmissions.filter((r) => !dropped.has(r.predicateIri));
+		}
 		await editIdentity(iri, label, header.label, attributeSubmissions, relationSubmissions);
+		if (classChange) onClassChanged?.(iri, classChange.classIri);
 		closeEditModal();
 		await refetchAfterEdit();
 	}
@@ -616,6 +652,10 @@
 				labelRequired={editFormSpec.labelRequired}
 				relationFields={editFormSpec.relationFields}
 				relationTargetOptions={editRelationTargetOptions}
+				classOptions={header && header.typeIris.length > 1 ? undefined : editClassOptions}
+				classIri={header?.typeIris[0] ?? ''}
+				classLocked={editClassLocked}
+				onPlanClassChange={fieldsOfClass}
 				onAddAssertion={async (predicateLabel, objectIri) => {
 					await sparqlConnector.insertAssertion(iri, predicateLabel, objectIri);
 					await reloadEditAssertions();

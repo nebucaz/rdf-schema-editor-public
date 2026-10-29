@@ -16,6 +16,8 @@
 	import IdentityResourcePage, { type IdentityRef } from '$lib/components/IdentityResourcePage.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import MemberForm from '$lib/components/MemberForm.svelte';
+	import UnclassifiedBulkBar from '$lib/components/UnclassifiedBulkBar.svelte';
+	import { BULK_UNDO_LIMIT } from '$lib/services/sparql-connector';
 	import {
 		sparqlConnector,
 		type FetchedClass,
@@ -25,7 +27,8 @@
 	} from '$lib/services/sparql-connector';
 	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '$lib/services/canvas-model';
 	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { buildIdentitySearchUrl, parseIdentitySearchParams } from '$lib/utils/identity-search-url';
+	import { isUnclassifiedQueryTooShort, keysetAfter } from '$lib/utils/unclassified-search';
+	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl, parseIdentitySearchParams } from '$lib/utils/identity-search-url';
 	import { prettifyLocalName } from '$lib/utils/resource-page-format';
 	import { buildClassHierarchyIndex, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
 	import { buildEntityNodeIndex } from '$lib/utils/identity-schema-index';
@@ -51,6 +54,84 @@
 	let error = $state<string | null>(null);
 	let lastFacets = $state<IdentityFacetValues>(EMPTY_FACETS);
 	let nextOffset = 0;
+	/** How many Unclassified individuals match the active filters; `null` outside Unclassified mode. */
+	let unclassifiedTotal = $state<number | null>(null);
+	let queryTooShort = $state(false);
+	let searchSeq = 0;
+
+	// Bulk class assignment (Unclassified mode only). A selection is either explicit rows or "everything
+	// matching the current filters"; changing the filters drops it.
+	let checkedIris = $state<Set<string>>(new Set());
+	let allMatching = $state(false);
+	let bulkProgress = $state<{ assigned: number; total: number } | null>(null);
+	let bulkAbort: AbortController | null = null;
+	let lastBulk = $state<{ iris: string[]; classIri: string; label: string } | null>(null);
+
+	const inUnclassifiedMode = $derived(lastFacets.classIri === UNCLASSIFIED_FACET);
+	const pageSelected = $derived(results.length > 0 && results.every((r) => checkedIris.has(r.iri)));
+	const selectionCount = $derived(allMatching ? (unclassifiedTotal ?? 0) : checkedIris.size);
+
+	function classOptionText(cls: FetchedClass): string {
+		return `${namespacePrefixFor(cls.namespaceBaseIri)}: ${cls.label}`;
+	}
+
+	function clearSelection() {
+		checkedIris = new Set();
+		allMatching = false;
+	}
+
+	function toggleChecked(iri: string) {
+		const next = new Set(checkedIris);
+		if (!next.delete(iri)) next.add(iri);
+		checkedIris = next;
+		allMatching = false;
+	}
+
+	function selectPage() {
+		checkedIris = new Set(results.map((r) => r.iri));
+		allMatching = false;
+	}
+
+	async function applyBulkClass(classIri: string) {
+		const explicit = !allMatching;
+		const iris = [...checkedIris];
+		const filter = explicit
+			? { iris }
+			: { query: lastFacets.query || undefined, namespaceBaseIri: lastFacets.namespaceBaseIri ?? undefined };
+		const className = bulkClassOptions.find((c) => c.iri === classIri)?.label ?? classIri;
+		bulkAbort = new AbortController();
+		bulkProgress = { assigned: 0, total: selectionCount };
+		lastBulk = null;
+		error = null;
+		try {
+			const { assigned } = await sparqlConnector.assignClassToUnclassified(filter, classIri, {
+				signal: bulkAbort.signal,
+				onProgress: (p) => (bulkProgress = p)
+			});
+			if (explicit && iris.length <= BULK_UNDO_LIMIT && assigned > 0) {
+				lastBulk = { iris, classIri, label: `Gave ${assigned.toLocaleString()} individuals the class ${className}.` };
+			}
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to assign the class';
+		} finally {
+			bulkProgress = null;
+			bulkAbort = null;
+			clearSelection();
+		}
+		await runSearch(lastFacets);
+	}
+
+	async function undoBulk() {
+		if (!lastBulk) return;
+		const { iris, classIri } = lastBulk;
+		lastBulk = null;
+		try {
+			await sparqlConnector.unassignClassFromIndividuals(iris, classIri);
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Failed to undo';
+		}
+		await runSearch(lastFacets);
+	}
 
 	let selectedIri = $state<string | null>(null);
 	let breadcrumb = $state<IdentityRef[]>([]);
@@ -67,6 +148,11 @@
 	};
 
 	let classes = $state<FetchedClass[]>([]);
+	const bulkClassOptions = $derived(
+		classes
+			.map((c) => ({ iri: c.iri, label: classOptionText(c) }))
+			.sort((a, b) => a.label.localeCompare(b.label))
+	);
 	let subClassOf = $state<FetchedSubClassOf[]>([]);
 	/** STORY-121: the full schema (not just `.classes`/`.subClassOf`), kept so `buildCanvasModel` can
 	 *  derive each class's own+inherited `attributes`/`relationFields`/`labelRequired` for the
@@ -128,7 +214,7 @@
 
 	async function openAddIdentityModal() {
 		const classIriValue = lastFacets.classIri;
-		if (!classIriValue) return;
+		if (!classIriValue || classIriValue === UNCLASSIFIED_FACET) return;
 		addIdentityClassIri = classIriValue;
 		addIdentityReady = false;
 		addIdentityOpen = true;
@@ -238,6 +324,17 @@
 		});
 	}
 
+	/** The edit form changed an identity's class: it leaves the list when it no longer matches the
+	 *  active class filter (e.g. it was Unclassified), otherwise its row just takes the new class. */
+	function handleIdentityClassChanged(iri: string, classIri: string) {
+		const facet = lastFacets.classIri;
+		const stillMatches =
+			!facet || (facet !== UNCLASSIFIED_FACET && (expandClassFacet(facet) ?? []).includes(classIri));
+		results = stillMatches
+			? results.map((r) => (r.iri === iri ? { ...r, classIri } : r))
+			: results.filter((r) => r.iri !== iri);
+	}
+
 	/** Expands a "Filter by class" facet selection into itself plus every transitive subclass, using
 	 *  the cross-namespace `subClassOf` edges already loaded for the resource page's chip coloring —
 	 *  `searchIndividuals`'s `classIri` param is an exact-type match only, so selecting an abstract
@@ -245,7 +342,7 @@
 	 *  as one of its concrete subclasses (this repo runs no OWL2-RL reasoning to materialize those
 	 *  supertype `rdf:type` triples itself). `undefined` when no class facet is selected. */
 	function expandClassFacet(classIriValue: string | null): string[] | undefined {
-		if (!classIriValue) return undefined;
+		if (!classIriValue || classIriValue === UNCLASSIFIED_FACET) return undefined;
 		const childrenBySuper = new Map<string, string[]>();
 		for (const { sub, super: superIri } of subClassOf) {
 			const children = childrenBySuper.get(superIri) ?? [];
@@ -274,27 +371,52 @@
 		isLoading = true;
 		error = null;
 		lastFacets = facets;
+		// Live search can overlap requests; only the newest one may write results.
+		const seq = ++searchSeq;
+		clearSelection();
+
+		const unclassifiedMode = facets.classIri === UNCLASSIFIED_FACET;
+		unclassifiedTotal = null;
+		queryTooShort = unclassifiedMode && isUnclassifiedQueryTooShort(facets.query);
+		if (queryTooShort) {
+			results = [];
+			hasMore = false;
+			hasSearched = true;
+			isLoading = false;
+			return;
+		}
 
 		try {
+			if (unclassifiedMode) {
+				void sparqlConnector
+					.countUnclassified({ query: facets.query || undefined, namespaceBaseIri: facets.namespaceBaseIri ?? undefined })
+					.then((n) => {
+						if (lastFacets === facets) unclassifiedTotal = n;
+					})
+					.catch(() => {});
+			}
 			const searchPage = await sparqlConnector.searchIndividuals({
 				query: facets.query || undefined,
 				classIris: expandClassFacet(facets.classIri),
+				unclassified: facets.classIri === UNCLASSIFIED_FACET,
 				namespaceBaseIri: facets.namespaceBaseIri ?? undefined,
 				syncSource: facets.syncSource ?? undefined,
 				syncStatus: facets.syncStatus ?? undefined,
 				limit: PAGE_SIZE,
 				offset: 0
 			});
+			if (seq !== searchSeq) return;
 			results = searchPage.results;
 			hasMore = searchPage.hasMore;
 			nextOffset = PAGE_SIZE;
 			hasSearched = true;
 		} catch (err) {
+			if (seq !== searchSeq) return;
 			error = err instanceof Error ? err.message : 'Failed to search identities';
 			results = [];
 			hasMore = false;
 		} finally {
-			isLoading = false;
+			if (seq === searchSeq) isLoading = false;
 		}
 
 		if (fromUrl) {
@@ -314,11 +436,13 @@
 			const searchPage = await sparqlConnector.searchIndividuals({
 				query: lastFacets.query || undefined,
 				classIris: expandClassFacet(lastFacets.classIri),
+				unclassified: lastFacets.classIri === UNCLASSIFIED_FACET,
 				namespaceBaseIri: lastFacets.namespaceBaseIri ?? undefined,
 				syncSource: lastFacets.syncSource ?? undefined,
 				syncStatus: lastFacets.syncStatus ?? undefined,
 				limit: PAGE_SIZE,
-				offset: nextOffset
+				offset: nextOffset,
+				after: lastFacets.classIri === UNCLASSIFIED_FACET ? keysetAfter(results) : undefined
 			});
 			results = [...results, ...searchPage.results];
 			hasMore = searchPage.hasMore;
@@ -416,8 +540,8 @@
 		<button
 			type="button"
 			class="add-identity-btn"
-			disabled={!lastFacets.classIri}
-			title={lastFacets.classIri ? 'Add a new identity for this class' : 'Select a class to add an identity'}
+			disabled={!lastFacets.classIri || lastFacets.classIri === UNCLASSIFIED_FACET}
+			title={lastFacets.classIri && lastFacets.classIri !== UNCLASSIFIED_FACET ? 'Add a new identity for this class' : 'Select a class to add an identity'}
 			onclick={() => void openAddIdentityModal()}
 		>
 			+ Add identity
@@ -433,7 +557,33 @@
 
 	<div class="identities-columns">
 		<div class="results-column">
+			{#if queryTooShort}
+				<p class="muted unclassified-note">Type at least 2 characters to search Unclassified individuals.</p>
+			{:else if unclassifiedTotal !== null}
+				<p class="muted unclassified-note">{unclassifiedTotal.toLocaleString()} Unclassified</p>
+			{/if}
+			{#if inUnclassifiedMode && !queryTooShort}
+				<UnclassifiedBulkBar
+					{selectionCount}
+					{pageSelected}
+					{allMatching}
+					total={unclassifiedTotal}
+					classOptions={bulkClassOptions}
+					progress={bulkProgress}
+					canUndo={lastBulk !== null}
+					undoLabel={lastBulk?.label ?? ''}
+					onSelectPage={selectPage}
+					onSelectAllMatching={() => (allMatching = true)}
+					onClear={clearSelection}
+					onApply={(c) => void applyBulkClass(c)}
+					onCancelRun={() => bulkAbort?.abort()}
+					onUndo={() => void undoBulk()}
+				/>
+			{/if}
 			<IdentityResultsList
+				selectable={inUnclassifiedMode}
+				{checkedIris}
+				onToggleChecked={toggleChecked}
 				{results}
 				{selectedIri}
 				{hasSearched}
@@ -462,6 +612,7 @@
 					canGoBack={breadcrumb.length > 1}
 					onLoaded={handleIdentityLoaded}
 					onDeleted={handleIdentityDeleted}
+					onClassChanged={handleIdentityClassChanged}
 				/>
 			{:else}
 				<div class="detail-empty-state">
@@ -613,5 +764,10 @@
 			min-height: 0;
 			height: auto;
 		}
+	}
+
+	.unclassified-note {
+		margin: 0.25rem 0.75rem;
+		font-size: 0.85rem;
 	}
 </style>
