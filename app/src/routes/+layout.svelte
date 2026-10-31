@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { appUrl } from '$lib/utils/urls';
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import SignInRequired from '$lib/components/SignInRequired.svelte';
@@ -198,7 +199,7 @@
 
 <div class="app-container">
 	<header class="app-header">
-		<a href="/" class="app-title">RDF Schema Editor</a>
+		<a href={appUrl('/')} class="app-title">RDF Schema Editor</a>
 		{#if page.data.user}
 			<AppNav {routeView} />
 		{/if}

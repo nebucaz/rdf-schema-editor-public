@@ -3,6 +3,7 @@
  * decides what the workbench should load from its URL. Nothing here trusts URL input — inline
  * models go through `decodeModelFromUrl` (strict parse), saved ids through `resolveReportTarget`.
  */
+import { absoluteAppUrl, apiUrl } from '$lib/utils/urls';
 import { decodeModelFromUrl, encodeModelForUrl, parseQueryModel, type QueryModel } from './query-model';
 import { isShortId } from './short-links';
 import { reportIdForIri, resolveReportTarget } from './report-id';
@@ -10,7 +11,7 @@ import type { SavedQueryItem } from './saved-queries';
 
 export function savedQueryLinks(origin: string, iri: string): { builder: string; report: string } {
 	const id = encodeURIComponent(reportIdForIri(iri));
-	return { builder: `${origin}/workbench?query=${id}`, report: `${origin}/reports/${id}` };
+	return { builder: absoluteAppUrl(origin, `/workbench?query=${id}`), report: absoluteAppUrl(origin, `/reports/${id}`) };
 }
 
 /** Reserved `/reports/<id>` segment for an unsaved query carried in `?m=`. Saved ids are PascalCase
@@ -22,7 +23,7 @@ export type AdHocLink = { ok: true; url: string } | { ok: false; error: string }
 export function adHocLink(origin: string, model: QueryModel): AdHocLink {
 	const enc = encodeModelForUrl(model);
 	return enc.ok
-		? { ok: true, url: `${origin}/workbench?m=${enc.param}` }
+		? { ok: true, url: absoluteAppUrl(origin, `/workbench?m=${enc.param}`) }
 		: { ok: false, error: enc.error };
 }
 
@@ -30,7 +31,7 @@ export function adHocLink(origin: string, model: QueryModel): AdHocLink {
 export function adHocReportLink(origin: string, model: QueryModel): AdHocLink {
 	const enc = encodeModelForUrl(model);
 	return enc.ok
-		? { ok: true, url: `${origin}/reports/${AD_HOC_REPORT_ID}?m=${enc.param}` }
+		? { ok: true, url: absoluteAppUrl(origin, `/reports/${AD_HOC_REPORT_ID}?m=${enc.param}`) }
 		: { ok: false, error: enc.error };
 }
 
@@ -78,7 +79,7 @@ export async function fetchShortLinkModel(
 	if (!isShortId(id)) return { ok: false, error: SHORT_LINK_NOT_FOUND };
 	let res: Response;
 	try {
-		res = await fetchImpl(`/api/shared-queries/${id}`);
+		res = await fetchImpl(apiUrl(`/shared-queries/${id}`));
 	} catch {
 		return { ok: false, error: 'The shared query could not be loaded. Check your connection and try again.' };
 	}

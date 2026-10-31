@@ -2,6 +2,7 @@ import { defineConfig, loadEnv } from 'vite';
 import type { ViteUserConfig } from 'vitest/config';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { apiProxyKey, apiProxyRewrite, normalizeBasePath } from './src/lib/utils/base-paths.ts';
 
 export default defineConfig(({ mode }) => {
 	// Dev-only: nginx is absent under `vite dev`, so the dev server plays its part — strips `/api` and
@@ -10,20 +11,30 @@ export default defineConfig(({ mode }) => {
 	// Fall back to the pre-static-frontend names so an existing app/.env keeps working.
 	const backendUrl = env.DEV_BACKEND_URL || env.BACKEND_URL || 'http://localhost:8090';
 	const backendToken = env.DEV_BACKEND_AUTH_TOKEN || env.BACKEND_AUTH_TOKEN;
+	// Build-time deployment paths (spec/deployment-req): the app under <host><base>/, the backend at
+	// <host><prefix>/api. Not secrets — they are baked into the bundle via `define` below.
+	const appBasePath = normalizeBasePath(env.APP_BASE_PATH, 'APP_BASE_PATH');
+	const apiPrefix = normalizeBasePath(env.API_PREFIX, 'API_PREFIX');
 	return {
+		define: {
+			__APP_BASE_PATH__: JSON.stringify(appBasePath),
+			__API_PREFIX__: JSON.stringify(apiPrefix)
+		},
 		server: {
 			proxy: {
-				'/api': {
+				[apiProxyKey(apiPrefix)]: {
 					target: backendUrl,
 					// Keep the browser's Host so the backend's same-origin (CSRF) check sees Origin == Host.
 					changeOrigin: false,
-					rewrite: (path) => path.replace(/^\/api/, ''),
+					rewrite: apiProxyRewrite(apiPrefix),
 					headers: backendToken ? { Authorization: `Bearer ${backendToken}` } : {}
 				}
 			}
 		},
 		plugins: [
 			sveltekit({
+				// Kit options sit at the top level of the inline config (no `kit:` wrapper), like `adapter` below.
+				paths: { base: appBasePath },
 				compilerOptions: {
 					// Force runes mode for the project, except for libraries. Can be removed in svelte 6.
 					runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true

@@ -39,13 +39,13 @@ type Config struct {
 	// (non-dry-run) sync. Parsed from BACKSTAGE_SYNC_INTERVAL (a Go time.Duration string, e.g.
 	// "1h"); defaults to defaultBackstageSyncInterval when unset.
 	BackstageSyncInterval time.Duration
-	// AuthJWTSecret is the HS256 signing secret shared between the JWT verification middleware
+	// AuthJWTSecret is the HS512 signing secret shared between the JWT verification middleware
 	// (STORY-002) and the minting tool (STORY-003). Required — see Load()'s fail-fast behavior.
 	AuthJWTSecret string
 	// AllowedOrigins lists extra browser origins (e.g. "https://app.example") CSRFGuard accepts in
 	// addition to one matching the request Host. Parsed from comma-separated ALLOWED_ORIGINS.
 	AllowedOrigins []string
-	// UserJWTSecret verifies the end-user access token in the `Oglala` cookie (HS256). Optional —
+	// UserJWTSecret verifies the end-user access token in the `Oglala` cookie (HS512). Optional —
 	// without it the backend starts and /me always reports no user. Deliberately separate from
 	// AuthJWTSecret so a leaked user key cannot mint service tokens.
 	UserJWTSecret string
@@ -148,6 +148,11 @@ func (c Config) DefaultNamespaceBaseIRI() string {
 	return sparqlsafe.DefaultNamespaceBaseIRI(c.SchemaNamespace)
 }
 
+// MinJWTSecretBytes is the shortest HMAC secret the backend starts with: HS512 needs a key at least
+// as long as its 64-byte hash output (RFC 7518 §3.2). Applies to AUTH_JWT_SECRET and, when set,
+// USER_JWT_SECRET.
+const MinJWTSecretBytes = 64
+
 // Load reads Config from the environment. GraphDBEndpointURL is required and fails fast if unset;
 // GraphDBUser/GraphDBPassword are optional (unauthenticated GraphDB repositories are valid), matching
 // the SvelteKit gateway's own `if (SPARQL_USER && SPARQL_PASSWORD)` behavior it replaces. Port falls
@@ -161,6 +166,12 @@ func Load() (Config, error) {
 	authJWTSecret := os.Getenv("AUTH_JWT_SECRET")
 	if authJWTSecret == "" {
 		return Config{}, fmt.Errorf("AUTH_JWT_SECRET is required but not set")
+	}
+	if len(authJWTSecret) < MinJWTSecretBytes {
+		return Config{}, fmt.Errorf("AUTH_JWT_SECRET must be at least %d bytes for HS512 (got %d); generate one with `openssl rand -base64 64`", MinJWTSecretBytes, len(authJWTSecret))
+	}
+	if userSecret := os.Getenv("USER_JWT_SECRET"); userSecret != "" && len(userSecret) < MinJWTSecretBytes {
+		return Config{}, fmt.Errorf("USER_JWT_SECRET must be at least %d bytes for HS512 (got %d)", MinJWTSecretBytes, len(userSecret))
 	}
 
 	port := os.Getenv("PORT")

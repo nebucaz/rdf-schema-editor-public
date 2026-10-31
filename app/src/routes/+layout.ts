@@ -1,3 +1,4 @@
+import { apiUrl } from '$lib/utils/urls';
 import { error } from '@sveltejs/kit';
 import { runtimeConfigError } from '$lib/config';
 import { toSessionUser, type SessionUser } from '$lib/services/session-user';
@@ -20,7 +21,7 @@ export const load: LayoutLoad = async ({ fetch }) => {
 	}
 	let user: SessionUser | null = null;
 	try {
-		const response = await fetch('/api/me');
+		const response = await fetch(apiUrl('/me'));
 		if (response.ok) {
 			const body = (await response.json()) as { user: Record<string, unknown> | null };
 			user = toSessionUser(body.user);

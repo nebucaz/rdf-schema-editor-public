@@ -2,6 +2,7 @@
  * Short share links (object-browser STORY-261). Pure: id generation/validation and the choice
  * between an inline `?m=` link and a stored short link. Nothing here touches the network.
  */
+import { absoluteAppUrl } from '$lib/utils/urls';
 import { encodeModelForUrl, type QueryModel } from './query-model';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -35,9 +36,9 @@ export type ShareLinkPlan =
 /** `?m=` while the model fits `MAX_SHARE_PARAM_LENGTH`, otherwise a request for a stored short link. */
 export function shareLinkFor(origin: string, model: QueryModel): ShareLinkPlan {
 	const enc = encodeModelForUrl(model);
-	return enc.ok ? { kind: 'inline', url: `${origin}/workbench?m=${enc.param}` } : { kind: 'short' };
+	return enc.ok ? { kind: 'inline', url: absoluteAppUrl(origin, `/workbench?m=${enc.param}`) } : { kind: 'short' };
 }
 
 export function shortLinkUrl(origin: string, id: string): string {
-	return `${origin}/workbench?q=${id}`;
+	return absoluteAppUrl(origin, `/workbench?q=${id}`);
 }

@@ -1,13 +1,20 @@
 package config
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
 
+// 64-byte secrets: the shortest the backend accepts (MinJWTSecretBytes).
+var (
+	testAuthSecret = strings.Repeat("a", MinJWTSecretBytes)
+	testUserSecret = strings.Repeat("u", MinJWTSecretBytes)
+)
+
 func TestLoad_RequiredVarPresent(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("PORT", "")
 	t.Setenv("GRAPHDB_USER", "")
 	t.Setenv("GRAPHDB_PASSWORD", "")
@@ -22,14 +29,14 @@ func TestLoad_RequiredVarPresent(t *testing.T) {
 	if cfg.Port != "8090" {
 		t.Errorf("Port = %q, want default 8090", cfg.Port)
 	}
-	if cfg.AuthJWTSecret != "test-secret" {
+	if cfg.AuthJWTSecret != testAuthSecret {
 		t.Errorf("AuthJWTSecret = %q, want the configured secret", cfg.AuthJWTSecret)
 	}
 }
 
 func TestLoad_RequiredVarMissing(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 
 	_, err := Load()
 	if err == nil {
@@ -49,20 +56,20 @@ func TestLoad_AuthJWTSecretMissing(t *testing.T) {
 
 func TestLoad_AuthJWTSecretPresent(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "s3cret-signing-key")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() returned error: %v", err)
 	}
-	if cfg.AuthJWTSecret != "s3cret-signing-key" {
+	if cfg.AuthJWTSecret != testAuthSecret {
 		t.Errorf("AuthJWTSecret = %q, want the configured secret", cfg.AuthJWTSecret)
 	}
 }
 
 func TestLoad_PortOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("PORT", "9999")
 
 	cfg, err := Load()
@@ -76,7 +83,7 @@ func TestLoad_PortOverride(t *testing.T) {
 
 func TestLoad_SchemaNamespaceDefault(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("PUBLIC_SCHEMA_NAMESPACE", "")
 
 	cfg, err := Load()
@@ -93,7 +100,7 @@ func TestLoad_SchemaNamespaceDefault(t *testing.T) {
 
 func TestLoad_SchemaNamespaceOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("PUBLIC_SCHEMA_NAMESPACE", "http://example.org/schema#")
 
 	cfg, err := Load()
@@ -107,7 +114,7 @@ func TestLoad_SchemaNamespaceOverride(t *testing.T) {
 
 func TestLoad_BackstageSettings(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("BACKSTAGE_BASE_URL", "https://backstage.example.com/api/catalog")
 	t.Setenv("BACKSTAGE_TOKEN", "s3cret")
 
@@ -125,7 +132,7 @@ func TestLoad_BackstageSettings(t *testing.T) {
 
 func TestLoad_BackstageSettingsOptional(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("BACKSTAGE_BASE_URL", "")
 	t.Setenv("BACKSTAGE_TOKEN", "")
 
@@ -136,7 +143,7 @@ func TestLoad_BackstageSettingsOptional(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalDefault(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "")
 
 	cfg, err := Load()
@@ -150,7 +157,7 @@ func TestLoad_BackstageSyncIntervalDefault(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalOverride(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "30m")
 
 	cfg, err := Load()
@@ -164,7 +171,7 @@ func TestLoad_BackstageSyncIntervalOverride(t *testing.T) {
 
 func TestLoad_BackstageSyncIntervalInvalid(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("BACKSTAGE_SYNC_INTERVAL", "not-a-duration")
 
 	if _, err := Load(); err == nil {
@@ -212,7 +219,7 @@ func TestConfig_DerivedVocabularyIRIs(t *testing.T) {
 
 func TestLoad_AllowedOrigins(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("ALLOWED_ORIGINS", " https://a.example, ,https://b.example ")
 
 	cfg, err := Load()
@@ -226,22 +233,22 @@ func TestLoad_AllowedOrigins(t *testing.T) {
 
 func TestLoad_UserJWTSecretOptional(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("USER_JWT_SECRET", "")
 	cfg, err := Load()
 	if err != nil || cfg.UserJWTSecret != "" {
 		t.Fatalf("Load() = %q, %v; want empty secret and no error", cfg.UserJWTSecret, err)
 	}
-	t.Setenv("USER_JWT_SECRET", "user-secret")
-	if cfg, _ = Load(); cfg.UserJWTSecret != "user-secret" {
+	t.Setenv("USER_JWT_SECRET", testUserSecret)
+	if cfg, _ = Load(); cfg.UserJWTSecret != testUserSecret {
 		t.Errorf("UserJWTSecret = %q", cfg.UserJWTSecret)
 	}
 }
 
 func TestLoad_DevLoginEnabled(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
-	t.Setenv("USER_JWT_SECRET", "user-secret") // required when the dev login is on
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
+	t.Setenv("USER_JWT_SECRET", testUserSecret) // required when the dev login is on
 	for value, want := range map[string]bool{"": false, "false": false, "true": true} {
 		t.Setenv("DEV_LOGIN_ENABLED", value)
 		cfg, err := Load()
@@ -253,9 +260,9 @@ func TestLoad_DevLoginEnabled(t *testing.T) {
 
 func TestLoad_DevLoginRefusals(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("DEV_LOGIN_ENABLED", "true")
-	t.Setenv("USER_JWT_SECRET", "user-secret")
+	t.Setenv("USER_JWT_SECRET", testUserSecret)
 
 	t.Setenv("APP_ENV", "production")
 	if _, err := Load(); err == nil {
@@ -281,9 +288,48 @@ func TestLoad_DevLoginRefusals(t *testing.T) {
 
 func TestLoad_CookieSecure(t *testing.T) {
 	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
-	t.Setenv("AUTH_JWT_SECRET", "test-secret")
+	t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
 	t.Setenv("COOKIE_SECURE", "true")
 	if cfg, _ := Load(); !cfg.CookieSecure {
 		t.Error("COOKIE_SECURE=true not parsed")
+	}
+}
+
+func TestLoad_JWTSecretMinimumLength(t *testing.T) {
+	t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+	short, exact := strings.Repeat("a", MinJWTSecretBytes-1), strings.Repeat("a", MinJWTSecretBytes)
+
+	cases := []struct {
+		name, auth, user string
+		wantErr          string // substring; empty = Load must succeed
+	}{
+		{"auth 63 bytes", short, "", "AUTH_JWT_SECRET"},
+		{"auth 64 bytes", exact, "", ""},
+		{"user 63 bytes", exact, short, "USER_JWT_SECRET"},
+		{"user 64 bytes", exact, exact, ""},
+		{"user unset", exact, "", ""},
+		{"auth unset keeps the required error", "", "", "AUTH_JWT_SECRET is required"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("AUTH_JWT_SECRET", tc.auth)
+			t.Setenv("USER_JWT_SECRET", tc.user)
+			_, err := Load()
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Load() error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Load() error = %v, want it to contain %q", err, tc.wantErr)
+			}
+			if tc.auth != "" && strings.Contains(err.Error(), tc.auth) || tc.user != "" && strings.Contains(err.Error(), tc.user) {
+				t.Errorf("error %q echoes a secret", err)
+			}
+			if tc.auth != "" && !strings.Contains(err.Error(), "64") {
+				t.Errorf("error %q does not state the required length", err)
+			}
+		})
 	}
 }

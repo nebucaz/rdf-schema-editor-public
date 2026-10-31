@@ -21,7 +21,7 @@ func userToken(t *testing.T, claims jwt.MapClaims, key string) string {
 	if _, ok := claims["exp"]; !ok {
 		claims["exp"] = time.Now().Add(time.Hour).Unix()
 	}
-	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(key))
+	s, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString([]byte(key))
 	if err != nil {
 		t.Fatal(err)
 	}

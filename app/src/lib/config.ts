@@ -9,6 +9,8 @@
  * browser) use the fallback below.
  */
 
+import { apiUrl } from '$lib/utils/urls';
+
 const FALLBACK_SCHEMA_NAMESPACE = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
 
 /** Drops a trailing `#`, then a trailing `/schema`, from a raw namespace value. */
@@ -26,11 +28,12 @@ export type RuntimeConfigResult =
 /** Fetches and validates `/api/config`; never throws — a failure comes back as `{ ok: false }`. */
 export async function loadRuntimeConfig(fetchFn: typeof fetch): Promise<RuntimeConfigResult> {
 	try {
-		const response = await fetchFn('/api/config');
-		if (!response.ok) return { ok: false, message: `GET /api/config returned ${response.status}` };
+		const url = apiUrl('/config');
+		const response = await fetchFn(url);
+		if (!response.ok) return { ok: false, message: `GET ${url} returned ${response.status}` };
 		const body = (await response.json()) as { defaultNamespaceBaseIri?: unknown; devLoginEnabled?: unknown };
 		if (typeof body.defaultNamespaceBaseIri !== 'string' || !body.defaultNamespaceBaseIri) {
-			return { ok: false, message: 'GET /api/config returned no defaultNamespaceBaseIri' };
+			return { ok: false, message: `GET ${url} returned no defaultNamespaceBaseIri` };
 		}
 		return {
 			ok: true,

@@ -8,6 +8,7 @@
 	 * replaces the current history entry, right-column identity navigation pushes new entries — same
 	 * split as the ported original).
 	 */
+	import { appUrl } from '$lib/utils/urls';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -462,7 +463,7 @@
 		selectedIri = null;
 		breadcrumb = [];
 		nodeCache.clear();
-		void goto('/identities', { replaceState: true, noScroll: true, keepFocus: true });
+		void goto(appUrl('/identities'), { replaceState: true, noScroll: true, keepFocus: true });
 	}
 
 	// Keeps route state in sync with the URL: deep links, and the browser's own Back/Forward

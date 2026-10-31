@@ -96,12 +96,12 @@ The SPARQL guards, query-model validation, short-link ids and annotation SPARQL 
 |----------|---------|---------|
 | `GRAPHDB_ENDPOINT_URL` | – (required) | GraphDB repository URL. In a container use `host.docker.internal`, not `localhost` |
 | `GRAPHDB_USER`, `GRAPHDB_PASSWORD` | empty | Basic auth, if the repository needs it |
-| `AUTH_JWT_SECRET` | – (required) | HS256 secret for the service JWT |
+| `AUTH_JWT_SECRET` | – (required) | HS512 secret for the service JWT, at least 64 bytes (shorter = startup refused) |
 | `PORT` | `8090` | listen port |
 | `PUBLIC_SCHEMA_NAMESPACE` | built-in default | default namespace; served to the frontend by `/config` |
 | `BACKSTAGE_BASE_URL`, `BACKSTAGE_TOKEN` | empty | Backstage source |
 | `BACKSTAGE_SYNC_INTERVAL` | `1h` | background sync period |
-| `USER_JWT_SECRET` | empty | HS256 secret verifying the `Oglala` cookie; unset = nobody is ever signed in |
+| `USER_JWT_SECRET` | empty | HS512 secret verifying the `Oglala` cookie, at least 64 bytes when set; unset = nobody is ever signed in |
 | `DEV_LOGIN_ENABLED` | `false` | route the dev login/logout; needs `USER_JWT_SECRET`, refused when `APP_ENV=production` |
 | `COOKIE_SECURE` | `false` | `Secure` attribute on the dev-login cookie (set with HTTPS) |
 | `APP_ENV` | empty | `production` forbids the dev login |
@@ -109,8 +109,8 @@ The SPARQL guards, query-model validation, short-link ids and annotation SPARQL 
 
 ## Authentication
 
-Every route except `/health` and the session routes (`GET /config`, `GET /me`, `POST /auth/dev-login`, `POST /auth/logout`) requires a signed service JWT: `Authorization: Bearer <jwt>`, HS256-signed
-against `AUTH_JWT_SECRET`. A missing header, malformed header, bad signature, or expired token all
+Every route except `/health` and the session routes (`GET /config`, `GET /me`, `POST /auth/dev-login`, `POST /auth/logout`) requires a signed service JWT: `Authorization: Bearer <jwt>`, HS512-signed
+against `AUTH_JWT_SECRET` (only HS512 is accepted — an HS256 token gets the same `401`). A missing header, malformed header, bad signature, or expired token all
 get a `401` (see `spec/threat-mitigation/plan.md`). This is a deliberate placeholder — a static,
 per-caller identity minted ahead of time, not a per-human login — until real end-user identity
 arrives from the embedding framework the app is expected to run inside.
@@ -122,7 +122,7 @@ configured as `IMPORTCTL_AUTH_TOKEN`). The data routes additionally need the sig
 
 ### User identity (`GET /me`)
 
-The end user is identified by an HS256 JWT in the `Oglala` cookie, verified with `USER_JWT_SECRET`
+The end user is identified by an HS512 JWT in the `Oglala` cookie, verified with `USER_JWT_SECRET`
 (separate from `AUTH_JWT_SECRET`). `GET /me` returns `{"user": {sub, displayName, email, department,
 groups}}`, or `{"user": null}` (status 200) for an absent, invalid or expired cookie — or when
 `USER_JWT_SECRET` is unset. `handler.UserFromRequest(r)` gives later handlers the verified user, and
@@ -132,7 +132,7 @@ groups}}`, or `{"user": null}` (status 200) for an absent, invalid or expired co
 
 Only routed when `DEV_LOGIN_ENABLED=true` (otherwise `404`); startup is refused with
 `APP_ENV=production` or without `USER_JWT_SECRET`. `dev-login` takes an optional JSON body
-`{"sub"?: string}` (default `dev-user`) and sets the `Oglala` cookie — an 8-hour HS256 token with the
+`{"sub"?: string}` (default `dev-user`) and sets the `Oglala` cookie — an 8-hour HS512 token with the
 same claims as an SSO one (`groups: []`), `HttpOnly; SameSite=Lax; Path=/`, plus `Secure` when
 `COOKIE_SECURE=true`. `logout` expires the cookie. Send `Content-Type: application/json` from a
 browser (see CSRF guard). The SSO "auth token" counterpart is not implemented (open question in the spec).

@@ -5,6 +5,7 @@
 	 * colour rules as the workbench; read-oriented chrome only (no builder panels). Link-only for
 	 * Confluence (Q22): no embedding allowances are added anywhere.
 	 */
+	import { appUrl } from '$lib/utils/urls';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import QueryResultsTable from '$lib/components/QueryResultsTable.svelte';
@@ -145,7 +146,7 @@
 		<section class="notice" data-testid="report-not-found">
 			<h1>Report not found</h1>
 			<p>No saved query matches this link. It may have been deleted or renamed by its author.</p>
-			<p><a href="/workbench">Go to the Query Workbench</a></p>
+			<p><a href={appUrl('/workbench')}>Go to the Query Workbench</a></p>
 		</section>
 	{:else}
 		<header class="report-head">
@@ -165,8 +166,8 @@
 					<a
 						class="btn"
 						href={id === AD_HOC_REPORT_ID
-							? `/workbench${page.url.search}`
-							: `/workbench?query=${encodeURIComponent(id)}`}
+							? appUrl(`/workbench${page.url.search}`)
+							: appUrl(`/workbench?query=${encodeURIComponent(id)}`)}
 						data-testid="report-open-builder"
 					>
 						Open in builder

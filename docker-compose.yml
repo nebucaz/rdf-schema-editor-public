@@ -32,6 +32,10 @@ services:
     build:
       context: ./app
       dockerfile: Dockerfile
+      # Build-time paths (spec/deployment-req) — the image is built for exactly this path/prefix.
+      args:
+        APP_BASE_PATH: ${APP_BASE_PATH:-}
+        API_PREFIX: ${API_PREFIX:-}
     restart: unless-stopped
     depends_on:
       backend:

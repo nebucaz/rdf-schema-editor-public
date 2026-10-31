@@ -12,6 +12,7 @@
 </script>
 
 <script lang="ts">
+	import { apiUrl } from '$lib/utils/urls';
 	import { extractLocalName } from '$lib/utils/iri';
 	import { buildIdentitySearchUrl } from '$lib/utils/identity-search-url';
 	import { toCurie, curieifyText, namespaceOf } from '$lib/utils/curie';
@@ -52,7 +53,7 @@
 			// Namespace prefixes for the CURIE-compacted display below — usually already loaded by
 			// `+layout.svelte`'s own `ensureLoaded()` call, but calling it again here is a no-op once
 			// loaded and keeps this component correct standalone.
-			const [response] = await Promise.all([fetch('/api/validation/report'), namespaceStore.ensureLoaded()]);
+			const [response] = await Promise.all([fetch(apiUrl('/validation/report')), namespaceStore.ensureLoaded()]);
 			if (!response.ok) {
 				throw new Error(`Validation report failed: ${response.status} ${response.statusText}`);
 			}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { apiUrl } from '$lib/utils/urls';
 	import { onMount } from 'svelte';
 	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
 	import { pascalCase } from '$lib/utils/iri';
@@ -37,7 +38,7 @@
 		loading = true;
 		loadError = null;
 		try {
-			const response = await fetch('/api/sources/backstage/discover');
+			const response = await fetch(apiUrl('/sources/backstage/discover'));
 			if (!response.ok) {
 				throw new Error(`Discovery failed: ${response.status} ${response.statusText}`);
 			}

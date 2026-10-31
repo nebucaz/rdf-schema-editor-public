@@ -78,7 +78,7 @@ Requires Go 1.25+ (`go version` to check).
    the Docker setup above); `PORT` is optional and defaults to `8090`. `AUTH_JWT_SECRET` is
    **required** — the backend refuses to start without it (the data routes need a signed bearer JWT,
    see "Tokens" below and `backend/README.md`'s "Authentication" section). Generate one with
-   `openssl rand -base64 32`.
+   `openssl rand -base64 64` — it must be at least 64 bytes (HS512), otherwise the backend refuses to start.
 
 2. **Run it:**
 
@@ -119,6 +119,33 @@ bootstrap script, computed at image build time; `style-src` allows inline styles
 no `unsafe-eval`), `X-Content-Type-Options`, `Referrer-Policy`, and `X-Frame-Options`/`frame-ancestors`. HSTS is
 off by default; set `ENABLE_HSTS=true` on the `frontend` service **only** when TLS is terminated in front of it.
 If something is blocked, the browser console names the violated directive.
+
+## Deploying under a sub-path
+
+Behind a corporate gateway the app often lives at `<host>/path/` and the backend at `<host>/<prefix>/api`. Two
+**build-time** settings (not secrets, baked into the bundle — one image serves exactly one path) cover this:
+
+| Variable | Meaning | Example |
+|---|---|---|
+| `APP_BASE_PATH` | the SPA is served at `<host><APP_BASE_PATH>/` (SvelteKit `paths.base`) | `/path` |
+| `API_PREFIX` | the browser calls the backend at `<host><API_PREFIX>/api/...` | `/prefix` |
+
+Both are optional and independent; empty means today's `/` and `/api`. They must start with `/`, have no trailing
+`/`, and contain only letters, digits and `. _ ~ -` per segment — anything else fails the build with a message.
+
+- **Dev / local build:** set them in `app/.env` (see `app/.env.example`); `bun run dev` then serves under
+  `<APP_BASE_PATH>/` and proxies `<API_PREFIX>/api` to the backend.
+- **Docker:** set them in the root `.env`; `docker-compose.yml` passes them as build args, so run
+  `docker compose build frontend` after changing them. `app/.env` is excluded from the image build.
+- **Gateway contract:** the gateway strips both prefixes before traffic reaches the container, so nginx and the Go
+  backend need no change: `<APP_BASE_PATH>/...` → nginx `/...` (SPA fallback included) and `<API_PREFIX>/api/...` →
+  nginx `/api/...`. The user's `Oglala` cookie must be sent on `<API_PREFIX>/api` requests (its `Path` must cover it).
+
+Example (`APP_BASE_PATH=/path`, `API_PREFIX=/prefix`): the app is `https://host/path/workbench`, it calls
+`https://host/prefix/api/me`, which the gateway forwards to `http://frontend:8080/api/me`.
+
+In code, build URLs only with `apiUrl()` / `appUrl()` / `absoluteAppUrl()` from `app/src/lib/utils/urls.ts`;
+`urls-guard.spec.ts` fails on a bare `/api/...` literal or an absolute `href="/…"` / `goto('/…')`.
 
 ## Running the app in dev mode
 
@@ -170,6 +197,13 @@ Two different tokens are involved. Only the first one is ever pasted into a file
 | **In production** | nginx adds it to every `/api/` request | issued by the corporate SSO |
 | **In dev** | the Vite proxy adds it from `app/.env` | the "Login with user role" button creates it |
 
+Both tokens are **HS512** (the corporate SSO issues the `Oglala` cookie as HS512); HS256 tokens are
+rejected with a `401`, and both secrets must be at least 64 bytes.
+
+> **Upgrading from an HS256 build:** every previously minted service token stops working. After deploying,
+> re-mint `BACKEND_AUTH_TOKEN` (root `.env`), `DEV_BACKEND_AUTH_TOKEN` (`app/.env`) and `IMPORTCTL_AUTH_TOKEN`
+> with `go run ./cmd/cli mint-token`, and make sure `AUTH_JWT_SECRET` / `USER_JWT_SECRET` are ≥ 64 bytes.
+
 While signed out the app shows a "Sign in required" screen instead of the workbench.
 
 `/config`, `/me` and the dev login/logout routes need **no** service token — the login button works before
@@ -180,8 +214,8 @@ any token is configured.
 1. In `backend/.env`:
 
    ```
-   AUTH_JWT_SECRET=<openssl rand -base64 32>
-   USER_JWT_SECRET=<a different openssl rand -base64 32>
+   AUTH_JWT_SECRET=<openssl rand -base64 64>
+   USER_JWT_SECRET=<a different openssl rand -base64 64>
    DEV_LOGIN_ENABLED=true     # shows the "Login with user role" button on the sign-in screen; refused when APP_ENV=production
    COOKIE_SECURE=false        # plain http on localhost
    ```

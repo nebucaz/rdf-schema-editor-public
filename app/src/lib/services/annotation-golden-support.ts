@@ -4,6 +4,7 @@
  * (`backend/internal/annotations`) can be held to the same sequence via the shared fixture
  * `backend/testdata/golden/annotations.json`.
  */
+import { apiUrl } from '$lib/utils/urls';
 import { vi } from 'vitest';
 import type { AnnotationInput, FactKey } from './sparql-connector';
 
@@ -65,7 +66,7 @@ export async function runGolden(input: GoldenInput): Promise<GoldenResult> {
 			return json({ head: { vars: [] }, results: { bindings: answer.select } });
 		});
 		vi.stubGlobal('fetch', fetchStub);
-		const connector = new SparqlConnector('/api/sparql');
+		const connector = new SparqlConnector(apiUrl('/sparql'));
 		try {
 			if (input.action === 'delete') {
 				await connector.deleteAnnotation(input.annotationIri!);

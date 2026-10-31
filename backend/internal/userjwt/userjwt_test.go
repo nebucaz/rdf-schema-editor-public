@@ -13,7 +13,7 @@ const secret = "user-secret"
 
 func sign(t *testing.T, claims jwt.MapClaims, key string) string {
 	t.Helper()
-	s, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(key))
+	s, err := jwt.NewWithClaims(jwt.SigningMethodHS512, claims).SignedString([]byte(key))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,12 +78,14 @@ func TestVerify_GroupsEmptyOrAbsentIsNonNil(t *testing.T) {
 func TestVerify_Rejects(t *testing.T) {
 	b64 := func(s string) string { return base64.RawURLEncoding.EncodeToString([]byte(s)) }
 	noneToken := b64(`{"alg":"none","typ":"JWT"}`) + "." + b64(`{"sub":"s"}`) + "."
-	hs512, _ := jwt.NewWithClaims(jwt.SigningMethodHS512, jwt.MapClaims{"sub": "s", "exp": future()}).SignedString([]byte(secret))
+	hs256, _ := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{"sub": "s", "exp": future()}).SignedString([]byte(secret))
+	hs384, _ := jwt.NewWithClaims(jwt.SigningMethodHS384, jwt.MapClaims{"sub": "s", "exp": future()}).SignedString([]byte(secret))
 
 	cases := map[string]string{
 		"bad signature":  sign(t, jwt.MapClaims{"sub": "s", "exp": future()}, "other"),
 		"alg none":       noneToken,
-		"hs512":          hs512,
+		"hs256":          hs256,
+		"hs384":          hs384,
 		"expired":        sign(t, jwt.MapClaims{"sub": "s", "exp": time.Now().Add(-time.Hour).Unix()}, secret),
 		"missing sub":    sign(t, jwt.MapClaims{"name": "x", "exp": future()}, secret),
 		"empty sub":      sign(t, jwt.MapClaims{"sub": "", "exp": future()}, secret),
@@ -123,5 +125,22 @@ func TestMint_RoundTripsAndSetsLoginID(t *testing.T) {
 	}
 	if _, err := Mint("", in, time.Hour); err == nil {
 		t.Error("Mint with empty secret succeeded")
+	}
+}
+
+func TestMint_SignsHS512AndRoundTrips(t *testing.T) {
+	signed, err := Mint(secret, User{Sub: "dev-user"}, time.Hour)
+	if err != nil {
+		t.Fatalf("Mint() error: %v", err)
+	}
+	token, _, err := jwt.NewParser().ParseUnverified(signed, jwt.MapClaims{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := token.Method.Alg(); got != "HS512" {
+		t.Errorf("alg = %q, want HS512", got)
+	}
+	if u, err := Verify(signed, secret); err != nil || u.Sub != "dev-user" {
+		t.Errorf("Verify(Mint()) = %+v, %v; want sub dev-user", u, err)
 	}
 }

@@ -1,3 +1,5 @@
+import { apiUrl } from '$lib/utils/urls';
+
 export type AuthResult = { ok: true } | { ok: false; message: string };
 
 async function post(path: string, fetchFn: typeof fetch): Promise<AuthResult> {
@@ -17,7 +19,7 @@ async function post(path: string, fetchFn: typeof fetch): Promise<AuthResult> {
 }
 
 /** `POST /api/auth/dev-login` — the backend sets the HttpOnly `Oglala` cookie; nothing is stored here. */
-export const devLogin = (fetchFn: typeof fetch = fetch) => post('/api/auth/dev-login', fetchFn);
+export const devLogin = (fetchFn: typeof fetch = fetch) => post(apiUrl('/auth/dev-login'), fetchFn);
 
 /** `POST /api/auth/logout` — the backend clears the cookie. */
-export const devLogout = (fetchFn: typeof fetch = fetch) => post('/api/auth/logout', fetchFn);
+export const devLogout = (fetchFn: typeof fetch = fetch) => post(apiUrl('/auth/logout'), fetchFn);

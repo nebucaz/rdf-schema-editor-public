@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/jwtauth"
 )
 
@@ -25,6 +27,14 @@ func TestJWTAuth(t *testing.T) {
 		t.Fatalf("Mint() error: %v", err)
 	}
 
+	hs256Token, err := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
+		Subject:   "frontend-app",
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+	}).SignedString([]byte(testSecret))
+	if err != nil {
+		t.Fatalf("SignedString() error: %v", err)
+	}
+
 	tests := []struct {
 		name       string
 		authHeader string
@@ -36,6 +46,7 @@ func TestJWTAuth(t *testing.T) {
 		{name: "malformed header, no Bearer prefix", authHeader: validToken, wantStatus: http.StatusUnauthorized},
 		{name: "bad signature", authHeader: "Bearer " + wrongSecretToken, wantStatus: http.StatusUnauthorized},
 		{name: "expired token", authHeader: "Bearer " + expiredToken, wantStatus: http.StatusUnauthorized},
+		{name: "legacy HS256 token with the right secret", authHeader: "Bearer " + hs256Token, wantStatus: http.StatusUnauthorized},
 		{name: "garbage token", authHeader: "Bearer not-a-jwt", wantStatus: http.StatusUnauthorized},
 	}
 

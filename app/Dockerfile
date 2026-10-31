@@ -6,6 +6,12 @@ COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 COPY . .
+# Build-time deployment paths (spec/deployment-req): baked into the bundle by vite.config.ts, so one
+# image serves exactly one path. Empty = served at "/" with the backend at "/api". These build args
+# are the only source — app/.env is excluded by .dockerignore, and process env wins over .env files.
+ARG APP_BASE_PATH=
+ARG API_PREFIX=
+ENV APP_BASE_PATH=${APP_BASE_PATH} API_PREFIX=${API_PREFIX}
 RUN bun run build
 # Security headers incl. the hash of SvelteKit's inline bootstrap script (changes every build).
 RUN bun run scripts/csp-snippet.ts build/index.html /tmp/security-headers.conf

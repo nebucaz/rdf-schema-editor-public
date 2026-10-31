@@ -46,23 +46,49 @@ func TestVerify_Expired(t *testing.T) {
 	}
 }
 
-// TestVerify_RejectsNonHS256Algorithm confirms Verify pins to exactly HS256 rather than accepting
-// any HMAC-family algorithm — a token signed HS384 with the *same* secret must still be rejected,
-// matching plan.md's ADR ("HS256, one shared secret") and closing an algorithm-confusion gap a
-// delta security review flagged after Sprint 1 shipped.
-func TestVerify_RejectsNonHS256Algorithm(t *testing.T) {
+// TestVerify_RejectsNonHS512Algorithm confirms Verify pins to exactly HS512 rather than accepting
+// any HMAC-family algorithm — a token signed HS256 or HS384 with the *same* secret must be rejected
+// (spec/deployment-req ADR: HS512 only, hard cut), closing the algorithm-confusion gap.
+func TestVerify_RejectsNonHS512Algorithm(t *testing.T) {
 	claims := jwt.RegisteredClaims{
 		Subject:   "frontend-app",
 		IssuedAt:  jwt.NewNumericDate(time.Now()),
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}
-	token := jwt.NewWithClaims(jwt.SigningMethodHS384, claims)
-	signed, err := token.SignedString([]byte(testSecret))
-	if err != nil {
-		t.Fatalf("SignedString() error: %v", err)
+	for name, method := range map[string]jwt.SigningMethod{
+		"HS256": jwt.SigningMethodHS256,
+		"HS384": jwt.SigningMethodHS384,
+	} {
+		signed, err := jwt.NewWithClaims(method, claims).SignedString([]byte(testSecret))
+		if err != nil {
+			t.Fatalf("%s SignedString() error: %v", name, err)
+		}
+		if _, err := Verify(signed, testSecret); err == nil {
+			t.Errorf("Verify() accepted an %s-signed token, want it rejected as not HS512", name)
+		}
 	}
 
-	if _, err := Verify(signed, testSecret); err == nil {
-		t.Error("Verify() accepted an HS384-signed token, want it rejected as not HS256")
+	noneToken := "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJmcm9udGVuZC1hcHAifQ."
+	if _, err := Verify(noneToken, testSecret); err == nil {
+		t.Error("Verify() accepted an alg:none token")
+	}
+}
+
+// TestMint_SignsHS512 confirms Mint emits an HS512 token (the header alg is what importctl
+// mint-token hands to operators).
+func TestMint_SignsHS512(t *testing.T) {
+	signed, err := Mint(testSecret, "frontend-app", time.Hour)
+	if err != nil {
+		t.Fatalf("Mint() error: %v", err)
+	}
+	token, _, err := jwt.NewParser().ParseUnverified(signed, &jwt.RegisteredClaims{})
+	if err != nil {
+		t.Fatalf("ParseUnverified() error: %v", err)
+	}
+	if got := token.Method.Alg(); got != "HS512" {
+		t.Errorf("alg = %q, want HS512", got)
+	}
+	if Algorithm != "HS512" {
+		t.Errorf("Algorithm = %q, want HS512", Algorithm)
 	}
 }

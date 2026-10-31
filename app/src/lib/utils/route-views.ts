@@ -3,6 +3,8 @@
  * chrome (workspace/namespace selectors, triples, SVG export, …) on the non-canvas routes.
  * `isCanvasView` is true only on the canvas route itself, not merely "not identities".
  */
+import { stripBase } from '$lib/utils/urls';
+
 export interface RouteView {
 	isIdentitiesView: boolean;
 	isValidationView: boolean;
@@ -12,7 +14,9 @@ export interface RouteView {
 	isCanvasView: boolean;
 }
 
-export function resolveRouteView(pathname: string): RouteView {
+export function resolveRouteView(browserPathname: string): RouteView {
+	// `page.url.pathname` includes the deployment base path; the route checks below do not.
+	const pathname = stripBase(browserPathname);
 	const isIdentitiesView = pathname.startsWith('/identities');
 	const isValidationView = pathname.startsWith('/validation');
 	const isWorkbenchView = pathname.startsWith('/workbench');

@@ -4,6 +4,7 @@
 	 * queries (STORY-195) and "Create New Query" (STORY-188) — are placeholders later stories fill.
 	 * The existing Queries console modal stays reachable via "Advanced / SPARQL console".
 	 */
+	import { apiUrl } from '$lib/utils/urls';
 	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
 	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
@@ -236,7 +237,7 @@
 	async function copyShortLink(model: NonNullable<typeof queryBuilderStore.model>) {
 		creatingShortLink = true;
 		try {
-			const res = await fetch('/api/shared-queries', {
+			const res = await fetch(apiUrl('/shared-queries'), {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({ model })

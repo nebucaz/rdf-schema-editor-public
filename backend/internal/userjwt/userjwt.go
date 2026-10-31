@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
+
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/jwtauth"
 )
 
 // CookieName is the cookie the access token travels in.
@@ -48,7 +50,7 @@ func (u User) DisplayName() string {
 	return u.Sub
 }
 
-// Verify checks tokenString's HS256 signature against secret and its expiry (when present) and
+// Verify checks tokenString's HS512 signature against secret and its expiry (when present) and
 // returns the user it identifies. `alg: none`, other algorithms, a missing/empty/non-string `sub`,
 // an empty secret and oversized tokens are all rejected.
 func Verify(tokenString, secret string) (User, error) {
@@ -57,7 +59,7 @@ func Verify(tokenString, secret string) (User, error) {
 	}
 
 	claims := jwt.MapClaims{}
-	token, err := jwt.NewParser(jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()})).
+	token, err := jwt.NewParser(jwt.WithValidMethods([]string{jwtauth.Algorithm})).
 		ParseWithClaims(tokenString, claims, func(*jwt.Token) (any, error) { return []byte(secret), nil })
 	if err != nil || !token.Valid {
 		return User{}, ErrInvalidToken
@@ -106,7 +108,7 @@ func Mint(secret string, u User, ttl time.Duration) (string, error) {
 		groups = []string{}
 	}
 	now := time.Now()
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+	token := jwt.NewWithClaims(jwtauth.SigningMethod, jwt.MapClaims{
 		"sub":                u.Sub,
 		"loginid":            u.Sub,
 		"email":              u.Email,

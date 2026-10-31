@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { appUrl } from '$lib/utils/urls';
 	import { onMount } from 'svelte';
 	import type { RouteView } from '$lib/utils/route-views';
 	import DropdownMenu from './DropdownMenu.svelte';
@@ -12,10 +13,10 @@
 	/** `/reports/<id>` has no tab of its own: every flag below is false there, so no link is active.
 	 *  `title` carries the full area name, since the visible labels are one word. */
 	const links = $derived([
-		{ href: '/identities', label: 'Identities', title: 'Identities', active: routeView.isIdentitiesView },
-		{ href: '/', label: 'Schema', title: 'Schema Editor', active: routeView.isCanvasView },
-		{ href: '/workbench', label: 'Report', title: 'Query Workbench', active: routeView.isWorkbenchView },
-		{ href: '/validation', label: 'Validation', title: 'Validation Report', active: routeView.isValidationView }
+		{ href: appUrl('/identities'), label: 'Identities', title: 'Identities', active: routeView.isIdentitiesView },
+		{ href: appUrl('/'), label: 'Schema', title: 'Schema Editor', active: routeView.isCanvasView },
+		{ href: appUrl('/workbench'), label: 'Report', title: 'Query Workbench', active: routeView.isWorkbenchView },
+		{ href: appUrl('/validation'), label: 'Validation', title: 'Validation Report', active: routeView.isValidationView }
 	]);
 	const activeLink = $derived(links.find((l) => l.active));
 

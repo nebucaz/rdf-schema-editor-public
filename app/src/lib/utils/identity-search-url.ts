@@ -6,6 +6,7 @@
  * dependency, so they're unit-testable without a live SvelteKit router (this repo's existing
  * colocated `*.spec.ts` convention).
  */
+import { appUrl } from '$lib/utils/urls';
 
 /** The "Filter by class" facet value that selects individuals without any class (`?class=` in the URL). */
 export const UNCLASSIFIED_FACET = 'urn:rse:unclassified';
@@ -44,7 +45,7 @@ export function parseIdentitySearchParams(search: string): IdentitySearchUrlPara
 	};
 }
 
-/** Inverse of `parseIdentitySearchParams`: builds the `/identities` path (with query string) for a
+/** Inverse of `parseIdentitySearchParams`: builds the base-aware `/identities` URL (with query string) for a
  *  given state, omitting any empty/`null` field entirely rather than writing it as `""`. */
 export function buildIdentitySearchUrl(params: Partial<IdentitySearchUrlParams>): string {
 	const { query, classIri, namespaceBaseIri, syncSource, syncStatus, node } = {
@@ -59,5 +60,5 @@ export function buildIdentitySearchUrl(params: Partial<IdentitySearchUrlParams>)
 	if (syncStatus) usp.set('status', syncStatus);
 	if (node) usp.set('node', node);
 	const qs = usp.toString();
-	return qs ? `/identities?${qs}` : '/identities';
+	return appUrl(qs ? `/identities?${qs}` : '/identities');
 }

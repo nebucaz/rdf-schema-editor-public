@@ -1,3 +1,4 @@
+import { apiUrl as buildApiUrl } from '../utils/urls';
 import { isShortId } from './short-links';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
@@ -936,7 +937,7 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
 export class SparqlConnector {
 	private apiUrl: string;
 
-	constructor(apiUrl: string = '/api/sparql') {
+	constructor(apiUrl: string = buildApiUrl('/sparql')) {
 		this.apiUrl = apiUrl;
 	}
 
