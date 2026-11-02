@@ -1,10 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { requestActivity } from '$lib/stores/request-activity.svelte';
 import {
 	SparqlConnector,
 	UNCLASSIFIED_CANVAS_CAP,
+	WORKSPACE_MEMBERS_CHUNK_SIZE,
 	factKeyString,
 	ANNOTATION_MAX_TEXT_LENGTH,
-	type SparqlBinding
+	type SparqlBinding,
+	type FetchedNamespace
 } from './sparql-connector';
 import {
 	classIri,
@@ -147,6 +150,45 @@ describe('SparqlConnector', () => {
 
 		const connector = new SparqlConnector('/api/sparql');
 		await expect(connector.selectQuery('not sparql')).rejects.toThrow('malformed query');
+	});
+
+	describe('request activity counter', () => {
+		afterEach(() => requestActivity.reset());
+
+		it('is 1 while a query is in flight and 0 after it succeeds', async () => {
+			let seen = -1;
+			fetchMock.mockImplementation(async () => {
+				seen = requestActivity.pending;
+				return new Response(JSON.stringify({ boolean: true }), { status: 200 });
+			});
+			await new SparqlConnector('/api/sparql').askQuery('ASK { ?s ?p ?o }');
+			expect(seen).toBe(1);
+			expect(requestActivity.pending).toBe(0);
+		});
+
+		it('is 1 while an update is in flight and 0 after it succeeds', async () => {
+			let seen = -1;
+			fetchMock.mockImplementation(async () => {
+				seen = requestActivity.pending;
+				return new Response('{}', { status: 200 });
+			});
+			await new SparqlConnector('/api/sparql').executeUpdate('INSERT DATA { <urn:a> <urn:b> <urn:c> }');
+			expect(seen).toBe(1);
+			expect(requestActivity.pending).toBe(0);
+		});
+
+		it('returns to 0 after an HTTP error, a network error and an abort', async () => {
+			const connector = new SparqlConnector('/api/sparql');
+			fetchMock.mockResolvedValue(new Response('', { status: 500, statusText: 'Server Error' }));
+			await expect(connector.askQuery('ASK {}')).rejects.toThrow();
+			expect(requestActivity.pending).toBe(0);
+			fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
+			await expect(connector.executeUpdate('INSERT DATA {}')).rejects.toThrow('Failed to fetch');
+			expect(requestActivity.pending).toBe(0);
+			fetchMock.mockRejectedValue(new DOMException('aborted', 'AbortError'));
+			await expect(connector.askQuery('ASK {}')).rejects.toThrow('aborted');
+			expect(requestActivity.pending).toBe(0);
+		});
 	});
 
 	it('propagates a fallback error message on a non-200 update response with no JSON body', async () => {
@@ -10607,5 +10649,221 @@ describe('SparqlConnector — bulk class assignment (instances-issues STORY-010)
 		bulkMock([0]);
 		const iris = Array.from({ length: 5001 }, (_, k) => `https://example.com/ssi#i${k}`);
 		await expect(new SparqlConnector('/api/sparql').unassignClassFromIndividuals(iris, C)).rejects.toThrow(/5,?000/);
+	});
+});
+
+describe('SparqlConnector — reusing a supplied namespace list (loading-spinner STORY-268)', () => {
+	const registeredDefault = {
+		baseIri: DEFAULT_NAMESPACE_BASE_IRI,
+		prefix: 'rse',
+		description: '',
+		color: null,
+		locked: false,
+		defaultHidden: false,
+		listedInFilter: true
+	} as unknown as FetchedNamespace;
+
+	it('ensureDefaultNamespaceMigrated does not fetch namespaces when given a list that has the default', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const spy = vi.spyOn(connector, 'fetchNamespaces');
+		await connector.ensureDefaultNamespaceMigrated([registeredDefault]);
+		expect(spy).not.toHaveBeenCalled();
+	});
+
+	it('ensureDefaultNamespaceMigrated still fetches namespaces when no list is given', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const spy = vi.spyOn(connector, 'fetchNamespaces').mockResolvedValue([registeredDefault]);
+		await connector.ensureDefaultNamespaceMigrated();
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+
+	it('fetchFullSchemaForAllNamespaces does not fetch namespaces when given a list', async () => {
+		const connector = new SparqlConnector('/api/sparql');
+		const nsSpy = vi.spyOn(connector, 'fetchNamespaces');
+		const schemaSpy = vi
+			.spyOn(connector, 'fetchFullSchema')
+			.mockResolvedValue({
+				classes: [],
+				datatypeProperties: [],
+				objectProperties: [],
+				subClassOf: [],
+				individuals: [],
+				untypedIndividuals: []
+			} as unknown as Awaited<ReturnType<SparqlConnector['fetchFullSchema']>>);
+		await connector.fetchFullSchemaForAllNamespaces([registeredDefault]);
+		expect(nsSpy).not.toHaveBeenCalled();
+		expect(schemaSpy).toHaveBeenCalledTimes(1);
+		expect(schemaSpy).toHaveBeenCalledWith(DEFAULT_NAMESPACE_BASE_IRI);
+	});
+});
+
+describe('SparqlConnector — migration checks run once per session (loading-spinner STORY-269)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('ensureAttributedRelationshipClass sends its ASK only on the first call', async () => {
+		const { fn } = mockGraphFetch({ classExists: true });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureAttributedRelationshipClass();
+		const afterFirst = fn.mock.calls.length;
+		expect(afterFirst).toBeGreaterThan(0);
+		await connector.ensureAttributedRelationshipClass();
+		expect(fn.mock.calls.length).toBe(afterFirst);
+	});
+
+	it('ensureAttributedRelationshipClass does not cache a failed check', async () => {
+		const { fn } = mockGraphFetch({ classExists: true });
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValueOnce(new Error('down')).mockImplementation(fn));
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.ensureAttributedRelationshipClass()).rejects.toThrow('down');
+		await connector.ensureAttributedRelationshipClass();
+		expect(fn).toHaveBeenCalledTimes(1);
+	});
+
+	it('ensureDefaultWorkspace sends its ASK only on the first call', async () => {
+		const { fn } = mockDefaultWorkspaceFetch({ backfillComplete: true });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		const first = await connector.ensureDefaultWorkspace();
+		expect(fn).toHaveBeenCalledTimes(1);
+		const second = await connector.ensureDefaultWorkspace();
+		expect(second).toBe(first);
+		expect(fn).toHaveBeenCalledTimes(1);
+	});
+
+	it('ensureDefaultWorkspace does not cache a failed backfill', async () => {
+		const { fn } = mockDefaultWorkspaceFetch({ throwOnUpdateContaining: 'rdfs:label "Default"' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		vi.spyOn(connector, 'fetchFullSchemaForAllNamespaces').mockResolvedValue(emptySchemaFixture());
+		await expect(connector.ensureDefaultWorkspace()).rejects.toThrow();
+		const callsAfterFailure = fn.mock.calls.length;
+		await expect(connector.ensureDefaultWorkspace()).rejects.toThrow();
+		expect(fn.mock.calls.length).toBeGreaterThan(callsAfterFailure);
+	});
+
+	it('resetMigrationChecks makes the next call check again', async () => {
+		const { fn } = mockDefaultWorkspaceFetch({ backfillComplete: true });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.ensureDefaultWorkspace();
+		connector.resetMigrationChecks();
+		await connector.ensureDefaultWorkspace();
+		expect(fn).toHaveBeenCalledTimes(2);
+	});
+});
+
+describe('SparqlConnector — addWorkspaceMembers (loading-spinner STORY-272)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const WS = workspaceIri('Default');
+	const el = (n: string, ns = 'a') => `https://example.com/${ns}#${n}`;
+
+	/** Answers the one membership SELECT from `existing` ({subject, element}) and records each update. */
+	function mockMembers(existing: { m: string; element: string }[] = []) {
+		const updates: string[] = [];
+		const queries: string[] = [];
+		const fn = vi.fn(async (_url: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update as string);
+				return new Response('{}', { status: 200 });
+			}
+			queries.push(body.query as string);
+			return new Response(
+				JSON.stringify({
+					head: { vars: ['m', 'element'] },
+					results: {
+						bindings: existing.map((e) => ({
+							m: { type: 'uri', value: e.m },
+							element: { type: 'uri', value: e.element }
+						}))
+					}
+				}),
+				{ status: 200 }
+			);
+		});
+		vi.stubGlobal('fetch', fn);
+		return { fn, updates, queries };
+	}
+
+	it('writes N new members with two requests, not N x 4', async () => {
+		const { fn, updates } = mockMembers();
+		const items = [1, 2, 3].map((n) => ({ elementIri: el(`C${n}`), x: n * 10, y: n * 20 }));
+		const added = await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, items);
+		expect(fn).toHaveBeenCalledTimes(2);
+		expect(updates).toHaveLength(1);
+		expect(added.map((a) => a.elementIri)).toEqual(items.map((i) => i.elementIri));
+		for (const i of items) {
+			expect(updates[0]).toContain(`<${workspaceMembershipIri(WS, i.elementIri)}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}>`);
+			expect(updates[0]).toContain(`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${i.elementIri}>`);
+			expect(updates[0]).toContain(`"${i.x}"^^xsd:decimal`);
+			expect(updates[0]).toContain(`"${i.y}"^^xsd:decimal`);
+		}
+	});
+
+	it('skips members already present and returns only the ones added', async () => {
+		const present = el('Old');
+		const { updates } = mockMembers([{ m: workspaceMembershipIri(WS, present), element: present }]);
+		const added = await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, [
+			{ elementIri: present, x: 1, y: 1 },
+			{ elementIri: el('New'), x: 2, y: 2 }
+		]);
+		expect(added.map((a) => a.elementIri)).toEqual([el('New')]);
+		expect(updates[0]).not.toContain(`<${present}>`);
+	});
+
+	it('sends no update when every member is already present', async () => {
+		const present = el('Old');
+		const { fn, updates } = mockMembers([{ m: workspaceMembershipIri(WS, present), element: present }]);
+		const added = await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, [{ elementIri: present, x: 1, y: 1 }]);
+		expect(added).toEqual([]);
+		expect(updates).toHaveLength(0);
+		expect(fn).toHaveBeenCalledTimes(1);
+	});
+
+	it('uses the disambiguated membership IRI when the legacy one belongs to another element', async () => {
+		const first = el('Application', 'a');
+		const second = el('Application', 'b');
+		const { updates } = mockMembers([{ m: workspaceMembershipIri(WS, first), element: first }]);
+		await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, [{ elementIri: second, x: 0, y: 0 }]);
+		expect(updates[0]).toContain(`<${workspaceMembershipIriDisambiguated(WS, second)}> a`);
+		expect(updates[0]).not.toContain(`<${workspaceMembershipIri(WS, second)}> a`);
+	});
+
+	it('disambiguates two same-named elements inside one batch', async () => {
+		const a = el('Application', 'a');
+		const b = el('Application', 'b');
+		const { updates } = mockMembers();
+		await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, [
+			{ elementIri: a, x: 0, y: 0 },
+			{ elementIri: b, x: 1, y: 1 }
+		]);
+		expect(updates[0]).toContain(`<${workspaceMembershipIri(WS, a)}> a`);
+		expect(updates[0]).toContain(`<${workspaceMembershipIriDisambiguated(WS, b)}> a`);
+	});
+
+	it('rejects an unsafe IRI before sending any request', async () => {
+		const { fn } = mockMembers();
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(
+			connector.addWorkspaceMembers(WS, [{ elementIri: 'https://x.org/a> } ; DROP ALL ; <b', x: 0, y: 0 }])
+		).rejects.toThrow();
+		await expect(connector.addWorkspaceMembers('bad iri>', [{ elementIri: el('C'), x: 0, y: 0 }])).rejects.toThrow();
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('sends no request for empty input', async () => {
+		const { fn } = mockMembers();
+		expect(await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, [])).toEqual([]);
+		expect(fn).not.toHaveBeenCalled();
+	});
+
+	it('writes large inputs in chunks', async () => {
+		const { updates } = mockMembers();
+		const items = Array.from({ length: WORKSPACE_MEMBERS_CHUNK_SIZE * 2 + 1 }, (_, n) => ({ elementIri: el(`C${n}`), x: n, y: n }));
+		const added = await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, items);
+		expect(added).toHaveLength(items.length);
+		expect(updates).toHaveLength(3);
 	});
 });

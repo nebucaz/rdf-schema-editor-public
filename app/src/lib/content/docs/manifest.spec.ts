@@ -211,3 +211,22 @@ describe('svelte-markdown rendering', () => {
 		for (const section of docSections) expect(section.content.toLowerCase()).not.toContain('hamburger');
 	});
 });
+
+describe('loading-spinner STORY-277: bulk add and loading sections', () => {
+	it('registers the Add Entities from Namespace and Loading Indicators sections', () => {
+		const bulk = docSections.find((s) => s.id === 'add-entities-from-namespace');
+		const loading = docSections.find((s) => s.id === 'loading-indicators');
+		expect(bulk?.category).toBe('Forms');
+		expect(loading?.category).toBe('Toggles & Concepts');
+		expect(bulk?.content).toContain('Add entities from namespace');
+		expect(loading?.content).toContain('Activity indicator');
+	});
+
+	it('only links to sections that exist', () => {
+		const ids = new Set(docSections.map((s) => s.id));
+		for (const id of ['add-entities-from-namespace', 'loading-indicators']) {
+			const content = docSections.find((s) => s.id === id)!.content;
+			for (const [, target] of content.matchAll(/\]\(([a-z-]+)\)/g)) expect(ids.has(target), `${id} -> ${target}`).toBe(true);
+		}
+	});
+});

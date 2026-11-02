@@ -170,7 +170,7 @@
 	}
 	.error {
 		margin: 0.5rem 0 0;
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 	@media print {
 		.panel {

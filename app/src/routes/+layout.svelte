@@ -3,6 +3,8 @@
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import SignInRequired from '$lib/components/SignInRequired.svelte';
+	import ActivityIndicator from '$lib/components/ActivityIndicator.svelte';
+	import { requestActivity } from '$lib/stores/request-activity.svelte';
 	import { devLogout } from '$lib/services/auth-client';
 	import favicon from '$lib/assets/favicon.svg';
 	import '../app.css';
@@ -398,6 +400,8 @@
 		{/if}
 	</main>
 </div>
+
+<ActivityIndicator busy={requestActivity.busy} suppressed={workbenchActions.loading} />
 
 {#if showDocumentation}
 	<DocumentationPanel onClose={() => (showDocumentation = false)} />

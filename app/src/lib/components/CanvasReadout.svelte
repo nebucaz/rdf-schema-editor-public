@@ -20,8 +20,8 @@
 		border-radius: 4px;
 		font-size: 0.75rem;
 		font-variant-numeric: tabular-nums;
-		background: color-mix(in srgb, var(--color-surface, #fff) 85%, transparent);
-		color: var(--color-text-muted, currentColor);
-		border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+		background: color-mix(in srgb, var(--color-surface) 85%, transparent);
+		color: var(--color-text-muted);
+		border: 1px solid var(--color-border);
 	}
 </style>

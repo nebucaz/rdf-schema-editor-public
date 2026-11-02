@@ -414,7 +414,7 @@
 		padding: 0;
 		max-height: 12rem;
 		overflow-y: auto;
-		border: 1px solid var(--border, #ccc);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 	}
 	.picker li {
@@ -423,7 +423,7 @@
 	}
 	.picker li.active,
 	.picker li:hover {
-		background: var(--hover-bg, rgba(127, 127, 127, 0.18));
+		background: var(--color-hover);
 	}
 	.picker-meta {
 		opacity: 0.65;

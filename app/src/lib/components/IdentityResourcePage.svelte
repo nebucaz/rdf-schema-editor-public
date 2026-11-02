@@ -1037,7 +1037,7 @@
 		align-items: center;
 		padding: 0.15rem 0.6rem;
 		border-radius: 999px;
-		background: var(--color-bg-alt);
+		background: var(--color-bg);
 		border: 1px solid var(--color-border);
 		font-size: 0.85rem;
 		color: var(--color-text);

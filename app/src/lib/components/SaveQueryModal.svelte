@@ -88,6 +88,6 @@
 	}
 	.error {
 		margin: 0;
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 </style>

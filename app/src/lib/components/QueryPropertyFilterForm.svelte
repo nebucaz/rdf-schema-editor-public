@@ -135,7 +135,7 @@
 		font-size: 0.85rem;
 	}
 	.error {
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 		font-size: 0.8rem;
 	}
 </style>

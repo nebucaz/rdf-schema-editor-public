@@ -36,7 +36,7 @@
 
 <style>
 	.spl-error {
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 
 	.message,
@@ -54,7 +54,7 @@
 		padding: 0.25rem 0.5rem;
 		overflow-x: auto;
 		font-family: monospace;
-		background: var(--color-bg-primary, transparent);
+		background: transparent;
 		border-left: 3px solid currentColor;
 	}
 </style>

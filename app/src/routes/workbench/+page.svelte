@@ -666,7 +666,7 @@
 	.time-window {
 		margin: 0.25rem 0;
 		font-size: 0.8rem;
-		color: var(--color-text-secondary, inherit);
+		color: var(--color-text-muted);
 	}
 	.workbench-page {
 		display: flex;
@@ -798,7 +798,7 @@
 	}
 
 	.error {
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 
 

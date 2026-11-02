@@ -302,7 +302,7 @@
 		opacity: 0.85;
 	}
 	.error {
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 	.print-hint {
 		font-size: 0.8rem;

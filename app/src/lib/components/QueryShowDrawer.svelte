@@ -98,9 +98,9 @@
 	.messages {
 		margin: 0;
 		padding-left: 1.25rem;
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 	.error {
-		color: var(--color-danger, #b00020);
+		color: var(--color-error);
 	}
 </style>

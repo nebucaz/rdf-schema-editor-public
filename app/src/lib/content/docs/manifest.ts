@@ -78,6 +78,13 @@ const sectionMetas: DocSectionMeta[] = [
 
 	// Forms
 	{ id: 'entity-form', title: 'Entity Form', category: 'Forms', order: 10, file: 'entity-form.md' },
+	{
+		id: 'add-entities-from-namespace',
+		title: 'Add Entities from Namespace',
+		category: 'Forms',
+		order: 15,
+		file: 'add-entities-from-namespace.md'
+	},
 	{ id: 'attribute-form', title: 'Attribute Form', category: 'Forms', order: 20, file: 'attribute-form.md' },
 	{ id: 'relation-form', title: 'Relation Form', category: 'Forms', order: 30, file: 'relation-form.md' },
 	{
@@ -258,6 +265,13 @@ const sectionMetas: DocSectionMeta[] = [
 		category: 'Toggles & Concepts',
 		order: 70,
 		file: 'shacl-validation.md'
+	},
+	{
+		id: 'loading-indicators',
+		title: 'Loading Indicators',
+		category: 'Toggles & Concepts',
+		order: 85,
+		file: 'loading-indicators.md'
 	},
 	{
 		id: 'namespace-model',

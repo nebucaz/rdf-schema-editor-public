@@ -2,6 +2,8 @@
 	/* Light mode (default) */
 	--color-bg: #f5f5f5;
 	--color-bg-secondary: #ffffff;
+	/* Floating panels (canvas search results, readout): same surface as secondary regions. */
+	--color-surface: var(--color-bg-secondary);
 	--color-primary: #fafafa;
 	--color-accent: #007acc;
 	--color-accent-hover: #005a9e;
@@ -61,6 +63,7 @@
 	/* Dark mode - neutral dark theme */
 	--color-bg: #1a1a1a;
 	--color-bg-secondary: #2d2d2d;
+	--color-surface: var(--color-bg-secondary);
 	--color-primary: #252525;
 	--color-accent: #58a6ff;
 	--color-accent-hover: #79b8ff;

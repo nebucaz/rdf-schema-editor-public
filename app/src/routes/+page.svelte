@@ -39,6 +39,8 @@
 	import { downloadBlob, downloadFile } from '$lib/utils/download';
 	import { svgToPngBlob } from '$lib/utils/svg-to-png';
 	import EntityForm from '$lib/components/EntityForm.svelte';
+	import SplitButton from '$lib/components/SplitButton.svelte';
+	import AddNamespaceClassesModal from '$lib/components/AddNamespaceClassesModal.svelte';
 	import AttributeForm from '$lib/components/AttributeForm.svelte';
 	import ManageMembersModal from '$lib/components/ManageMembersModal.svelte';
 	import MemberForm from '$lib/components/MemberForm.svelte';
@@ -50,6 +52,12 @@
 	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
 	import CanvasGrid from '$lib/components/CanvasGrid.svelte';
 	import CanvasReadout from '$lib/components/CanvasReadout.svelte';
+	import LoadingOverlay from '$lib/components/LoadingOverlay.svelte';
+	import { createLoadTiming } from '$lib/utils/load-timing';
+	import { loadWorkspaceSchema } from '$lib/services/schema-load';
+	import { addableElementsFromSchema } from '$lib/services/addable-elements';
+	import { placeClasses } from '$lib/services/namespace-class-placement';
+	import { requestActivity } from '$lib/stores/request-activity.svelte';
 	import CanvasSearch from '$lib/components/CanvasSearch.svelte';
 	import { panToNode, searchCanvasNodes, searchHighlightCss } from '$lib/services/canvas-search';
 	import { formatReadout, gridOrigin } from '$lib/services/canvas-grid';
@@ -125,6 +133,8 @@
 	let edges = $state.raw<Edge[]>([]);
 	let errorMessage = $state<string | null>(null);
 	let loading = $state(false);
+	/** What the full-canvas overlay announces: the initial load or a workspace switch. */
+	let loadingLabel = $state('Loading workspace');
 
 	// -- Workspace-scoped canvas visibility and positions (STORY-076/077) -------------------------
 	// The canvas always has an active Workspace (research Decision 3) — `activeWorkspaceIri` starts
@@ -579,6 +589,11 @@
 	// -- Entities (STORY-004) -------------------------------------------------------------------
 
 	let showAddEntity = $state(false);
+	/** "Add entities from namespace" dialog (loading-spinner STORY-274). `namespaceClassesOrigin` is the
+	 *  Option/Alt+click position when opened from the canvas menu (STORY-276), else null (viewport slot);
+	 *  it is consumed and cleared on both confirm and close so a stale click can never leak into a later add. */
+	let showAddNamespaceClasses = $state(false);
+	let namespaceClassesOrigin = $state<{ x: number; y: number } | null>(null);
 	/** Existing classes/individuals for the "Add Entity" dialog's name-lookup typeahead — refetched
 	 *  each time the dialog opens so picking a name that already exists places it instead of erroring
 	 *  on `insertClass`'s duplicate-name guard. */
@@ -828,6 +843,12 @@
 	 *  hitting `insertClass`'s duplicate-name error. */
 	async function openAddEntityDialog() {
 		showAddEntity = true;
+		// Reuse the schema the canvas already loaded (it is refreshed on Reload and after edits);
+		// only fall back to a fetch before the first load has finished.
+		if (lastFetchedSchema) {
+			addEntityExistingOptions = addableElementsFromSchema(lastFetchedSchema);
+			return;
+		}
 		try {
 			addEntityExistingOptions = await sparqlConnector.fetchAddableWorkspaceElements();
 		} catch {
@@ -2258,6 +2279,16 @@
 		await openAddEntityDialog();
 	}
 
+	/** "Add entities from namespace…" chosen from the canvas context menu: the dialog's grid starts at the
+	 *  click position. `openAddNamespaceClasses` stores it and `closeAddNamespaceClasses` clears it on both
+	 *  confirm and cancel, so it cannot leak into a later toolbar-initiated add (which passes `null`). */
+	function chooseAddNamespaceClassesFromCanvasMenu() {
+		if (!pendingCanvasContextMenu) return;
+		const position = pendingCanvasContextMenu.flowPosition;
+		pendingCanvasContextMenu = null;
+		openAddNamespaceClasses(position);
+	}
+
 	/** "+ Add External Class" chosen from the canvas context menu — same override pattern as
 	 *  `chooseAddEntityFromCanvasMenu`. */
 	function chooseAddExternalClassFromCanvasMenu() {
@@ -3080,32 +3111,108 @@
 		return workspaceStore.workspaces[0]?.iri ?? defaultWorkspaceIri;
 	}
 
-	async function loadSchemaFromGraphDB() {
+	/** `force` refetches the shared stores (Reload, saves); the first load reuses whatever `+layout.svelte`'s
+	 *  `ensureLoaded()` calls already fetched or have in flight. */
+	async function loadSchemaFromGraphDB(options: { force?: boolean } = {}) {
 		loading = true;
+		loadingLabel = 'Loading workspace';
 		errorMessage = null;
+		const timing = createLoadTiming({ enabled: import.meta.env.DEV, requestCount: () => requestActivity.started });
+		const viaStore = (store: { refresh(): Promise<void>; ensureLoaded(): Promise<void> }, force: boolean) =>
+			force ? store.refresh() : store.ensureLoaded();
 		try {
-			await namespaceStore.refresh();
-			seedDefaultNamespaceVisibility();
-			await externalVocabStore.refresh();
-			await settingsStore.refresh();
-			await sparqlConnector.ensureDefaultNamespaceMigrated();
-			await sparqlConnector.ensureAttributedRelationshipClass();
-			const defaultWorkspaceIri = await sparqlConnector.ensureDefaultWorkspace();
-			await workspaceStore.refresh();
-			activeWorkspaceIri = resolveActiveWorkspaceIri(defaultWorkspaceIri);
-			const activeWorkspaceRecord = workspaceStore.workspaces.find((ws) => ws.iri === activeWorkspaceIri);
-			activeNamespaceIri = resolveWorkspaceDefaultNamespace(activeWorkspaceRecord, activeNamespaceIri);
-			activeNamespaceStore.setActive(activeNamespaceIri);
-			await graphDbLayoutStore.reload(activeWorkspaceIri);
-			workspaceMembers = graphDbLayoutStore.getMemberIris();
-			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
-			lastFetchedSchema = schema;
-			buildAndApplyCanvasModel(schema);
-			await loadNotesForActiveWorkspace();
+			await loadWorkspaceSchema(
+				{
+					timed: timing.timed,
+					loadNamespaces: async (force) => {
+						await viaStore(namespaceStore, force);
+						return namespaceStore.namespaces;
+					},
+					loadExternalVocabularies: (force) => viaStore(externalVocabStore, force),
+					loadSettings: (force) => viaStore(settingsStore, force),
+					loadWorkspaces: (force) => viaStore(workspaceStore, force),
+					onNamespacesLoaded: seedDefaultNamespaceVisibility,
+					migrateDefaultNamespace: (namespaces) => sparqlConnector.ensureDefaultNamespaceMigrated(namespaces),
+					ensureAttributedRelationship: () => sparqlConnector.ensureAttributedRelationshipClass(),
+					ensureDefaultWorkspace: () => sparqlConnector.ensureDefaultWorkspace(),
+					hasWorkspace: (iri) => workspaceStore.workspaces.some((ws) => ws.iri === iri),
+					activate: (defaultWorkspaceIri) => {
+						activeWorkspaceIri = resolveActiveWorkspaceIri(defaultWorkspaceIri);
+						const activeWorkspaceRecord = workspaceStore.workspaces.find((ws) => ws.iri === activeWorkspaceIri);
+						activeNamespaceIri = resolveWorkspaceDefaultNamespace(activeWorkspaceRecord, activeNamespaceIri);
+						activeNamespaceStore.setActive(activeNamespaceIri);
+					},
+					reloadLayout: async () => {
+						await graphDbLayoutStore.reload(activeWorkspaceIri);
+						workspaceMembers = graphDbLayoutStore.getMemberIris();
+					},
+					fetchSchema: (namespaces) => sparqlConnector.fetchFullSchemaForAllNamespaces(namespaces),
+					fetchNotes: () => sparqlConnector.fetchNotesForWorkspace(activeWorkspaceIri),
+					apply: (schema, notes) => {
+						lastFetchedSchema = schema;
+						buildAndApplyCanvasModel(schema);
+						noteRecords = notes;
+						applyNoteNodesAndEdges();
+					}
+				},
+				{ force: options.force ?? true }
+			);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to load schema from GraphDB';
 		} finally {
+			timing.report();
 			loading = false;
+		}
+	}
+
+	function openAddNamespaceClasses(origin: { x: number; y: number } | null = null) {
+		namespaceClassesOrigin = origin;
+		showAddNamespaceClasses = true;
+	}
+
+	function closeAddNamespaceClasses() {
+		showAddNamespaceClasses = false;
+		namespaceClassesOrigin = null;
+	}
+
+	/** Places the confirmed classes on the active workspace in one write (`addWorkspaceMembers`), on a
+	 *  grid starting at the click position or the viewport-centred slot. Classes already on the
+	 *  workspace are skipped by the write and keep their position. Local state changes only after the
+	 *  write succeeded, so a failure leaves nothing half-applied. */
+	async function handleAddNamespaceClasses(classIris: string[]) {
+		const origin = namespaceClassesOrigin ?? nextPosition();
+		closeAddNamespaceClasses();
+		const placed = placeClasses(
+			classIris.filter((iri) => !workspaceMembers.has(iri)),
+			origin
+		);
+		if (placed.length === 0) return;
+		try {
+			const added = await sparqlConnector.addWorkspaceMembers(
+				currentWorkspaceIri(),
+				placed.map((p) => ({ elementIri: p.iri, x: p.x, y: p.y }))
+			);
+			if (added.length === 0) return;
+			workspaceMembers = new Set([...workspaceMembers, ...added.map((a) => a.elementIri)]);
+			for (const a of added) graphDbLayoutStore.setPosition(a.elementIri, a.x, a.y);
+			if (added.some((a) => !nodes.some((n) => n.id === a.elementIri))) {
+				// The canvas predates some of these classes; refetch once, as the single-add path does.
+				lastFetchedSchema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+				buildAndApplyCanvasModel(lastFetchedSchema);
+			}
+			const positions = new Map(added.map((a) => [a.elementIri, { x: a.x, y: a.y }]));
+			nodes = nodes.map((n) => (positions.has(n.id) ? { ...n, position: positions.get(n.id)! } : n));
+			applyVisibilityFilters();
+			const outcome = classifyAddedElement({
+				hasNode: nodes.some((n) => n.id === added[0].elementIri),
+				namespace: nodeNamespaces.get(added[0].elementIri),
+				hiddenNamespaces
+			});
+			if (outcome === 'namespace-hidden') {
+				errorMessage = 'Added to the workspace, but their namespace is hidden — show the namespace to see them.';
+			}
+		} catch (err) {
+			errorMessage = err instanceof Error ? err.message : 'Failed to add classes to the workspace';
 		}
 	}
 
@@ -3115,6 +3222,16 @@
 	 *  GraphDB, matching `handleViewModeChange`'s "recompute from already-fetched data" shape). */
 	async function handleActiveWorkspaceChange(newWorkspaceIri: string) {
 		if (newWorkspaceIri === activeWorkspaceIri) return;
+		loading = true;
+		loadingLabel = 'Switching workspace';
+		try {
+			await switchActiveWorkspace(newWorkspaceIri);
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function switchActiveWorkspace(newWorkspaceIri: string) {
 		activeWorkspaceIri = newWorkspaceIri;
 		activeWorkspaceStore.setActive(newWorkspaceIri);
 		const newWorkspaceRecord = workspaceStore.workspaces.find((ws) => ws.iri === newWorkspaceIri);
@@ -3276,7 +3393,7 @@
 		workbenchActions.registerSetViewMode(handleViewModeChange);
 		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
 		workbenchActions.registerSetActiveNamespace(handleActiveNamespaceChange);
-		void loadSchemaFromGraphDB();
+		void loadSchemaFromGraphDB({ force: false });
 	});
 
 	// -- Workspace-scoped Triples entry point (STORY-082) -------------------------------------------
@@ -3382,7 +3499,12 @@
 
 <div class="editor">
 	<div class="toolbar">
-		<button class="add-entity" onclick={() => void openAddEntityDialog()}>+ Add Entity</button>
+		<SplitButton
+			label="+ Add Entity"
+			menuLabel="More ways to add entities"
+			onMain={() => void openAddEntityDialog()}
+			items={[{ label: 'Add entities from namespace…', onSelect: () => openAddNamespaceClasses(null) }]}
+		/>
 		<button class="add-entity secondary-action" onclick={() => (showAddAssociation = true)}>
 			+ Add Attributed Relationship
 		</button>
@@ -3425,6 +3547,7 @@
 			<MiniMap />
 		</SvelteFlow>
 		<CanvasReadout text={readoutText} />
+		<LoadingOverlay active={loading} label={loadingLabel} />
 		<CanvasSearch
 			matchesFor={(q) => searchCanvasNodes(nodes, q)}
 			onQueryChange={(q) => (canvasSearchQuery = q)}
@@ -3490,6 +3613,9 @@
 		style="left: {pendingCanvasContextMenu.screenPosition.x}px; top: {pendingCanvasContextMenu.screenPosition.y}px;"
 	>
 		<button type="button" class="menu-item" onclick={() => void chooseAddEntityFromCanvasMenu()}>+ Add Entity</button>
+		<button type="button" class="menu-item" onclick={chooseAddNamespaceClassesFromCanvasMenu}>
+			Add entities from namespace…
+		</button>
 		<button type="button" class="menu-item" onclick={chooseAddExternalClassFromCanvasMenu}>
 			+ Add External Class
 		</button>
@@ -3510,6 +3636,16 @@
 	selectionCount={showExportErd ? selectedNodeIdSet().size : 0}
 	onExport={(choice) => void handleExportErd(choice)}
 	onClose={() => (showExportErd = false)}
+/>
+
+<AddNamespaceClassesModal
+	isOpen={showAddNamespaceClasses}
+	schema={lastFetchedSchema}
+	namespaces={namespaceStore.namespaces}
+	{workspaceMembers}
+	initialNamespaceBaseIri={activeNamespaceBaseIri()}
+	onConfirm={(iris) => void handleAddNamespaceClasses(iris)}
+	onClose={closeAddNamespaceClasses}
 />
 
 <Modal

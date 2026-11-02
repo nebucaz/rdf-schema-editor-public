@@ -1,5 +1,7 @@
 import { apiUrl as buildApiUrl } from '../utils/urls';
 import { isShortId } from './short-links';
+import { requestActivity } from '$lib/stores/request-activity.svelte';
+import { nameableEntitiesFromSchema, dedupeByIri } from './addable-elements';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
 	classIri,
@@ -934,11 +936,23 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
  * namespace (via `findNamespaceOfClass`) rather than taking an explicit parameter — this is what
  * lets a relation cross namespaces without a new form field.
  */
+/** Membership rows written per `INSERT DATA` by `addWorkspaceMembers`. */
+export const WORKSPACE_MEMBERS_CHUNK_SIZE = 500;
+
 export class SparqlConnector {
 	private apiUrl: string;
+	/** Idempotent migration checks that have already succeeded in this page session (STORY-269). */
+	private attributedRelationshipEnsured = false;
+	private defaultWorkspaceEnsured = false;
 
 	constructor(apiUrl: string = buildApiUrl('/sparql')) {
 		this.apiUrl = apiUrl;
+	}
+
+	/** Forget which migration checks have passed, so the next load re-runs them (tests, manual recovery). */
+	resetMigrationChecks(): void {
+		this.attributedRelationshipEnsured = false;
+		this.defaultWorkspaceEnsured = false;
 	}
 
 	/** Execute a raw SPARQL SELECT query, returning parsed SPARQL-JSON results. Pass
@@ -956,18 +970,20 @@ export class SparqlConnector {
 
 	/** Execute a raw SPARQL Update (INSERT DATA, DELETE DATA, DELETE/INSERT WHERE, etc.). */
 	async executeUpdate(update: string): Promise<void> {
-		const response = await fetch(`${this.apiUrl}/update`, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ update })
-		});
+		return requestActivity.track(async () => {
+			const response = await fetch(`${this.apiUrl}/update`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ update })
+			});
 
-		if (!response.ok) {
-			const errorData = await response.json().catch(() => ({}));
-			throw new Error(
-				errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
-			);
-		}
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				throw new Error(
+					errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
+				);
+			}
+		});
 	}
 
 	// -- Classes (owl:Class) ------------------------------------------------------------------
@@ -2610,12 +2626,17 @@ export class SparqlConnector {
 	 *  when the association class marked with it lives elsewhere. Safe to call on every load: a
 	 *  no-op once the triple exists. */
 	async ensureAttributedRelationshipClass(): Promise<void> {
+		if (this.attributedRelationshipEnsured) return;
 		const exists = await this.classExists(ATTRIBUTED_RELATIONSHIP_IRI, DEFAULT_NAMESPACE_BASE_IRI);
-		if (exists) return;
-		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
-		await this.executeUpdate(
-			`${PREFIXES} INSERT DATA { ${inGraph(`<${ATTRIBUTED_RELATIONSHIP_IRI}> a owl:Class ; rdfs:label "AttributedRelationship" .`, graphs.schema)} }`
-		);
+		if (!exists) {
+			const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+			await this.executeUpdate(
+				`${PREFIXES} INSERT DATA { ${inGraph(`<${ATTRIBUTED_RELATIONSHIP_IRI}> a owl:Class ; rdfs:label "AttributedRelationship" .`, graphs.schema)} }`
+			);
+		}
+		// Remembered only after success (a failed check is retried), and only in memory: a page refresh
+		// re-checks, which is how a repository reset behind the app's back recovers.
+		this.attributedRelationshipEnsured = true;
 	}
 
 	/** Marks/unmarks `classIriValue` as an attributed-relationship (association) class by
@@ -3708,20 +3729,8 @@ export class SparqlConnector {
 			this.fetchFullSchemaForAllNamespaces(),
 			this.fetchAllReifiedStatements()
 		]);
-		const classLabelByIri = new Map(schema.classes.map((c) => [c.iri, c.label]));
-		const all = [
-			...schema.classes.map((c) => ({ iri: c.iri, label: c.label, kind: 'class' as const })),
-			...schema.datatypeProperties.map((p) => ({
-				iri: p.iri,
-				label: classLabelByIri.has(p.domain) ? `${classLabelByIri.get(p.domain)}.${p.label}` : p.label,
-				kind: 'attribute' as const
-			})),
-			...schema.objectProperties.map((p) => ({ iri: p.iri, label: p.label, kind: 'relation' as const })),
-			...schema.individuals.map((i) => ({ iri: i.iri, label: i.label, kind: 'individual' as const })),
-			...relationInstances
-		];
-		const byIri = new Map(all.map((e) => [e.iri, e]));
-		return [...byIri.values()];
+		const all = [...nameableEntitiesFromSchema(schema), ...relationInstances];
+		return dedupeByIri(all);
 	}
 
 	/**
@@ -5167,6 +5176,75 @@ export class SparqlConnector {
 		);
 	}
 
+	/**
+	 * Links many existing elements to a Workspace in a constant number of requests (loading-spinner
+	 * STORY-272): one `SELECT` of the workspace's current membership rows, then one `INSERT DATA` per
+	 * `WORKSPACE_MEMBERS_CHUNK_SIZE` missing rows. Same semantics as `addWorkspaceMember` per element —
+	 * already-present members are left alone (their stored position is kept) and a same-named element in
+	 * another namespace gets the disambiguated subject — but the lookups run locally against the one
+	 * fetched snapshot, including collisions between items of the same batch. The membership class
+	 * declaration rides along in the same write, so no separate check is needed. Returns the items added.
+	 */
+	async addWorkspaceMembers(
+		workspaceIriValue: string,
+		items: { elementIri: string; x: number; y: number }[]
+	): Promise<{ elementIri: string; x: number; y: number }[]> {
+		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
+		for (const item of items) this.assertSafeSparqlIri(item.elementIri, 'element IRI');
+		if (items.length === 0) return [];
+
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?m ?element ${fromClause(graphs.schema)} WHERE {
+				?m a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ;
+					<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> .
+				OPTIONAL { ?m <${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> ?element }
+			}
+		`);
+		// subject -> the elements it points at; the same lookups `resolveMembershipIri` answers with ASKs.
+		const elementsBySubject = new Map<string, Set<string>>();
+		for (const b of results.results.bindings) {
+			const set = elementsBySubject.get(b.m.value) ?? new Set<string>();
+			if (b.element) set.add(b.element.value);
+			elementsBySubject.set(b.m.value, set);
+		}
+
+		const rows: { elementIri: string; x: number; y: number; membershipIri: string }[] = [];
+		for (const item of items) {
+			const legacy = workspaceMembershipIri(workspaceIriValue, item.elementIri);
+			const hashed = workspaceMembershipIriDisambiguated(workspaceIriValue, item.elementIri);
+			if (elementsBySubject.get(hashed)?.has(item.elementIri) || elementsBySubject.get(legacy)?.has(item.elementIri)) {
+				continue; // already a member; keep its stored position
+			}
+			const membershipIri = elementsBySubject.has(legacy) ? hashed : legacy;
+			// Claim the subject so a later same-named item in this batch sees it as taken.
+			elementsBySubject.set(membershipIri, new Set([item.elementIri]));
+			rows.push({ ...item, membershipIri });
+		}
+
+		for (let i = 0; i < rows.length; i += WORKSPACE_MEMBERS_CHUNK_SIZE) {
+			const triples = rows
+				.slice(i, i + WORKSPACE_MEMBERS_CHUNK_SIZE)
+				.map(
+					(r) =>
+						`<${r.membershipIri}> a <${WORKSPACE_MEMBERSHIP_CLASS_IRI}> ; ` +
+						`<${WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI}> <${workspaceIriValue}> ; ` +
+						`<${WORKSPACE_MEMBERSHIP_ELEMENT_PREDICATE_IRI}> <${r.elementIri}> ; ` +
+						`<${WORKSPACE_MEMBERSHIP_X_PREDICATE_IRI}> "${r.x}"^^xsd:decimal ; ` +
+						`<${WORKSPACE_MEMBERSHIP_Y_PREDICATE_IRI}> "${r.y}"^^xsd:decimal .`
+				)
+				.join('\n');
+			await this.executeUpdate(
+				`${PREFIXES} INSERT DATA { ${inGraph(
+					`<${WORKSPACE_MEMBERSHIP_CLASS_IRI}> a owl:Class ; rdfs:label "WorkspaceMembership" .\n${triples}`,
+					graphs.schema
+				)} }`
+			);
+		}
+		return rows.map(({ elementIri, x, y }) => ({ elementIri, x, y }));
+	}
+
 	/** Removes exactly one `(workspace, element)` membership subject's triples — leaves the element
 	 *  itself and its membership in every other Workspace untouched. */
 	async removeWorkspaceMember(workspaceIriValue: string, elementIri: string): Promise<void> {
@@ -5762,8 +5840,8 @@ export class SparqlConnector {
 	 * registration, and a migration retried after the copy step but before registration succeeds
 	 * just re-inserts the same ground triples — harmless in a triple store.
 	 */
-	async ensureDefaultNamespaceMigrated(): Promise<void> {
-		const namespaces = await this.fetchNamespaces();
+	async ensureDefaultNamespaceMigrated(knownNamespaces?: FetchedNamespace[]): Promise<void> {
+		const namespaces = knownNamespaces ?? (await this.fetchNamespaces());
 		if (namespaces.some((ns) => ns.baseIri === DEFAULT_NAMESPACE_BASE_IRI)) return;
 
 		const legacyQuads = await this.fetchLegacySchemaGraphQuads();
@@ -5844,12 +5922,16 @@ export class SparqlConnector {
 	 */
 	async ensureDefaultWorkspace(): Promise<string> {
 		const iri = workspaceIri('Default');
+		if (this.defaultWorkspaceEnsured) return iri;
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 
 		const backfillComplete = await this.askQuery(
 			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true }`
 		);
-		if (backfillComplete) return iri;
+		if (backfillComplete) {
+			this.defaultWorkspaceEnsured = true;
+			return iri;
+		}
 
 		await this.ensureWorkspaceClass();
 		const workspaceExists = await this.askQuery(
@@ -5865,6 +5947,7 @@ export class SparqlConnector {
 		}
 
 		await this.backfillDefaultWorkspaceMembership(iri);
+		this.defaultWorkspaceEnsured = true;
 		return iri;
 	}
 
@@ -6174,8 +6257,8 @@ export class SparqlConnector {
 	 * narrows the view from there. Each namespace's `fetchFullSchema` call already tags its own
 	 * records with `namespaceBaseIri`, so a plain concatenation is enough to keep them distinguishable.
 	 */
-	async fetchFullSchemaForAllNamespaces(): Promise<FetchedSchema> {
-		const namespaces = await this.fetchNamespaces();
+	async fetchFullSchemaForAllNamespaces(knownNamespaces?: FetchedNamespace[]): Promise<FetchedSchema> {
+		const namespaces = knownNamespaces ?? (await this.fetchNamespaces());
 		const schemas = await Promise.all(namespaces.map((ns) => this.fetchFullSchema(ns.baseIri)));
 		return {
 			classes: schemas.flatMap((s) => s.classes),
@@ -7765,20 +7848,22 @@ export class SparqlConnector {
 	}
 
 	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
-		const response = await fetch(this.apiUrl, {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
+		return requestActivity.track(async () => {
+			const response = await fetch(this.apiUrl, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
+			});
+
+			if (!response.ok) {
+				const errorData = await response.json().catch(() => ({}));
+				throw new Error(
+					errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
+				);
+			}
+
+			return await response.json();
 		});
-
-		if (!response.ok) {
-			const errorData = await response.json().catch(() => ({}));
-			throw new Error(
-				errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
-			);
-		}
-
-		return await response.json();
 	}
 
 	/**

@@ -139,8 +139,9 @@
 		margin-top: 0.15rem;
 		padding: 0.1rem 0.4rem;
 		font-size: 0.75rem;
-		background: var(--color-surface, #fff);
-		border: 1px solid color-mix(in srgb, currentColor 20%, transparent);
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 	}
 	.steps button {
@@ -153,9 +154,9 @@
 		padding: 0;
 		max-height: 14rem;
 		overflow-y: auto;
-		background: var(--color-surface, #fff);
-		color: var(--color-text, inherit);
-		border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+		background: var(--color-surface);
+		color: var(--color-text);
+		border: 1px solid var(--color-border);
 		border-radius: 4px;
 	}
 	li {
@@ -164,6 +165,6 @@
 		font-size: 0.85rem;
 	}
 	li:hover {
-		background: rgba(127, 127, 127, 0.18);
+		background: var(--color-hover);
 	}
 </style>
