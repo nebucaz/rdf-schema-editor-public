@@ -4,7 +4,7 @@
 	 * strip and the results table so both read the same `columnMarkers` state. Both are real buttons
 	 * (keyboard reachable); the accessible name carries the state, and the filter's title shows its text.
 	 */
-	import type { ColumnMarkerState } from '$lib/services/query-column-groups';
+	import type { ColumnMarkerState } from '#lib/services/query-column-groups.js';
 
 	interface Props {
 		state: ColumnMarkerState;

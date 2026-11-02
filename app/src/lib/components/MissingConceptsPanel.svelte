@@ -1,8 +1,8 @@
 <script lang="ts">
-	import { apiUrl } from '$lib/utils/urls';
+	import { apiUrl } from '#lib/utils/urls.js';
 	import { onMount } from 'svelte';
-	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
-	import { pascalCase } from '$lib/utils/iri';
+	import { sparqlConnector, type FetchedNamespace } from '#lib/services/sparql-connector.js';
+	import { pascalCase } from '#lib/utils/iri.js';
 
 	/**
 	 * Story 006: lists every Backstage `kind` the live catalog has that no local class maps to yet

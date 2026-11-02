@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { WorkspaceImportSummary, WorkspaceImportBucketSummary } from '$lib/services/sparql-connector';
+	import type { WorkspaceImportSummary, WorkspaceImportBucketSummary } from '#lib/services/sparql-connector.js';
 	import ImportResultView from './ImportResultView.svelte';
 
 	interface Props {

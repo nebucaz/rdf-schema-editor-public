@@ -1,4 +1,4 @@
-import { el, headerColors, type ErdTheme } from '$lib/utils/erd-svg';
+import { el, headerColors, type ErdTheme } from '#lib/utils/erd-svg.js';
 import type { ErdEntity, ErdExternal, ErdModel } from './erd-model';
 import { attributeText, type ErdLayout, type Notation, type PlacedEdge, type Point, type Rect } from './erd-layout';
 

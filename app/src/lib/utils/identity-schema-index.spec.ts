@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildEntityNodeIndex, resolveEditFormSpec, resolveGoverningClass } from './identity-schema-index';
-import type { FetchedClass, FetchedProperty, FetchedSchema } from '$lib/services/sparql-connector';
-import { classIri, propertyIri, xsdIri } from '$lib/utils/iri';
+import type { FetchedClass, FetchedProperty, FetchedSchema } from '#lib/services/sparql-connector.js';
+import { classIri, propertyIri, xsdIri } from '#lib/utils/iri.js';
 
 const NS = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
 

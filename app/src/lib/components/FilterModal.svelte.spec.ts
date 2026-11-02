@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import FilterModal from './FilterModal.svelte';
-import { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-import { buildBuilderSchema } from '$lib/services/query-builder-schema';
-import { startQueryFromClass } from '$lib/services/query-model-edit';
-import type { FetchedSchema } from '$lib/services/sparql-connector';
+import { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+import { buildBuilderSchema } from '#lib/services/query-builder-schema.js';
+import { startQueryFromClass } from '#lib/services/query-model-edit.js';
+import type { FetchedSchema } from '#lib/services/sparql-connector.js';
 
 const NS = 'http://example.org/org';
 const o = (n: string) => `${NS}#${n}`;

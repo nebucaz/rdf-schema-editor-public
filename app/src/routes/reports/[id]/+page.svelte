@@ -5,22 +5,22 @@
 	 * colour rules as the workbench; read-oriented chrome only (no builder panels). Link-only for
 	 * Confluence (Q22): no embedding allowances are added anywhere.
 	 */
-	import { appUrl } from '$lib/utils/urls';
+	import { appUrl } from '#lib/utils/urls.js';
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
-	import QueryResultsTable from '$lib/components/QueryResultsTable.svelte';
-	import { QueryRunStore } from '$lib/stores/query-run-store.svelte';
-	import { queryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { sparqlConnector } from '$lib/services/sparql-connector';
-	import { toSavedQueryItem } from '$lib/services/saved-queries';
-	import { resolveReportTarget, type ReportTarget } from '$lib/services/report-id';
-	import { AD_HOC_REPORT_ID } from '$lib/services/share-links';
-	import { decodeModelFromUrl } from '$lib/services/query-model';
-	import { cycleSort } from '$lib/services/query-model-edit';
-	import { validateRunnableQueryModel, type QueryModel } from '$lib/services/query-model';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import { formatTimeWindow } from '$lib/services/query-relative-time';
+	import QueryResultsTable from '#lib/components/QueryResultsTable.svelte';
+	import { QueryRunStore } from '#lib/stores/query-run-store.svelte.js';
+	import { queryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { sparqlConnector } from '#lib/services/sparql-connector.js';
+	import { toSavedQueryItem } from '#lib/services/saved-queries.js';
+	import { resolveReportTarget, type ReportTarget } from '#lib/services/report-id.js';
+	import { AD_HOC_REPORT_ID } from '#lib/services/share-links.js';
+	import { decodeModelFromUrl } from '#lib/services/query-model.js';
+	import { cycleSort } from '#lib/services/query-model-edit.js';
+	import { validateRunnableQueryModel, type QueryModel } from '#lib/services/query-model.js';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import { formatTimeWindow } from '#lib/services/query-relative-time.js';
 
 	const user = $derived(page.data.user as { sub: string; displayName: string } | null | undefined);
 	const id = $derived(page.params.id ?? '');

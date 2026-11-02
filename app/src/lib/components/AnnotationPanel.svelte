@@ -5,9 +5,9 @@
 	 * timestamp (the server stamps both). Any signed-in user can delete any annotation: the MVP has
 	 * no role model (recorded limitation).
 	 */
-	import { ANNOTATION_MAX_TEXT_LENGTH, type AnnotationInput, type FetchedAnnotation } from '$lib/services/sparql-connector';
-	import { describeAnnotation, type BadgeUser } from '$lib/services/annotation-badges';
-	import { annotateDisabledReason, isPendingAnnotation } from '$lib/services/annotation-edits';
+	import { ANNOTATION_MAX_TEXT_LENGTH, type AnnotationInput, type FetchedAnnotation } from '#lib/services/sparql-connector.js';
+	import { describeAnnotation, type BadgeUser } from '#lib/services/annotation-badges.js';
+	import { annotateDisabledReason, isPendingAnnotation } from '#lib/services/annotation-edits.js';
 
 	interface Props {
 		title: string;

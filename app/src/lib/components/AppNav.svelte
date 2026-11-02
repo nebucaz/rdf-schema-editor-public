@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { appUrl } from '$lib/utils/urls';
+	import { appUrl } from '#lib/utils/urls.js';
 	import { onMount } from 'svelte';
-	import type { RouteView } from '$lib/utils/route-views';
+	import type { RouteView } from '#lib/utils/route-views.js';
 	import DropdownMenu from './DropdownMenu.svelte';
 
 	interface Props {

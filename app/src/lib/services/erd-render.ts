@@ -1,4 +1,4 @@
-import { darkTheme, el, heuristicMeasurer, lightTheme, svgDocument, type TextMeasurer } from '$lib/utils/erd-svg';
+import { darkTheme, el, heuristicMeasurer, lightTheme, svgDocument, type TextMeasurer } from '#lib/utils/erd-svg.js';
 import type { ErdModel } from './erd-model';
 import { layoutErd, type Notation, type Point } from './erd-layout';
 import type { NotationRenderer } from './erd-render-common';

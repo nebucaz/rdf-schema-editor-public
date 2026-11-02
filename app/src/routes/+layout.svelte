@@ -1,51 +1,51 @@
 <script lang="ts">
-	import { appUrl } from '$lib/utils/urls';
+	import { appUrl } from '#lib/utils/urls.js';
 	import { page } from '$app/state';
-	import { invalidateAll } from '$app/navigation';
-	import SignInRequired from '$lib/components/SignInRequired.svelte';
-	import ActivityIndicator from '$lib/components/ActivityIndicator.svelte';
-	import { requestActivity } from '$lib/stores/request-activity.svelte';
-	import { devLogout } from '$lib/services/auth-client';
-	import favicon from '$lib/assets/favicon.svg';
+	import { refreshAll } from '$app/navigation';
+	import SignInRequired from '#lib/components/SignInRequired.svelte';
+	import ActivityIndicator from '#lib/components/ActivityIndicator.svelte';
+	import { requestActivity } from '#lib/stores/request-activity.svelte.js';
+	import { devLogout } from '#lib/services/auth-client.js';
+	import favicon from '#lib/assets/favicon.svg';
 	import '../app.css';
 	import { ModeWatcher, toggleMode, mode } from 'mode-watcher';
-	import AppNav from '$lib/components/AppNav.svelte';
-	import UserMenu from '$lib/components/UserMenu.svelte';
-	import ProfileView from '$lib/components/ProfileView.svelte';
-	import DropdownMenu from '$lib/components/DropdownMenu.svelte';
-	import DropdownSubmenuGroup from '$lib/components/DropdownSubmenuGroup.svelte';
-	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
-	import ViewModeToggle from '$lib/components/ViewModeToggle.svelte';
-	import DescriptionVisibilityToggle from '$lib/components/DescriptionVisibilityToggle.svelte';
-	import InheritedAttributesVisibilityToggle from '$lib/components/InheritedAttributesVisibilityToggle.svelte';
-	import ReverseRelationsVisibilityToggle from '$lib/components/ReverseRelationsVisibilityToggle.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import NamespaceManagementView from '$lib/components/NamespaceManagementView.svelte';
-	import WorkspaceManagementView from '$lib/components/WorkspaceManagementView.svelte';
-	import ExternalVocabularyManagementView from '$lib/components/ExternalVocabularyManagementView.svelte';
-	import ImportResultView from '$lib/components/ImportResultView.svelte';
-	import ImportTurtleDialog from '$lib/components/ImportTurtleDialog.svelte';
-	import { DEFAULT_NAMESPACE_BASE_IRI, DEV_LOGIN_ENABLED } from '$lib/config';
-	import QueryConsoleView from '$lib/components/QueryConsoleView.svelte';
-	import MissingConceptsPanel from '$lib/components/MissingConceptsPanel.svelte';
-	import SettingsView from '$lib/components/SettingsView.svelte';
-	import DocumentationPanel from '$lib/components/DocumentationPanel.svelte';
+	import AppNav from '#lib/components/AppNav.svelte';
+	import UserMenu from '#lib/components/UserMenu.svelte';
+	import ProfileView from '#lib/components/ProfileView.svelte';
+	import DropdownMenu from '#lib/components/DropdownMenu.svelte';
+	import DropdownSubmenuGroup from '#lib/components/DropdownSubmenuGroup.svelte';
+	import NamespaceFilter from '#lib/components/NamespaceFilter.svelte';
+	import ViewModeToggle from '#lib/components/ViewModeToggle.svelte';
+	import DescriptionVisibilityToggle from '#lib/components/DescriptionVisibilityToggle.svelte';
+	import InheritedAttributesVisibilityToggle from '#lib/components/InheritedAttributesVisibilityToggle.svelte';
+	import ReverseRelationsVisibilityToggle from '#lib/components/ReverseRelationsVisibilityToggle.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import NamespaceManagementView from '#lib/components/NamespaceManagementView.svelte';
+	import WorkspaceManagementView from '#lib/components/WorkspaceManagementView.svelte';
+	import ExternalVocabularyManagementView from '#lib/components/ExternalVocabularyManagementView.svelte';
+	import ImportResultView from '#lib/components/ImportResultView.svelte';
+	import ImportTurtleDialog from '#lib/components/ImportTurtleDialog.svelte';
+	import { DEFAULT_NAMESPACE_BASE_IRI, DEV_LOGIN_ENABLED } from '#lib/config.js';
+	import QueryConsoleView from '#lib/components/QueryConsoleView.svelte';
+	import MissingConceptsPanel from '#lib/components/MissingConceptsPanel.svelte';
+	import SettingsView from '#lib/components/SettingsView.svelte';
+	import DocumentationPanel from '#lib/components/DocumentationPanel.svelte';
 	import {
 		sparqlConnector,
 		type ImportSummary,
 		type WorkspaceImportSummary
-	} from '$lib/services/sparql-connector';
-	import { quadsToNQuads } from '$lib/services/turtle';
-	import { SchemaValidationError } from '$lib/services/validation';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { validationReportFilterStore } from '$lib/stores/validation-report-filter-store.svelte';
-	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
-	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
-	import { resolveRouteView } from '$lib/utils/route-views';
-	import { downloadFile } from '$lib/utils/download';
-	import { filterListedNamespaces } from '$lib/utils/visibility';
-	import WorkspaceImportResultView from '$lib/components/WorkspaceImportResultView.svelte';
+	} from '#lib/services/sparql-connector.js';
+	import { quadsToNQuads } from '#lib/services/turtle.js';
+	import { SchemaValidationError } from '#lib/services/validation.js';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { validationReportFilterStore } from '#lib/stores/validation-report-filter-store.svelte.js';
+	import { workspaceStore } from '#lib/stores/workspace-store.svelte.js';
+	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
+	import { resolveRouteView } from '#lib/utils/route-views.js';
+	import { downloadFile } from '#lib/utils/download.js';
+	import { filterListedNamespaces } from '#lib/utils/visibility.js';
+	import WorkspaceImportResultView from '#lib/components/WorkspaceImportResultView.svelte';
 
 	let { children } = $props();
 
@@ -91,7 +91,7 @@
 
 	async function handleLogout() {
 		const result = await devLogout();
-		if (result.ok) await invalidateAll();
+		if (result.ok) await refreshAll();
 		return result;
 	}
 
@@ -396,7 +396,7 @@
 		{#if page.data.user}
 			{@render children()}
 		{:else}
-			<SignInRequired devLoginEnabled={DEV_LOGIN_ENABLED} onSignedIn={() => invalidateAll()} />
+			<SignInRequired devLoginEnabled={DEV_LOGIN_ENABLED} onSignedIn={() => refreshAll()} />
 		{/if}
 	</main>
 </div>

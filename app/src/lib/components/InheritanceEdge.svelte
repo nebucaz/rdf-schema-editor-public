@@ -18,8 +18,8 @@
 		getSelfLoopPath,
 		pointAlongPath,
 		percentAtPoint
-	} from '$lib/utils/floating-edge';
-	import { edgeLabelPositionStore } from '$lib/stores/edge-label-position-store';
+	} from '#lib/utils/floating-edge.js';
+	import { edgeLabelPositionStore } from '#lib/stores/edge-label-position-store.js';
 
 	let { id, source, target, data: rawData }: EdgeProps<InheritanceEdgeType> = $props();
 

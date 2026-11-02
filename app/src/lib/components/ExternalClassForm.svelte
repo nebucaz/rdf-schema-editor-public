@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { resolvePrefixedName, EXTERNAL_PREFIXES } from '$lib/utils/iri';
+	import { resolvePrefixedName, EXTERNAL_PREFIXES } from '#lib/utils/iri.js';
 
 	interface Props {
 		/** Merged built-in + GraphDB-registered prefixes (STORY-046); defaults to the three built-ins

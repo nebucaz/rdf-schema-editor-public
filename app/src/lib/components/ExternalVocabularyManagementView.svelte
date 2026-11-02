@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sparqlConnector } from '$lib/services/sparql-connector';
-	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import { sparqlConnector } from '#lib/services/sparql-connector.js';
+	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import ExternalVocabularyForm from './ExternalVocabularyForm.svelte';
 
 	let loadError = $state<string | null>(null);

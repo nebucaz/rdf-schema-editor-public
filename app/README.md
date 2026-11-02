@@ -1,9 +1,12 @@
 # app
 
-The SvelteKit frontend (Svelte 5 + TypeScript) of the RDF Schema Editor. It builds to **static files only**
+The SvelteKit 3 frontend (Svelte 5 + TypeScript) of the RDF Schema Editor. It builds to **static files only**
 (`@sveltejs/adapter-static`, SPA mode with an `index.html` fallback, `ssr = false`) — there is no server code;
 the browser talks to the Go `backend/` through `/api/*`. See the root `README.md` for the full setup
 (backend, tokens, Docker Compose) and `CLAUDE.md` for the architecture.
+
+Requirements: [bun](https://bun.sh) is the only supported installer (`bun.lock` is the single lockfile) and Node >= 22.17
+(`engines` in `package.json`). Source imports use the `#lib/*` alias (`package.json` `"imports"`, SvelteKit 3 removed `$lib`).
 
 ```sh
 bun install

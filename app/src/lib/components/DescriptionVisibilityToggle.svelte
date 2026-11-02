@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { descriptionVisibilityStore } from '$lib/stores/description-visibility-store.svelte';
+	import { descriptionVisibilityStore } from '#lib/stores/description-visibility-store.svelte.js';
 
 	const showDescriptions = $derived(descriptionVisibilityStore.getShowDescriptions());
 </script>

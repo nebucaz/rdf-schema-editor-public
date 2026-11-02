@@ -1,8 +1,8 @@
 <script lang="ts">
 	import SvelteMarkdown from '@humanspeak/svelte-markdown';
-	import { docSections, type DocCategory } from '$lib/content/docs/manifest';
-	import { searchDocSections } from '$lib/content/docs/search';
-	import { documentationStore } from '$lib/stores/documentation-store';
+	import { docSections, type DocCategory } from '#lib/content/docs/manifest.js';
+	import { searchDocSections } from '#lib/content/docs/search.js';
+	import { documentationStore } from '#lib/stores/documentation-store.js';
 
 	interface Props {
 		onClose: () => void;

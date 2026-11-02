@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sparqlConnector, type ProvenanceReport } from '$lib/services/sparql-connector';
+	import { sparqlConnector, type ProvenanceReport } from '#lib/services/sparql-connector.js';
 
 	/**
 	 * Story 013: read-only per-attribute provenance/contributor report, driven entirely by Story

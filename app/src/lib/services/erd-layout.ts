@@ -5,8 +5,8 @@ import {
 	getFloatingEdgeParams,
 	getParallelSmoothStepPath,
 	getSelfLoopPath
-} from '$lib/utils/floating-edge';
-import type { TextMeasurer } from '$lib/utils/erd-svg';
+} from '#lib/utils/floating-edge.js';
+import type { TextMeasurer } from '#lib/utils/erd-svg.js';
 import type { Cardinality, ErdAttribute, ErdModel } from './erd-model';
 
 /**

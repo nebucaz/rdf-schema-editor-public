@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
 
-vi.mock('$lib/utils/urls', async (importOriginal) => {
-	const original = await importOriginal<typeof import('$lib/utils/urls')>();
+vi.mock('#lib/utils/urls.js', async (importOriginal) => {
+	const original = await importOriginal<typeof import('#lib/utils/urls.js')>();
 	return { ...original, ...original.createUrls({ appBasePath: '/path', apiPrefix: '' }) };
 });
 
 import AppNav from './AppNav.svelte';
-import { resolveRouteView } from '$lib/utils/route-views';
+import { resolveRouteView } from '#lib/utils/route-views.js';
 
 describe('AppNav under a base path', () => {
 	it('links carry the base and the tab for the current route is active', () => {

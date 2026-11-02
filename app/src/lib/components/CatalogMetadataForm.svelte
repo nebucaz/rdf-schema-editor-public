@@ -11,8 +11,8 @@
 	 * write-only/unprefilled: the Turtle editor right below already shows the current values in
 	 * context, so this form doesn't duplicate that state.
 	 */
-	import { sparqlConnector } from '$lib/services/sparql-connector';
-	import { isWellFormedIri } from '$lib/utils/iri';
+	import { sparqlConnector } from '#lib/services/sparql-connector.js';
+	import { isWellFormedIri } from '#lib/utils/iri.js';
 
 	interface Props {
 		classIri: string;

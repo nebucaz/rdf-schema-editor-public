@@ -1,8 +1,8 @@
-import { sparqlConnector, type SparqlSelectResults } from '$lib/services/sparql-connector';
-import type { BuilderSchema } from '$lib/services/query-builder-schema';
-import { compileCountQuery, compileQuery, type CompiledQuery } from '$lib/services/query-compiler';
-import type { QueryModel } from '$lib/services/query-model';
-import { describeRelativeFilters, type ResolvedRelativeFilter } from '$lib/services/query-relative-time';
+import { sparqlConnector, type SparqlSelectResults } from '#lib/services/sparql-connector.js';
+import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+import { compileCountQuery, compileQuery, type CompiledQuery } from '#lib/services/query-compiler.js';
+import type { QueryModel } from '#lib/services/query-model.js';
+import { describeRelativeFilters, type ResolvedRelativeFilter } from '#lib/services/query-relative-time.js';
 import {
 	DEFAULT_PAGE_SIZE,
 	buildResultRows,
@@ -11,7 +11,7 @@ import {
 	readableQueryError,
 	type PageInfo,
 	type ResultRows
-} from '$lib/services/query-results';
+} from '#lib/services/query-results.js';
 
 /** The slice of `SparqlConnector` this store needs — keeps it testable without GraphDB. */
 export interface QueryExecutor {

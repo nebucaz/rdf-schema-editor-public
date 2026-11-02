@@ -7,7 +7,7 @@
  * `.svelte.ts` reactive singleton fetched once and cached, the same "fetch-once-then-cache, refresh on
  * mutation" shape `namespaceStore`/`workspaceStore` already use.
  */
-import { sparqlConnector } from '$lib/services/sparql-connector';
+import { sparqlConnector } from '#lib/services/sparql-connector.js';
 
 function createSettingsStore() {
 	let authoritativeEntityClassIri = $state<string | null>(null);

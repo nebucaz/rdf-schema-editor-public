@@ -3,7 +3,7 @@
  * the annotation content — never an author or timestamp; the SvelteKit route stamps those from the
  * server-side user identity (STORY-183), so they cannot be forged through this UI.
  */
-import { apiUrl } from '$lib/utils/urls';
+import { apiUrl } from '#lib/utils/urls.js';
 import type { AnnotationInput, FactKey } from './sparql-connector';
 
 export interface SavedAnnotation {

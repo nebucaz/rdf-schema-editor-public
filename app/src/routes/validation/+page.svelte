@@ -1,7 +1,7 @@
 <script lang="ts">
 	/** STORY-132: dedicated `/validation` route — thin wrapper around `ValidationReportView`,
 	 *  mirroring `/identities/+page.svelte`'s route-file-is-the-page structure. */
-	import ValidationReportView from '$lib/components/ValidationReportView.svelte';
+	import ValidationReportView from '#lib/components/ValidationReportView.svelte';
 </script>
 
 <svelte:head>

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import AddNamespaceClassesModal from './AddNamespaceClassesModal.svelte';
-import type { FetchedNamespace, FetchedSchema } from '$lib/services/sparql-connector';
+import type { FetchedNamespace, FetchedSchema } from '#lib/services/sparql-connector.js';
 
 const A = 'https://example.com/a';
 const B = 'https://example.com/b';

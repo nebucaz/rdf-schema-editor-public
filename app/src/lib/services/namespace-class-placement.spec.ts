@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { classesOfNamespace, placeClasses } from './namespace-class-placement';
-import { gridPosition } from '$lib/stores/layout-store';
+import { gridPosition } from '#lib/stores/layout-store.js';
 import type { FetchedSchema } from './sparql-connector';
 
 const A = 'https://example.com/a';

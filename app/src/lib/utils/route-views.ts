@@ -3,7 +3,7 @@
  * chrome (workspace/namespace selectors, triples, SVG export, …) on the non-canvas routes.
  * `isCanvasView` is true only on the canvas route itself, not merely "not identities".
  */
-import { stripBase } from '$lib/utils/urls';
+import { stripBase } from '#lib/utils/urls.js';
 
 export interface RouteView {
 	isIdentitiesView: boolean;

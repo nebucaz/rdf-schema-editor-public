@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import IdentitySearchBar from './IdentitySearchBar.svelte';
-import { UNCLASSIFIED_FACET } from '$lib/utils/identity-search-url';
+import { UNCLASSIFIED_FACET } from '#lib/utils/identity-search-url.js';
 
 const base = {
 	query: '',

@@ -1,12 +1,12 @@
-import { sparqlConnector } from '$lib/services/sparql-connector';
-import { buildBuilderSchema, type BuilderSchema } from '$lib/services/query-builder-schema';
-import type { QueryModel, ColumnSource, Filter, Having, Measure } from '$lib/services/query-model';
-import type { ColumnRule } from '$lib/services/column-rules';
-import { addRule, removeRule, moveRuleWithinColumn, updateRule } from '$lib/services/column-rules-editor';
+import { sparqlConnector } from '#lib/services/sparql-connector.js';
+import { buildBuilderSchema, type BuilderSchema } from '#lib/services/query-builder-schema.js';
+import type { QueryModel, ColumnSource, Filter, Having, Measure } from '#lib/services/query-model.js';
+import type { ColumnRule } from '#lib/services/column-rules.js';
+import { addRule, removeRule, moveRuleWithinColumn, updateRule } from '#lib/services/column-rules-editor.js';
 import {
 	applyBrowserSelection as foldBrowserSelection,
 	type BrowserPick
-} from '$lib/services/query-object-browser';
+} from '#lib/services/query-object-browser.js';
 import {
 	startQueryFromClass,
 	startQueryFromSearchHit,
@@ -36,7 +36,7 @@ import {
 	removeColumn,
 	hasColumn,
 	findColumn
-} from '$lib/services/query-model-edit';
+} from '#lib/services/query-model-edit.js';
 
 /**
  * Query Workbench builder state (STORY-188): the `BuilderSchema` discovered from the graph and the

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
-	import type { FetchedNamespace, NameableEntity } from '$lib/services/sparql-connector';
-	import type { CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
-	import type { XsdDatatype } from '$lib/utils/iri';
+	import type { FetchedNamespace, NameableEntity } from '#lib/services/sparql-connector.js';
+	import type { CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
+	import type { XsdDatatype } from '#lib/utils/iri.js';
 
 	interface Props {
 		mode?: 'create' | 'edit';

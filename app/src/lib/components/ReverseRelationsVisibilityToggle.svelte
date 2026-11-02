@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
 
 	const showReverseRelations = $derived(workbenchActions.showReverseRelations);
 </script>

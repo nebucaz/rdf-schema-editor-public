@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import EntityForm from './EntityForm.svelte';
-import type { FetchedNamespace, NameableEntity } from '$lib/services/sparql-connector';
+import type { FetchedNamespace, NameableEntity } from '#lib/services/sparql-connector.js';
 
 const CORE = 'http://example.org/core';
 const ARO = 'http://example.org/aro-eac-mvp';

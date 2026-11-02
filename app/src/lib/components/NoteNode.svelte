@@ -27,8 +27,8 @@
 	import { mode } from 'mode-watcher';
 	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
-	import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '$lib/utils/color-palette';
-	import { debounce } from '$lib/stores/layout-store';
+	import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '#lib/utils/color-palette.js';
+	import { debounce } from '#lib/stores/layout-store.js';
 
 	let { data }: NodeProps<NoteNodeType> = $props();
 

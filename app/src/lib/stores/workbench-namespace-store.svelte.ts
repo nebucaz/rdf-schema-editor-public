@@ -1,4 +1,4 @@
-import { defaultWorkbenchNamespaces } from '$lib/utils/workbench-namespace';
+import { defaultWorkbenchNamespaces } from '#lib/utils/workbench-namespace.js';
 
 interface NamespaceScopeInfo {
 	baseIri: string;

@@ -12,7 +12,7 @@
 		computeParallelOffset,
 		computeSelfLoopIndex,
 		getSelfLoopPath
-	} from '$lib/utils/floating-edge';
+	} from '#lib/utils/floating-edge.js';
 
 	let { id, source, target }: EdgeProps<InstanceOfEdgeType> = $props();
 

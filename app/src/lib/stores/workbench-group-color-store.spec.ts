@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { wcagContrast } from '$lib/utils/contrast';
-import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '$lib/utils/color-palette';
+import { wcagContrast } from '#lib/utils/contrast.js';
+import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '#lib/utils/color-palette.js';
 import {
 	GROUP_TINTS,
 	LocalStorageGroupColorStore,

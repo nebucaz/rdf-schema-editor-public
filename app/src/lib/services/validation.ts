@@ -10,7 +10,7 @@
  * either library for what would only ever be a thin, hand-rolled wrapper around it anyway.
  */
 import { isRdfType, DCAT, DCT, OWL, RDF, RDFS, SH, type Quad } from './turtle';
-import { XSD_NAMESPACE, BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
+import { XSD_NAMESPACE, BACKSTAGE_KIND_PREDICATE_IRI } from '#lib/utils/iri.js';
 
 export interface ValidationIssue {
 	layer: 'syntax' | 'shacl' | 'structural';

@@ -4,12 +4,12 @@
 	 * itself for a lone enumerated label) is always visible; hover or keyboard focus reveals the
 	 * annotations with author and date. Rendering only — summaries come from `annotation-badges.ts`.
 	 */
-	import type { FetchedAnnotation } from '$lib/services/sparql-connector';
+	import type { FetchedAnnotation } from '#lib/services/sparql-connector.js';
 	import {
 		badgeSummary,
 		describeAnnotation,
 		type BadgeUser
-	} from '$lib/services/annotation-badges';
+	} from '#lib/services/annotation-badges.js';
 
 	interface Props {
 		annotations: FetchedAnnotation[];

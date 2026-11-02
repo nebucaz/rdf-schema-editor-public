@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { mergeNeighborhood } from './neighborhood-merge';
-import type { NeighborhoodGraph } from '$lib/services/sparql-connector';
+import type { NeighborhoodGraph } from '#lib/services/sparql-connector.js';
 
 const nodeA = { iri: 'urn:a', label: 'A', classIri: 'urn:Class', namespaceBaseIri: 'urn:ns' };
 const nodeB = { iri: 'urn:b', label: 'B', classIri: 'urn:Class', namespaceBaseIri: 'urn:ns' };

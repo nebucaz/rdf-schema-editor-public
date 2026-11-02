@@ -2,7 +2,7 @@
  * Pure model for "add entities from namespace" (loading-spinner STORY-271): which classes a namespace
  * offers for a workspace, and where a batch of them lands on the canvas. No GraphDB, no Svelte.
  */
-import { gridPosition } from '$lib/stores/layout-store';
+import { gridPosition } from '#lib/stores/layout-store.js';
 import type { FetchedSchema } from './sparql-connector';
 
 export interface NamespaceClassRow {

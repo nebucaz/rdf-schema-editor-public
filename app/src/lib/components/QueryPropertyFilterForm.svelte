@@ -8,16 +8,16 @@
 	 * property's existing filters (`prefillFromFilters`); `onSubmit` receives the whole set the form
 	 * emits (one filter, or the `gte`/`lt` pair of a range) so the caller can replace the old set.
 	 */
-	import type { BuilderProperty } from '$lib/services/query-builder-schema';
-	import type { FilterOp } from '$lib/services/query-model';
+	import type { BuilderProperty } from '#lib/services/query-builder-schema.js';
+	import type { FilterOp } from '#lib/services/query-model.js';
 	import {
 		makeFilter,
 		makeRangeFilters,
 		operatorsForProperty,
 		type FilterPrefill,
 		type FilterDraft
-	} from '$lib/services/query-filter-editor';
-	import { isNumericDatatype, isTemporalDatatype } from '$lib/services/query-datatypes';
+	} from '#lib/services/query-filter-editor.js';
+	import { isNumericDatatype, isTemporalDatatype } from '#lib/services/query-datatypes.js';
 
 	interface Props {
 		property: BuilderProperty;

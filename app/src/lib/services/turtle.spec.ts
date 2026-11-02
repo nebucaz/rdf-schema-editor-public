@@ -23,8 +23,8 @@ import {
 	type Quad
 } from './turtle';
 import type { SparqlBinding } from './sparql-connector';
-import { classIri, individualIri, nodeShapeIri, propertyIri, xsdIri, SCHEMA_NAMESPACE } from '$lib/utils/iri';
-import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
+import { classIri, individualIri, nodeShapeIri, propertyIri, xsdIri, SCHEMA_NAMESPACE } from '#lib/utils/iri.js';
+import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '#lib/config.js';
 
 describe('parseTurtle / quadsToTurtle round-trip (STORY-011)', () => {
 	it('re-parses serialized Turtle to the same triple set', async () => {

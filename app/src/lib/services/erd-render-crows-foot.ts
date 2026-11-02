@@ -1,4 +1,4 @@
-import { el, type ErdTheme } from '$lib/utils/erd-svg';
+import { el, type ErdTheme } from '#lib/utils/erd-svg.js';
 import type { Cardinality, ErdModel } from './erd-model';
 import type { ErdLayout } from './erd-layout';
 import {

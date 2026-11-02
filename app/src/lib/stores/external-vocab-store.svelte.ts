@@ -8,7 +8,7 @@
  * Not `localStorage`-backed — registered vocabularies live in GraphDB, not the browser — so this is a
  * `.svelte.ts` reactive singleton, same as `namespace-store.svelte.ts`/`workbench-actions.svelte.ts`.
  */
-import { sparqlConnector, type FetchedExternalVocabulary } from '$lib/services/sparql-connector';
+import { sparqlConnector, type FetchedExternalVocabulary } from '#lib/services/sparql-connector.js';
 
 function createExternalVocabStore() {
 	let vocabularies = $state<FetchedExternalVocabulary[]>([]);

@@ -23,7 +23,7 @@ import {
 	xsdIri,
 	ATTRIBUTED_RELATIONSHIP_IRI,
 	type XsdDatatype
-} from '$lib/utils/iri';
+} from '#lib/utils/iri.js';
 
 const NS = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
 const NS_A = 'http://example.com/ns-a#';

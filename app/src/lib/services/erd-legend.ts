@@ -1,4 +1,4 @@
-import { el, type ErdTheme, type TextMeasurer } from '$lib/utils/erd-svg';
+import { el, type ErdTheme, type TextMeasurer } from '#lib/utils/erd-svg.js';
 import type { Cardinality } from './erd-model';
 import type { Notation, Point, Rect } from './erd-layout';
 import { diamondPoints, GENERALIZATION_MARKER, lineEl, polygonEl, textEl } from './erd-render-common';

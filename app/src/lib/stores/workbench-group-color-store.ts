@@ -9,7 +9,7 @@
  */
 
 import type { MinimalStorage } from './layout-store';
-import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '$lib/utils/color-palette';
+import { NOTE_PASTEL_COLORS, NOTE_PASTEL_COLORS_DARK } from '#lib/utils/color-palette.js';
 
 /** Light value (the one that is stored) and its muted dark-theme counterpart. */
 export const GROUP_TINTS = NOTE_PASTEL_COLORS.map((light, i) => ({

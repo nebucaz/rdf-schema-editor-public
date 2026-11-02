@@ -2,7 +2,7 @@
  * Short share links (object-browser STORY-261). Pure: id generation/validation and the choice
  * between an inline `?m=` link and a stored short link. Nothing here touches the network.
  */
-import { absoluteAppUrl } from '$lib/utils/urls';
+import { absoluteAppUrl } from '#lib/utils/urls.js';
 import { encodeModelForUrl, type QueryModel } from './query-model';
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';

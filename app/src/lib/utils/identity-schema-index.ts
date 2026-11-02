@@ -3,8 +3,8 @@ import {
 	type CanvasAttributeSpec,
 	type CanvasRelationFieldSpec,
 	type EntityNodeSpec
-} from '$lib/services/canvas-model';
-import type { FetchedSchema } from '$lib/services/sparql-connector';
+} from '#lib/services/canvas-model.js';
+import type { FetchedSchema } from '#lib/services/sparql-connector.js';
 
 /**
  * Indexes `buildCanvasModel(schema)`'s entity nodes by class IRI (STORY-121) — gives the Identities

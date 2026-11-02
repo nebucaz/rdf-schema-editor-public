@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // Run every backend client with API_PREFIX=/p (STORY-007): the URLs they fetch must carry the prefix.
-vi.mock('$lib/utils/urls', async (importOriginal) => {
-	const original = await importOriginal<typeof import('$lib/utils/urls')>();
+vi.mock('#lib/utils/urls.js', async (importOriginal) => {
+	const original = await importOriginal<typeof import('#lib/utils/urls.js')>();
 	return { ...original, ...original.createUrls({ appBasePath: '/path', apiPrefix: '/p' }) };
 });
 
-import { loadRuntimeConfig } from '$lib/config';
+import { loadRuntimeConfig } from '#lib/config.js';
 import { deleteAnnotationRequest, postAnnotation } from './annotation-client';
 import { devLogin, devLogout } from './auth-client';
 import { fetchShortLinkModel } from './share-links';

@@ -4,8 +4,8 @@
  * (independent app, own GraphDB repository — see `spec/setup/plan.md`'s ADR table).
  */
 
-export { SCHEMA_NAMESPACE, SHAPES_NAMESPACE } from '$lib/config';
-import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_NAMESPACE, namespaceGraphs } from '$lib/config';
+export { SCHEMA_NAMESPACE, SHAPES_NAMESPACE } from '#lib/config.js';
+import { DEFAULT_NAMESPACE_BASE_IRI, SCHEMA_NAMESPACE, namespaceGraphs } from '#lib/config.js';
 
 const DEFAULT_GRAPHS = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 

@@ -3,7 +3,7 @@
 	 * STORY-190: related-entity filter. A typeahead over the existing individual search, narrowed to the
 	 * hop's target class and its subclasses; picking a hit filters on that entity's IRI (never its label).
 	 */
-	import { sparqlConnector, type IndividualSearchResult } from '$lib/services/sparql-connector';
+	import { sparqlConnector, type IndividualSearchResult } from '#lib/services/sparql-connector.js';
 
 	interface Props {
 		classIris: string[];

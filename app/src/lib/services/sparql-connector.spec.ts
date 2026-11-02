@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { requestActivity } from '$lib/stores/request-activity.svelte';
+import { requestActivity } from '#lib/stores/request-activity.svelte.js';
 import {
 	SparqlConnector,
 	UNCLASSIFIED_CANVAS_CAP,

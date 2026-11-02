@@ -1,6 +1,6 @@
 <script module lang="ts">
 	import type { Node } from '@xyflow/svelte';
-	import type { XsdDatatype } from '$lib/utils/iri';
+	import type { XsdDatatype } from '#lib/utils/iri.js';
 
 	export interface EntityAttributeVM {
 		iri: string;
@@ -88,9 +88,9 @@
 <script lang="ts">
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
-	import { descriptionVisibilityStore } from '$lib/stores/description-visibility-store.svelte';
-	import { inheritedAttributesVisibilityStore } from '$lib/stores/inherited-attributes-visibility-store.svelte';
-	import { contrastTextColor } from '$lib/utils/contrast';
+	import { descriptionVisibilityStore } from '#lib/stores/description-visibility-store.svelte.js';
+	import { inheritedAttributesVisibilityStore } from '#lib/stores/inherited-attributes-visibility-store.svelte.js';
+	import { contrastTextColor } from '#lib/utils/contrast.js';
 
 	let { data, selected }: NodeProps<EntityNodeType> = $props();
 

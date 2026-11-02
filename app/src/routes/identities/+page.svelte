@@ -8,35 +8,35 @@
 	 * replaces the current history entry, right-column identity navigation pushes new entries — same
 	 * split as the ported original).
 	 */
-	import { appUrl } from '$lib/utils/urls';
+	import { appUrl } from '#lib/utils/urls.js';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import IdentitySearchBar, { type IdentityFacetValues } from '$lib/components/IdentitySearchBar.svelte';
-	import IdentityResultsList from '$lib/components/IdentityResultsList.svelte';
-	import IdentityResourcePage, { type IdentityRef } from '$lib/components/IdentityResourcePage.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import MemberForm from '$lib/components/MemberForm.svelte';
-	import UnclassifiedBulkBar from '$lib/components/UnclassifiedBulkBar.svelte';
-	import { BULK_UNDO_LIMIT } from '$lib/services/sparql-connector';
+	import IdentitySearchBar, { type IdentityFacetValues } from '#lib/components/IdentitySearchBar.svelte';
+	import IdentityResultsList from '#lib/components/IdentityResultsList.svelte';
+	import IdentityResourcePage, { type IdentityRef } from '#lib/components/IdentityResourcePage.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import MemberForm from '#lib/components/MemberForm.svelte';
+	import UnclassifiedBulkBar from '#lib/components/UnclassifiedBulkBar.svelte';
+	import { BULK_UNDO_LIMIT } from '#lib/services/sparql-connector.js';
 	import {
 		sparqlConnector,
 		type FetchedClass,
 		type FetchedSchema,
 		type FetchedSubClassOf,
 		type IndividualSearchResult
-	} from '$lib/services/sparql-connector';
-	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '$lib/services/canvas-model';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { isUnclassifiedQueryTooShort, keysetAfter } from '$lib/utils/unclassified-search';
-	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl, parseIdentitySearchParams } from '$lib/utils/identity-search-url';
-	import { prettifyLocalName } from '$lib/utils/resource-page-format';
-	import { buildClassHierarchyIndex, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
-	import { buildEntityNodeIndex } from '$lib/utils/identity-schema-index';
-	import { createIdentity, resolveDefaultNamespace } from '$lib/utils/identity-mutations';
-	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
-	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
-	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
+	} from '#lib/services/sparql-connector.js';
+	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { isUnclassifiedQueryTooShort, keysetAfter } from '#lib/utils/unclassified-search.js';
+	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl, parseIdentitySearchParams } from '#lib/utils/identity-search-url.js';
+	import { prettifyLocalName } from '#lib/utils/resource-page-format.js';
+	import { buildClassHierarchyIndex, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
+	import { buildEntityNodeIndex } from '#lib/utils/identity-schema-index.js';
+	import { createIdentity, resolveDefaultNamespace } from '#lib/utils/identity-mutations.js';
+	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
+	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
+	import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
 
 	const PAGE_SIZE = 50;
 	const BREADCRUMB_MAX = 3;
@@ -293,9 +293,8 @@
 	function selectNode(ref: IdentityRef) {
 		applySelection(ref);
 		void goto(buildIdentitySearchUrl({ ...lastFacets, node: ref.iri }), {
-			replaceState: false,
-			noScroll: true,
-			keepFocus: true
+			replace: false,
+			reset: false
 		});
 	}
 
@@ -319,9 +318,8 @@
 		nodeCache.delete(iri);
 		selectedIri = null;
 		void goto(buildIdentitySearchUrl({ ...lastFacets, node: null }), {
-			replaceState: true,
-			noScroll: true,
-			keepFocus: true
+			replace: true,
+			reset: false
 		});
 	}
 
@@ -424,9 +422,8 @@
 			if (pendingNode) resolveAndSelectNode(pendingNode);
 		} else {
 			void goto(buildIdentitySearchUrl({ ...facets, node: selectedIri }), {
-				replaceState: true,
-				noScroll: true,
-				keepFocus: true
+				replace: true,
+				reset: false
 			});
 		}
 	}
@@ -463,7 +460,7 @@
 		selectedIri = null;
 		breadcrumb = [];
 		nodeCache.clear();
-		void goto(appUrl('/identities'), { replaceState: true, noScroll: true, keepFocus: true });
+		void goto(appUrl('/identities'), { replace: true, reset: false });
 	}
 
 	// Keeps route state in sync with the URL: deep links, and the browser's own Back/Forward

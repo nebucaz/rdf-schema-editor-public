@@ -4,51 +4,51 @@
 	 * queries (STORY-195) and "Create New Query" (STORY-188) — are placeholders later stories fill.
 	 * The existing Queries console modal stays reachable via "Advanced / SPARQL console".
 	 */
-	import { apiUrl } from '$lib/utils/urls';
+	import { apiUrl } from '#lib/utils/urls.js';
 	import { page } from '$app/state';
 	import { onMount, untrack } from 'svelte';
-	import NamespaceFilter from '$lib/components/NamespaceFilter.svelte';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { workbenchNamespaceStore } from '$lib/stores/workbench-namespace-store.svelte';
-	import { hiddenFromSelection } from '$lib/utils/workbench-namespace';
-	import { filterListedNamespaces } from '$lib/utils/visibility';
-	import AddColumnModal from '$lib/components/AddColumnModal.svelte';
-	import FilterModal from '$lib/components/FilterModal.svelte';
+	import NamespaceFilter from '#lib/components/NamespaceFilter.svelte';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { workbenchNamespaceStore } from '#lib/stores/workbench-namespace-store.svelte.js';
+	import { hiddenFromSelection } from '#lib/utils/workbench-namespace.js';
+	import { filterListedNamespaces } from '#lib/utils/visibility.js';
+	import AddColumnModal from '#lib/components/AddColumnModal.svelte';
+	import FilterModal from '#lib/components/FilterModal.svelte';
 	import {
 		columnMarkers,
 		filterMarkers,
 		type FilterTarget
-	} from '$lib/services/query-column-groups';
-	import QueryColumnStrip from '$lib/components/QueryColumnStrip.svelte';
-	import QueryResultShapePanel from '$lib/components/QueryResultShapePanel.svelte';
-	import QueryExportButton from '$lib/components/QueryExportButton.svelte';
-	import QueryShowDrawer from '$lib/components/QueryShowDrawer.svelte';
-	import QueryColumnRules from '$lib/components/QueryColumnRules.svelte';
-	import QueryResultsTable from '$lib/components/QueryResultsTable.svelte';
-	import { queryRunStore } from '$lib/stores/query-run-store.svelte';
-	import { compileQuery } from '$lib/services/query-compiler';
-	import { formatTimeWindow } from '$lib/services/query-relative-time';
-	import { resultKey, validateRunnableQueryModel } from '$lib/services/query-model';
-	import QueryFilterChips from '$lib/components/QueryFilterChips.svelte';
-	import { queryBuilderStore } from '$lib/stores/query-builder-store.svelte';
+	} from '#lib/services/query-column-groups.js';
+	import QueryColumnStrip from '#lib/components/QueryColumnStrip.svelte';
+	import QueryResultShapePanel from '#lib/components/QueryResultShapePanel.svelte';
+	import QueryExportButton from '#lib/components/QueryExportButton.svelte';
+	import QueryShowDrawer from '#lib/components/QueryShowDrawer.svelte';
+	import QueryColumnRules from '#lib/components/QueryColumnRules.svelte';
+	import QueryResultsTable from '#lib/components/QueryResultsTable.svelte';
+	import { queryRunStore } from '#lib/stores/query-run-store.svelte.js';
+	import { compileQuery } from '#lib/services/query-compiler.js';
+	import { formatTimeWindow } from '#lib/services/query-relative-time.js';
+	import { resultKey, validateRunnableQueryModel } from '#lib/services/query-model.js';
+	import QueryFilterChips from '#lib/components/QueryFilterChips.svelte';
+	import { queryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
 	import {
 		sparqlConnector,
 		type IndividualSearchResult
-	} from '$lib/services/sparql-connector';
-	import { extractLocalName } from '$lib/utils/iri';
-	import SavedQueriesModal from '$lib/components/SavedQueriesModal.svelte';
-	import SaveQueryModal from '$lib/components/SaveQueryModal.svelte';
-	import { savedQueriesStore } from '$lib/stores/saved-queries-store.svelte';
-	import { openSavedQuery, saveDisabledReason, toSavedQueryItem, type SavedQueryItem } from '$lib/services/saved-queries';
-	import { adHocLink, adHocReportLink, fetchShortLinkModel, resolveSharedLoad } from '$lib/services/share-links';
-	import { shareLinkFor, shortLinkUrl } from '$lib/services/short-links';
-	import { prepareModelLoad, prepareSplLoad } from '$lib/services/query-load';
-	import type { SplParseError } from '$lib/services/query-spl-parser';
-	import { formatSplError, shouldOfferSplMode } from '$lib/services/spl-error-format';
-	import SplErrorView from '$lib/components/SplErrorView.svelte';
-	import { documentationStore } from '$lib/stores/documentation-store';
-	import { readSplMode, writeSplMode, type SplMode } from '$lib/services/spl-mode-preference';
-	import type { QueryModel } from '$lib/services/query-model';
+	} from '#lib/services/sparql-connector.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
+	import SavedQueriesModal from '#lib/components/SavedQueriesModal.svelte';
+	import SaveQueryModal from '#lib/components/SaveQueryModal.svelte';
+	import { savedQueriesStore } from '#lib/stores/saved-queries-store.svelte.js';
+	import { openSavedQuery, saveDisabledReason, toSavedQueryItem, type SavedQueryItem } from '#lib/services/saved-queries.js';
+	import { adHocLink, adHocReportLink, fetchShortLinkModel, resolveSharedLoad } from '#lib/services/share-links.js';
+	import { shareLinkFor, shortLinkUrl } from '#lib/services/short-links.js';
+	import { prepareModelLoad, prepareSplLoad } from '#lib/services/query-load.js';
+	import type { SplParseError } from '#lib/services/query-spl-parser.js';
+	import { formatSplError, shouldOfferSplMode } from '#lib/services/spl-error-format.js';
+	import SplErrorView from '#lib/components/SplErrorView.svelte';
+	import { documentationStore } from '#lib/stores/documentation-store.js';
+	import { readSplMode, writeSplMode, type SplMode } from '#lib/services/spl-mode-preference.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
 
 	// Builder schema is discovered from the graph on every visit (STORY-188). `queryBuilderStore` is a
 	// module singleton that outlives this page, so a schema (or load error) cached from an earlier

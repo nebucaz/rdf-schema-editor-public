@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ErdAttribute, ErdEntity, ErdModel } from './erd-model';
 import { layoutErd, type ErdLayout, type Notation, type Rect } from './erd-layout';
-import { heuristicMeasurer } from '$lib/utils/erd-svg';
+import { heuristicMeasurer } from '#lib/utils/erd-svg.js';
 
 const iri = (n: string) => `http://example.org/a#${n}`;
 

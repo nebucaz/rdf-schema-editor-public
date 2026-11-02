@@ -4,7 +4,7 @@
 	 * range, suggestions, and — for "not supported" constructs — a pointer into the in-app docs.
 	 * Presentational; the formatting itself is the unit-tested `formatSplError`.
 	 */
-	import type { FormattedSplError } from '$lib/services/spl-error-format';
+	import type { FormattedSplError } from '#lib/services/spl-error-format.js';
 
 	interface Props {
 		error: FormattedSplError;

@@ -7,7 +7,7 @@
  * (`config.ts`'s `namespaceGraphs`) collapses onto the same bare prefix here — a reader only needs
  * to recognize *which namespace* an IRI belongs to.
  */
-import { namespaceGraphs } from '$lib/config';
+import { namespaceGraphs } from '#lib/config.js';
 
 export interface NamespacePrefixEntry {
 	baseIri: string;

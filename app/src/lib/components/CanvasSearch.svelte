@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SearchMatch } from '$lib/services/canvas-search';
+	import type { SearchMatch } from '#lib/services/canvas-search.js';
 
 	interface Props {
 		/** Matches for a query, evaluated against the nodes currently on the canvas. */

@@ -25,18 +25,18 @@
 		type NeighborhoodNode,
 		type NeighborhoodLink,
 		type ResourcePage
-	} from '$lib/services/sparql-connector';
-	import { mergeNeighborhood } from '$lib/utils/neighborhood-merge';
+	} from '#lib/services/sparql-connector.js';
+	import { mergeNeighborhood } from '#lib/utils/neighborhood-merge.js';
 	import {
 		deriveResourceHeader,
 		displayLabel,
 		formatLiteralValue,
 		labelOrPrettify,
 		splitOutgoingTriples
-	} from '$lib/utils/resource-page-format';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { buildClassHierarchyIndex, resolveNodeColor, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
-	import { contrastTextColor } from '$lib/utils/contrast';
+	} from '#lib/utils/resource-page-format.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { buildClassHierarchyIndex, resolveNodeColor, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
+	import { contrastTextColor } from '#lib/utils/contrast.js';
 
 	interface IdentityRef {
 		iri: string;

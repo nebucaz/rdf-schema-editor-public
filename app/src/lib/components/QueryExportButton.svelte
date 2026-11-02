@@ -4,12 +4,12 @@
 	 * `exportAllRows` (not just the visible page), then downloads it client-side. Reports progress and,
 	 * when the row cap cut the file short, says so.
 	 */
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { QueryModel } from '$lib/services/query-model';
-	import { EXPORT_ROW_CAP, exportAllRows, exportFileName } from '$lib/services/query-export';
-	import { readableQueryError } from '$lib/services/query-results';
-	import { sparqlConnector } from '$lib/services/sparql-connector';
-	import { toCsv } from '$lib/utils/csv';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
+	import { EXPORT_ROW_CAP, exportAllRows, exportFileName } from '#lib/services/query-export.js';
+	import { readableQueryError } from '#lib/services/query-results.js';
+	import { sparqlConnector } from '#lib/services/sparql-connector.js';
+	import { toCsv } from '#lib/utils/csv.js';
 
 	interface Props {
 		model: QueryModel;

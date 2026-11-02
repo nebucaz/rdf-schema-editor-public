@@ -1,7 +1,7 @@
-import { apiUrl } from '$lib/utils/urls';
+import { apiUrl } from '#lib/utils/urls.js';
 import { error } from '@sveltejs/kit';
-import { runtimeConfigError } from '$lib/config';
-import { toSessionUser, type SessionUser } from '$lib/services/session-user';
+import { runtimeConfigError } from '#lib/config.js';
+import { toSessionUser, type SessionUser } from '#lib/services/session-user.js';
 import type { LayoutLoad } from './$types';
 
 // SPA mode: no server rendering or prerendering; `index.html` (the adapter fallback) serves every route.
@@ -13,7 +13,7 @@ export type { SessionUser };
 /**
  * Identity comes from the backend (`GET /api/me`, verified `Oglala` cookie) — `null` when absent or the
  * request fails, so browsing still works and identity-requiring actions stay disabled. `/api/config` is
- * already settled by the time `$lib/config` is imported; if it failed there is nothing to render.
+ * already settled by the time `#lib/config.js` is imported; if it failed there is nothing to render.
  */
 export const load: LayoutLoad = async ({ fetch }) => {
 	if (runtimeConfigError) {

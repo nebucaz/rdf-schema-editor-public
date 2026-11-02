@@ -1,14 +1,14 @@
 <script lang="ts">
-	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '$lib/services/sparql-connector';
-	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '$lib/services/canvas-model';
-	import { isValidIdentifierLocalName, type XsdDatatype } from '$lib/utils/iri';
+	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '#lib/services/sparql-connector.js';
+	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '#lib/services/canvas-model.js';
+	import { isValidIdentifierLocalName, type XsdDatatype } from '#lib/utils/iri.js';
 	import {
 		mergeAttributeFormValues,
 		reconcileAttributeValues,
 		validateRequiredAttributes,
 		type AttributeFormValues,
 		type AttributeValueSubmission
-	} from '$lib/utils/attribute-values';
+	} from '#lib/utils/attribute-values.js';
 	import {
 		mergeRelationFormValues,
 		reconcileRelationValues,
@@ -16,9 +16,9 @@
 		type RelationFormValues,
 		type RelationTargetOption,
 		type RelationValueSubmission
-	} from '$lib/utils/relation-values';
+	} from '#lib/utils/relation-values.js';
 
-	import { planClassChange, type ClassChangeField } from '$lib/services/class-change';
+	import { planClassChange, type ClassChangeField } from '#lib/services/class-change.js';
 
 	interface PredicateOption {
 		iri: string;

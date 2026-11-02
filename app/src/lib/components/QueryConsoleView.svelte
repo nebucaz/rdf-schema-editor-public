@@ -4,10 +4,10 @@
 		sparqlConnector,
 		type SparqlSelectResults,
 		type FetchedSavedQuery
-	} from '$lib/services/sparql-connector';
-	import { detectQueryForm } from '$lib/utils/sparql-query-form';
+	} from '#lib/services/sparql-connector.js';
+	import { detectQueryForm } from '#lib/utils/sparql-query-form.js';
 	import ResultsTable from './ResultsTable.svelte';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
 
 	/** Kept as `$state` (not local to a run function) so the saved-queries panel below can read
 	 *  from and write into it — "Run" loads a saved query's text then executes, "Edit" loads it

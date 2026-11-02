@@ -151,7 +151,7 @@ In code, build URLs only with `apiUrl()` / `appUrl()` / `absoluteAppUrl()` from 
 
 The app lives in `app/` and expects the backend above running.
 
-1. **Install dependencies** (the project uses [bun](https://bun.sh), indicated by `bun.lock`; `npm`/`pnpm`/`yarn` work too):
+1. **Install dependencies** (the project uses [bun](https://bun.sh) only: `bun.lock` is the single lockfile, so do not use `npm`/`pnpm`/`yarn`. SvelteKit 3 also needs Node >= 22.17 on the machine that runs the build tools):
 
    ```sh
    cd app

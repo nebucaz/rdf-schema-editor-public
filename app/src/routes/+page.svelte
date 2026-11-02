@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
+	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
 	import { onMount, untrack } from 'svelte';
 	import { mode } from 'mode-watcher';
 	import {
@@ -20,49 +20,49 @@
 		type EntityNodeData,
 		type EntityNodeType,
 		type EntityRelationFieldVM
-	} from '$lib/components/EntityNode.svelte';
+	} from '#lib/components/EntityNode.svelte';
 	import ExternalClassNode, {
 		type ExternalClassNodeData,
 		type ExternalClassNodeType
-	} from '$lib/components/ExternalClassNode.svelte';
-	import IndividualNode, { type IndividualNodeData, type IndividualNodeType } from '$lib/components/IndividualNode.svelte';
-	import NoteNode, { type NoteNodeData, type NoteNodeType } from '$lib/components/NoteNode.svelte';
-	import RelationEdge, { type RelationEdgeData } from '$lib/components/RelationEdge.svelte';
-	import AttributedLinkEdge, { type AttributedLinkEdgeData } from '$lib/components/AttributedLinkEdge.svelte';
-	import NoteLinkEdge from '$lib/components/NoteLinkEdge.svelte';
-	import InheritanceEdge, { type InheritanceEdgeData } from '$lib/components/InheritanceEdge.svelte';
-	import IsMasterForEdge, { type IsMasterForEdgeData } from '$lib/components/IsMasterForEdge.svelte';
-	import InstanceOfEdge from '$lib/components/InstanceOfEdge.svelte';
-	import Modal from '$lib/components/Modal.svelte';
-	import ExportErdDialog, { type ExportErdChoice } from '$lib/components/ExportErdDialog.svelte';
-	import { buildErdSvg } from '$lib/services/erd-export';
-	import { downloadBlob, downloadFile } from '$lib/utils/download';
-	import { svgToPngBlob } from '$lib/utils/svg-to-png';
-	import EntityForm from '$lib/components/EntityForm.svelte';
-	import SplitButton from '$lib/components/SplitButton.svelte';
-	import AddNamespaceClassesModal from '$lib/components/AddNamespaceClassesModal.svelte';
-	import AttributeForm from '$lib/components/AttributeForm.svelte';
-	import ManageMembersModal from '$lib/components/ManageMembersModal.svelte';
-	import MemberForm from '$lib/components/MemberForm.svelte';
-	import RelationForm from '$lib/components/RelationForm.svelte';
-	import IndividualRelationForm from '$lib/components/IndividualRelationForm.svelte';
-	import AssociationForm from '$lib/components/AssociationForm.svelte';
-	import AssociationEditForm, { type AssociationEditLinkRow } from '$lib/components/AssociationEditForm.svelte';
-	import ExternalClassForm from '$lib/components/ExternalClassForm.svelte';
-	import TriplesPanel from '$lib/components/TriplesPanel.svelte';
-	import CanvasGrid from '$lib/components/CanvasGrid.svelte';
-	import CanvasReadout from '$lib/components/CanvasReadout.svelte';
-	import LoadingOverlay from '$lib/components/LoadingOverlay.svelte';
-	import { createLoadTiming } from '$lib/utils/load-timing';
-	import { loadWorkspaceSchema } from '$lib/services/schema-load';
-	import { addableElementsFromSchema } from '$lib/services/addable-elements';
-	import { placeClasses } from '$lib/services/namespace-class-placement';
-	import { requestActivity } from '$lib/stores/request-activity.svelte';
-	import CanvasSearch from '$lib/components/CanvasSearch.svelte';
-	import { panToNode, searchCanvasNodes, searchHighlightCss } from '$lib/services/canvas-search';
-	import { formatReadout, gridOrigin } from '$lib/services/canvas-grid';
-	import { gridVisibilityStore } from '$lib/stores/grid-visibility-store.svelte';
-	import ProvenanceReportView from '$lib/components/ProvenanceReportView.svelte';
+	} from '#lib/components/ExternalClassNode.svelte';
+	import IndividualNode, { type IndividualNodeData, type IndividualNodeType } from '#lib/components/IndividualNode.svelte';
+	import NoteNode, { type NoteNodeData, type NoteNodeType } from '#lib/components/NoteNode.svelte';
+	import RelationEdge, { type RelationEdgeData } from '#lib/components/RelationEdge.svelte';
+	import AttributedLinkEdge, { type AttributedLinkEdgeData } from '#lib/components/AttributedLinkEdge.svelte';
+	import NoteLinkEdge from '#lib/components/NoteLinkEdge.svelte';
+	import InheritanceEdge, { type InheritanceEdgeData } from '#lib/components/InheritanceEdge.svelte';
+	import IsMasterForEdge, { type IsMasterForEdgeData } from '#lib/components/IsMasterForEdge.svelte';
+	import InstanceOfEdge from '#lib/components/InstanceOfEdge.svelte';
+	import Modal from '#lib/components/Modal.svelte';
+	import ExportErdDialog, { type ExportErdChoice } from '#lib/components/ExportErdDialog.svelte';
+	import { buildErdSvg } from '#lib/services/erd-export.js';
+	import { downloadBlob, downloadFile } from '#lib/utils/download.js';
+	import { svgToPngBlob } from '#lib/utils/svg-to-png.js';
+	import EntityForm from '#lib/components/EntityForm.svelte';
+	import SplitButton from '#lib/components/SplitButton.svelte';
+	import AddNamespaceClassesModal from '#lib/components/AddNamespaceClassesModal.svelte';
+	import AttributeForm from '#lib/components/AttributeForm.svelte';
+	import ManageMembersModal from '#lib/components/ManageMembersModal.svelte';
+	import MemberForm from '#lib/components/MemberForm.svelte';
+	import RelationForm from '#lib/components/RelationForm.svelte';
+	import IndividualRelationForm from '#lib/components/IndividualRelationForm.svelte';
+	import AssociationForm from '#lib/components/AssociationForm.svelte';
+	import AssociationEditForm, { type AssociationEditLinkRow } from '#lib/components/AssociationEditForm.svelte';
+	import ExternalClassForm from '#lib/components/ExternalClassForm.svelte';
+	import TriplesPanel from '#lib/components/TriplesPanel.svelte';
+	import CanvasGrid from '#lib/components/CanvasGrid.svelte';
+	import CanvasReadout from '#lib/components/CanvasReadout.svelte';
+	import LoadingOverlay from '#lib/components/LoadingOverlay.svelte';
+	import { createLoadTiming } from '#lib/utils/load-timing.js';
+	import { loadWorkspaceSchema } from '#lib/services/schema-load.js';
+	import { addableElementsFromSchema } from '#lib/services/addable-elements.js';
+	import { placeClasses } from '#lib/services/namespace-class-placement.js';
+	import { requestActivity } from '#lib/stores/request-activity.svelte.js';
+	import CanvasSearch from '#lib/components/CanvasSearch.svelte';
+	import { panToNode, searchCanvasNodes, searchHighlightCss } from '#lib/services/canvas-search.js';
+	import { formatReadout, gridOrigin } from '#lib/services/canvas-grid.js';
+	import { gridVisibilityStore } from '#lib/stores/grid-visibility-store.svelte.js';
+	import ProvenanceReportView from '#lib/components/ProvenanceReportView.svelte';
 	import {
 		sparqlConnector,
 		type AssociationLink,
@@ -73,11 +73,11 @@
 		type FetchedIndividualClassRelation,
 		type FetchedIndividualIndividualRelation,
 		type FetchedSubClassOf
-	} from '$lib/services/sparql-connector';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
-	import { settingsStore } from '$lib/stores/settings-store.svelte';
-	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '$lib/services/canvas-model';
+	} from '#lib/services/sparql-connector.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
+	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
+	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
 	import {
 		GraphDbLayoutStore,
 		KeyedDebouncer,
@@ -85,30 +85,30 @@
 		resolvePositions,
 		viewportCenteredPosition,
 		NEW_NODE_SIZE
-	} from '$lib/stores/layout-store';
-	import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
-	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
-	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
-	import { nodeColorStore } from '$lib/stores/node-color-store';
-	import { viewFrameStore } from '$lib/stores/view-frame-store';
-	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '$lib/stores/active-namespace-store';
-	import { activeWorkspaceStore } from '$lib/stores/active-workspace-store';
-	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
-	import { namespaceVisibilityStore } from '$lib/stores/namespace-visibility-store';
-	import { reverseRelationsVisibilityStore } from '$lib/stores/reverse-relations-visibility-store.svelte';
-	import { viewModeStore, type ViewMode } from '$lib/stores/view-mode-store';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
-	import { DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
-	import { extractLocalName, workspaceIri, type XsdDatatype } from '$lib/utils/iri';
-	import { exportCanvasAsSvg } from '$lib/utils/svg-export';
-	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '$lib/utils/visibility';
-	import { classifyAddedElement } from '$lib/services/workspace-add';
+	} from '#lib/stores/layout-store.js';
+	import { NOTE_PASTEL_COLORS } from '#lib/utils/color-palette.js';
+	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
+	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
+	import { nodeColorStore } from '#lib/stores/node-color-store.js';
+	import { viewFrameStore } from '#lib/stores/view-frame-store.js';
+	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '#lib/stores/active-namespace-store.js';
+	import { activeWorkspaceStore } from '#lib/stores/active-workspace-store.js';
+	import { workspaceStore } from '#lib/stores/workspace-store.svelte.js';
+	import { namespaceVisibilityStore } from '#lib/stores/namespace-visibility-store.js';
+	import { reverseRelationsVisibilityStore } from '#lib/stores/reverse-relations-visibility-store.svelte.js';
+	import { viewModeStore, type ViewMode } from '#lib/stores/view-mode-store.js';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
+	import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
+	import { extractLocalName, workspaceIri, type XsdDatatype } from '#lib/utils/iri.js';
+	import { exportCanvasAsSvg } from '#lib/utils/svg-export.js';
+	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '#lib/utils/visibility.js';
+	import { classifyAddedElement } from '#lib/services/workspace-add.js';
 	import {
 		addIndividualToSchema,
 		removeIndividualFromSchema,
 		renameIndividualInSchema,
 		setIndividualClassInSchema
-	} from '$lib/services/individual-cache';
+	} from '#lib/services/individual-cache.js';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
 

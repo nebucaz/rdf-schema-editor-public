@@ -1,4 +1,4 @@
-import { apiUrl } from '$lib/utils/urls';
+import { apiUrl } from '#lib/utils/urls.js';
 
 export type AuthResult = { ok: true } | { ok: false; message: string };
 

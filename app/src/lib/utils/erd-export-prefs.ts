@@ -1,5 +1,5 @@
-import type { MinimalStorage } from '$lib/stores/layout-store';
-import type { Notation } from '$lib/services/erd-layout';
+import type { MinimalStorage } from '#lib/stores/layout-store.js';
+import type { Notation } from '#lib/services/erd-layout.js';
 
 /** Remembered Export ERD dialog choices (STORY-159). A per-viewer convenience only — every storage
  *  access is wrapped, so a blocked/absent `localStorage` just means the defaults apply. */

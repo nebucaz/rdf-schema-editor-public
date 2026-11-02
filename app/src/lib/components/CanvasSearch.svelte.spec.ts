@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import CanvasSearch from './CanvasSearch.svelte';
-import { searchCanvasNodes } from '$lib/services/canvas-search';
+import { searchCanvasNodes } from '#lib/services/canvas-search.js';
 
 const nodes = [
 	{ id: 'urn:a', type: 'entity', hidden: false, data: { name: 'Person' } },

@@ -6,9 +6,9 @@
 	 * combined with the search box and with each other (an AND across all set fields, same as the
 	 * connector method itself).
 	 */
-	import type { FetchedClass, FetchedNamespace } from '$lib/services/sparql-connector';
+	import type { FetchedClass, FetchedNamespace } from '#lib/services/sparql-connector.js';
 	import { untrack } from 'svelte';
-	import { UNCLASSIFIED_FACET } from '$lib/utils/identity-search-url';
+	import { UNCLASSIFIED_FACET } from '#lib/utils/identity-search-url.js';
 
 	export interface IdentityFacetValues {
 		query: string;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { SessionUser } from '$lib/services/session-user';
+	import type { SessionUser } from '#lib/services/session-user.js';
 
 	interface Props {
 		user: SessionUser;

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
-	import { classesOfNamespace } from '$lib/services/namespace-class-placement';
-	import type { FetchedNamespace, FetchedSchema } from '$lib/services/sparql-connector';
+	import { classesOfNamespace } from '#lib/services/namespace-class-placement.js';
+	import type { FetchedNamespace, FetchedSchema } from '#lib/services/sparql-connector.js';
 
 	interface Props {
 		isOpen: boolean;

@@ -1,6 +1,6 @@
 <script lang="ts" module>
-	import type { Notation } from '$lib/services/erd-layout';
-	import type { ErdExportFormat } from '$lib/utils/erd-export-prefs';
+	import type { Notation } from '#lib/services/erd-layout.js';
+	import type { ErdExportFormat } from '#lib/utils/erd-export-prefs.js';
 
 	export interface ExportErdChoice {
 		notation: Notation;
@@ -13,7 +13,7 @@
 
 <script lang="ts">
 	import Modal from './Modal.svelte';
-	import { NOTATIONS, readErdExportPrefs, writeErdExportPrefs } from '$lib/utils/erd-export-prefs';
+	import { NOTATIONS, readErdExportPrefs, writeErdExportPrefs } from '#lib/utils/erd-export-prefs.js';
 
 	interface Props {
 		isOpen: boolean;

@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sparqlConnector, type FetchedWorkspace } from '$lib/services/sparql-connector';
-	import { workspaceStore } from '$lib/stores/workspace-store.svelte';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
-	import { extractLocalName, kebabCase } from '$lib/utils/iri';
-	import { downloadFile } from '$lib/utils/download';
+	import { sparqlConnector, type FetchedWorkspace } from '#lib/services/sparql-connector.js';
+	import { workspaceStore } from '#lib/stores/workspace-store.svelte.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
+	import { extractLocalName, kebabCase } from '#lib/utils/iri.js';
+	import { downloadFile } from '#lib/utils/download.js';
 
 	let loadError = $state<string | null>(null);
 

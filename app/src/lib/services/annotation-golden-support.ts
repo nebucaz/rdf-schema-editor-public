@@ -4,7 +4,7 @@
  * (`backend/internal/annotations`) can be held to the same sequence via the shared fixture
  * `backend/testdata/golden/annotations.json`.
  */
-import { apiUrl } from '$lib/utils/urls';
+import { apiUrl } from '#lib/utils/urls.js';
 import { vi } from 'vitest';
 import type { AnnotationInput, FactKey } from './sparql-connector';
 

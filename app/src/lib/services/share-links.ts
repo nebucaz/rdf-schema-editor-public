@@ -3,7 +3,7 @@
  * decides what the workbench should load from its URL. Nothing here trusts URL input — inline
  * models go through `decodeModelFromUrl` (strict parse), saved ids through `resolveReportTarget`.
  */
-import { absoluteAppUrl, apiUrl } from '$lib/utils/urls';
+import { absoluteAppUrl, apiUrl } from '#lib/utils/urls.js';
 import { decodeModelFromUrl, encodeModelForUrl, parseQueryModel, type QueryModel } from './query-model';
 import { isShortId } from './short-links';
 import { reportIdForIri, resolveReportTarget } from './report-id';

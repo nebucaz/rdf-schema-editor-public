@@ -33,7 +33,7 @@ import {
 	SHAPES_NAMESPACE,
 	BACKSTAGE_KIND_PREDICATE_IRI
 } from './iri';
-import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '$lib/config';
+import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '#lib/config.js';
 
 describe('pascalCase / camelCase', () => {
 	it('converts a multi-word name to PascalCase', () => {

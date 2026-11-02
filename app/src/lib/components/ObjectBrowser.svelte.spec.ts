@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import ObjectBrowser from './ObjectBrowser.svelte';
-import { buildBuilderSchema } from '$lib/services/query-builder-schema';
-import { addHop, startQueryFromClass } from '$lib/services/query-model-edit';
-import type { FetchedNamespace, FetchedSchema } from '$lib/services/sparql-connector';
+import { buildBuilderSchema } from '#lib/services/query-builder-schema.js';
+import { addHop, startQueryFromClass } from '#lib/services/query-model-edit.js';
+import type { FetchedNamespace, FetchedSchema } from '#lib/services/sparql-connector.js';
 
 const NS = 'http://example.org/org';
 const o = (n: string) => `${NS}#${n}`;

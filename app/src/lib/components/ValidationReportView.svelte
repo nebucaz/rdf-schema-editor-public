@@ -12,12 +12,12 @@
 </script>
 
 <script lang="ts">
-	import { apiUrl } from '$lib/utils/urls';
-	import { extractLocalName } from '$lib/utils/iri';
-	import { buildIdentitySearchUrl } from '$lib/utils/identity-search-url';
-	import { toCurie, curieifyText, namespaceOf } from '$lib/utils/curie';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { validationReportFilterStore } from '$lib/stores/validation-report-filter-store.svelte';
+	import { apiUrl } from '#lib/utils/urls.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
+	import { buildIdentitySearchUrl } from '#lib/utils/identity-search-url.js';
+	import { toCurie, curieifyText, namespaceOf } from '#lib/utils/curie.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { validationReportFilterStore } from '#lib/stores/validation-report-filter-store.svelte.js';
 
 	/**
 	 * STORY-132: read-only report — a "Run Validation" button calls the STORY-131 proxy route

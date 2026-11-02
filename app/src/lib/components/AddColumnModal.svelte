@@ -10,10 +10,10 @@
 	 */
 	import Modal from './Modal.svelte';
 	import ObjectBrowser from './ObjectBrowser.svelte';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
-	import type { QueryModel } from '$lib/services/query-model';
-	import type { BrowserPick } from '$lib/services/query-object-browser';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { FetchedNamespace } from '#lib/services/sparql-connector.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
+	import type { BrowserPick } from '#lib/services/query-object-browser.js';
 
 	interface Props {
 		isOpen: boolean;

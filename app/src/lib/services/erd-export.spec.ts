@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { heuristicMeasurer } from '$lib/utils/erd-svg';
+import { heuristicMeasurer } from '#lib/utils/erd-svg.js';
 import type { CanvasModel, EntityNodeSpec } from './canvas-model';
 import { buildErdSvg } from './erd-export';
 

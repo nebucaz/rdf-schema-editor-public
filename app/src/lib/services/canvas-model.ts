@@ -4,7 +4,7 @@ import {
 	EXTERNAL_PREFIXES,
 	ATTRIBUTED_RELATIONSHIP_IRI,
 	type XsdDatatype
-} from '$lib/utils/iri';
+} from '#lib/utils/iri.js';
 import type { FetchedProperty, FetchedSchema, FetchedSubClassOf } from './sparql-connector';
 
 export interface CanvasAttributeSpec {

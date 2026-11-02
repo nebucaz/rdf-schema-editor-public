@@ -7,7 +7,7 @@
 	 * only exists on the canvas route).
 	 */
 	import Modal from './Modal.svelte';
-	import { importTargetOptions, initialImportTarget, isTurtleFileName } from '$lib/utils/import-target';
+	import { importTargetOptions, initialImportTarget, isTurtleFileName } from '#lib/utils/import-target.js';
 
 	interface Props {
 		isOpen: boolean;

@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
-	import { SchemaValidationError, type ValidationIssue } from '$lib/services/validation';
-	import { extractLocalName } from '$lib/utils/iri';
-	import { highlightTurtle } from '$lib/utils/turtle-highlight';
-	import { downloadFile } from '$lib/utils/download';
-	import { buildCanvasModel } from '$lib/services/canvas-model';
-	import { canvasModelToLinkML } from '$lib/services/linkml';
-	import { externalVocabStore } from '$lib/stores/external-vocab-store.svelte';
+	import { sparqlConnector, type FetchedNamespace } from '#lib/services/sparql-connector.js';
+	import { SchemaValidationError, type ValidationIssue } from '#lib/services/validation.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
+	import { highlightTurtle } from '#lib/utils/turtle-highlight.js';
+	import { downloadFile } from '#lib/utils/download.js';
+	import { buildCanvasModel } from '#lib/services/canvas-model.js';
+	import { canvasModelToLinkML } from '#lib/services/linkml.js';
+	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import CatalogMetadataForm from './CatalogMetadataForm.svelte';
 
 	/**

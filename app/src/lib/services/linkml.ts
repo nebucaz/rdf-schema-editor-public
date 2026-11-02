@@ -16,8 +16,8 @@ import type {
 	RelationEdgeSpec,
 	AttributedLinkEdgeSpec
 } from './canvas-model';
-import { namespaceGraphs } from '$lib/config';
-import type { XsdDatatype } from '$lib/utils/iri';
+import { namespaceGraphs } from '#lib/config.js';
+import type { XsdDatatype } from '#lib/utils/iri.js';
 
 export interface LinkMLNamespace {
 	prefix: string;

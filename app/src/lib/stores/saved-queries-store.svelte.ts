@@ -1,13 +1,13 @@
-import { sparqlConnector, type FetchedSavedQuery } from '$lib/services/sparql-connector';
-import type { BuilderSchema } from '$lib/services/query-builder-schema';
-import { compileUnpagedQuery } from '$lib/services/query-compiler';
-import { serializeQueryModel, validateRunnableQueryModel, type QueryModel } from '$lib/services/query-model';
+import { sparqlConnector, type FetchedSavedQuery } from '#lib/services/sparql-connector.js';
+import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+import { compileUnpagedQuery } from '#lib/services/query-compiler.js';
+import { serializeQueryModel, validateRunnableQueryModel, type QueryModel } from '#lib/services/query-model.js';
 import {
 	saveDisabledReason,
 	toSavedQueryItem,
 	type SavedQueryItem,
 	type WorkbenchUser
-} from '$lib/services/saved-queries';
+} from '#lib/services/saved-queries.js';
 
 /** The slice of `SparqlConnector` this store needs — keeps it testable without GraphDB. */
 export interface SavedQueryStorage {

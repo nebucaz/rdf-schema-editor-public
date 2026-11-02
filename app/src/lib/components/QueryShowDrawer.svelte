@@ -5,9 +5,9 @@
 	 * shows its validation messages instead of output. Read-only: there is no hand-off to the console,
 	 * as edits made there could never flow back into the model.
 	 */
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { QueryModel } from '$lib/services/query-model';
-	import { describeQueryOutput } from '$lib/services/query-preview';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
+	import { describeQueryOutput } from '#lib/services/query-preview.js';
 
 	interface Props {
 		model: QueryModel;

@@ -1,10 +1,10 @@
 <script lang="ts">
 	import MemberForm from './MemberForm.svelte';
 	import type { EntityMemberVM } from './EntityNode.svelte';
-	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '$lib/services/sparql-connector';
-	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '$lib/services/canvas-model';
-	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
-	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
+	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '#lib/services/sparql-connector.js';
+	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '#lib/services/canvas-model.js';
+	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
+	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
 
 	interface PredicateOption {
 		iri: string;

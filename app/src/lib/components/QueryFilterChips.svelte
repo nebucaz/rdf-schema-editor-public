@@ -9,7 +9,7 @@
 	 * is drawn as one bordered block, can be dissolved as a whole, and a member can be taken out of it.
 	 * A range chip (`gte` + `lt`) cannot be grouped — OR-ing its two bounds would change what it means.
 	 */
-	import type { FilterMarker } from '$lib/services/query-column-groups';
+	import type { FilterMarker } from '#lib/services/query-column-groups.js';
 
 	interface Props {
 		markers: FilterMarker[];

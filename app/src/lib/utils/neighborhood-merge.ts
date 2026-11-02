@@ -4,7 +4,7 @@
  * colocated `*.spec.ts` convention without needing a component-testing project. `fetchIdentityNeighborhood`
  * (STORY-117) deliberately returns an undeduped delta — this is the caller-side merge step it expects.
  */
-import type { NeighborhoodGraph, NeighborhoodLink } from '$lib/services/sparql-connector';
+import type { NeighborhoodGraph, NeighborhoodLink } from '#lib/services/sparql-connector.js';
 
 function linkKey(l: NeighborhoodLink): string {
 	return `${l.source}\t${l.predicateIri}\t${l.target}`;

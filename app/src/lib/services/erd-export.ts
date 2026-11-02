@@ -1,5 +1,5 @@
-import { createCanvasMeasurer } from '$lib/utils/erd-measurer-browser';
-import { heuristicMeasurer, type TextMeasurer } from '$lib/utils/erd-svg';
+import { createCanvasMeasurer } from '#lib/utils/erd-measurer-browser.js';
+import { heuristicMeasurer, type TextMeasurer } from '#lib/utils/erd-svg.js';
 import type { CanvasModel } from './canvas-model';
 import { buildErdModel } from './erd-model';
 import type { Notation, Point } from './erd-layout';

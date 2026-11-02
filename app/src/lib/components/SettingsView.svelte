@@ -1,12 +1,12 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sparqlConnector, type FetchedSchema } from '$lib/services/sparql-connector';
-	import { settingsStore } from '$lib/stores/settings-store.svelte';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { extractLocalName } from '$lib/utils/iri';
-	import { erdSourceMarkerStore } from '$lib/stores/erd-source-marker-store.svelte';
-	import { gridVisibilityStore } from '$lib/stores/grid-visibility-store.svelte';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
+	import { sparqlConnector, type FetchedSchema } from '#lib/services/sparql-connector.js';
+	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
+	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
+	import { gridVisibilityStore } from '#lib/stores/grid-visibility-store.svelte.js';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
 
 	let loadError = $state<string | null>(null);
 	let saveError = $state<string | null>(null);

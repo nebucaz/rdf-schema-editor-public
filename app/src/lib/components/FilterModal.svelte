@@ -10,21 +10,21 @@
 	import Modal from './Modal.svelte';
 	import QueryPropertyFilterForm from './QueryPropertyFilterForm.svelte';
 	import QueryEntityFilter from './QueryEntityFilter.svelte';
-	import type { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { QueryModel } from '$lib/services/query-model';
+	import type { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
 	import {
 		buildColumnGroups,
 		filterableProperties,
 		filtersForProperty,
 		type FilterTarget
-	} from '$lib/services/query-column-groups';
+	} from '#lib/services/query-column-groups.js';
 	import {
 		describeFilter,
 		makeFilter,
 		prefillFromFilters,
 		type FilterDraft
-	} from '$lib/services/query-filter-editor';
+	} from '#lib/services/query-filter-editor.js';
 
 	interface Props {
 		isOpen: boolean;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { heuristicMeasurer, lightTheme } from '$lib/utils/erd-svg';
+import { heuristicMeasurer, lightTheme } from '#lib/utils/erd-svg.js';
 import { layoutErd, type Notation } from './erd-layout';
 import { legendEntries, buildLegend } from './erd-legend';
 import { renderErd } from './erd-render';

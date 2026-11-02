@@ -6,8 +6,8 @@
  * layer can operate on the same `Quad[]` without a second parsing pass.
  */
 import { Parser, Writer, DataFactory, type Quad, type Quad_Object, type Term } from 'n3';
-import { nodeShapeIri, SCHEMA_NAMESPACE, SHAPES_NAMESPACE, XSD_NAMESPACE } from '$lib/utils/iri';
-import { namespaceGraphs, DEFAULT_NAMESPACE_BASE_IRI } from '$lib/config';
+import { nodeShapeIri, SCHEMA_NAMESPACE, SHAPES_NAMESPACE, XSD_NAMESPACE } from '#lib/utils/iri.js';
+import { namespaceGraphs, DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
 import type { SparqlBinding } from './sparql-connector';
 
 export type { Quad };

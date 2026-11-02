@@ -4,7 +4,7 @@
 	 * inline confirmation). Raw-SPARQL legacy queries are filtered out by the caller.
 	 */
 	import Modal from './Modal.svelte';
-	import { filterCreatedByMe, type SavedQueryItem, type WorkbenchUser } from '$lib/services/saved-queries';
+	import { filterCreatedByMe, type SavedQueryItem, type WorkbenchUser } from '#lib/services/saved-queries.js';
 
 	interface Props {
 		isOpen: boolean;

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { labelsVisible, visibleGrid } from '$lib/services/canvas-grid';
+	import { labelsVisible, visibleGrid } from '#lib/services/canvas-grid.js';
 
 	interface Props {
 		viewport: { x: number; y: number; zoom: number };

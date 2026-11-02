@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { MinimalStorage } from '$lib/stores/layout-store';
+import type { MinimalStorage } from '#lib/stores/layout-store.js';
 import { DEFAULT_ERD_EXPORT_PREFS, readErdExportPrefs, writeErdExportPrefs } from './erd-export-prefs';
 
 function memoryStorage(initial: Record<string, string> = {}): MinimalStorage {

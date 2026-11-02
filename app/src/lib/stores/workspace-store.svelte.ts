@@ -7,7 +7,7 @@
  * Not `localStorage`-backed (unlike `active-workspace-store.ts`) — Workspace *data* lives in
  * GraphDB, so this is a `.svelte.ts` reactive singleton, same shape as `namespace-store.svelte.ts`.
  */
-import { sparqlConnector, type FetchedWorkspace } from '$lib/services/sparql-connector';
+import { sparqlConnector, type FetchedWorkspace } from '#lib/services/sparql-connector.js';
 
 function createWorkspaceStore() {
 	let workspaces = $state<FetchedWorkspace[]>([]);

@@ -1,6 +1,6 @@
 <script lang="ts">
-	import type { ImportedTripleInfo, ImportSummary } from '$lib/services/sparql-connector';
-	import { extractLocalName } from '$lib/utils/iri';
+	import type { ImportedTripleInfo, ImportSummary } from '#lib/services/sparql-connector.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
 
 	interface Props {
 		summary: ImportSummary;

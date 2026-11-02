@@ -8,7 +8,7 @@
 
 <script lang="ts">
 	import { BaseEdge, useInternalNode, type EdgeProps } from '@xyflow/svelte';
-	import { getFloatingEdgeParams, getParallelSmoothStepPath } from '$lib/utils/floating-edge';
+	import { getFloatingEdgeParams, getParallelSmoothStepPath } from '#lib/utils/floating-edge.js';
 
 	let { id, source, target }: EdgeProps<NoteLinkEdgeType> = $props();
 

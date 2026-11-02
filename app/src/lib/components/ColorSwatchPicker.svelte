@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { PRESET_COLORS } from '$lib/utils/color-palette';
+	import { PRESET_COLORS } from '#lib/utils/color-palette.js';
 
 	interface Props {
 		color: string | undefined;

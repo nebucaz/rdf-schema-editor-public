@@ -5,15 +5,15 @@
 	 * (editable header, reorder within the group, remove) and a trailing "+ Add column". Every edit
 	 * goes through `QueryBuilderStore`, so the model rules stay in `query-model-edit.ts`.
 	 */
-	import type { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { QueryModel } from '$lib/services/query-model';
+	import type { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
 	import {
 		buildColumnGroups,
 		columnMarkers,
 		type ColumnGroup,
 		type FilterTarget
-	} from '$lib/services/query-column-groups';
+	} from '#lib/services/query-column-groups.js';
 	import ColumnMarkers from './ColumnMarkers.svelte';
 	import QueryColumnGroupHeader from './QueryColumnGroupHeader.svelte';
 	import { mode } from 'mode-watcher';
@@ -22,7 +22,7 @@
 		tintFor,
 		workbenchGroupColorStore,
 		type GroupColorStore
-	} from '$lib/stores/workbench-group-color-store';
+	} from '#lib/stores/workbench-group-color-store.js';
 
 	interface Props {
 		model: QueryModel;

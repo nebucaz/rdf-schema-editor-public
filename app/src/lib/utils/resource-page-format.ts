@@ -6,8 +6,8 @@
  * repo's colocated `*.spec.ts` convention without needing a component-testing project (see
  * `CLAUDE.md`'s "known gap" note).
  */
-import { RDF, RDFS } from '$lib/services/turtle';
-import type { ResourcePageTriple } from '$lib/services/sparql-connector';
+import { RDF, RDFS } from '#lib/services/turtle.js';
+import type { ResourcePageTriple } from '#lib/services/sparql-connector.js';
 import { extractLocalName } from './iri';
 
 /** Core word-splitting transform behind `prettifyLocalName`/`displayLabel` — camelCase and

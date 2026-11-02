@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
+	import type { FetchedNamespace } from '#lib/services/sparql-connector.js';
 
 	interface Props {
 		/** Every registered namespace (STORY-027's `fetchNamespaces()`), listed regardless of

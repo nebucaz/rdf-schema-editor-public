@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import AppNav from './AppNav.svelte';
-import { resolveRouteView } from '$lib/utils/route-views';
+import { resolveRouteView } from '#lib/utils/route-views.js';
 
 const LINKS = [
 	['Identities', '/identities', '/identities'],

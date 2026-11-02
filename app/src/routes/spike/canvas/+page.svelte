@@ -11,8 +11,8 @@
 		type Connection
 	} from '@xyflow/svelte';
 	import '@xyflow/svelte/dist/style.css';
-	import EntityNode from '$lib/components/spike/EntityNode.svelte';
-	import AttributedEdge from '$lib/components/spike/AttributedEdge.svelte';
+	import EntityNode from '#lib/components/spike/EntityNode.svelte';
+	import AttributedEdge from '#lib/components/spike/AttributedEdge.svelte';
 
 	const NODE_COUNT = 30;
 	const COLS = 6;

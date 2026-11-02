@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { QueryBuilderStore } from './query-builder-store.svelte';
-import { startQueryFromClass } from '$lib/services/query-model-edit';
-import type { BrowserPick } from '$lib/services/query-object-browser';
+import { startQueryFromClass } from '#lib/services/query-model-edit.js';
+import type { BrowserPick } from '#lib/services/query-object-browser.js';
 
 const NS = 'http://example.org/org';
 const o = (n: string) => `${NS}#${n}`;

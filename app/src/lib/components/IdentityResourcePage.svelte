@@ -13,25 +13,25 @@
 		type FetchedNamespace,
 		type NameableEntity,
 		type ResourcePage
-	} from '$lib/services/sparql-connector';
+	} from '#lib/services/sparql-connector.js';
 	import {
 		buildPropertyRows,
 		deriveResourceHeader,
 		displayLabel,
 		labelOrPrettify,
 		splitOutgoingTriples
-	} from '$lib/utils/resource-page-format';
-	import { resolveClassColor, type ClassHierarchyIndex } from '$lib/utils/namespace-color';
-	import { contrastTextColor } from '$lib/utils/contrast';
-	import Modal from '$lib/components/Modal.svelte';
-	import IdentityNeighborhoodGraph from '$lib/components/IdentityNeighborhoodGraph.svelte';
-	import MemberForm from '$lib/components/MemberForm.svelte';
-	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '$lib/services/canvas-model';
-	import { resolveEditFormSpec, resolveGoverningClass } from '$lib/utils/identity-schema-index';
-	import { editIdentity } from '$lib/utils/identity-mutations';
-	import { SYNC_SOURCE_PREDICATE_IRI } from '$lib/utils/iri';
-	import type { AttributeValueSubmission } from '$lib/utils/attribute-values';
-	import type { RelationTargetOption, RelationValueSubmission } from '$lib/utils/relation-values';
+	} from '#lib/utils/resource-page-format.js';
+	import { resolveClassColor, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
+	import { contrastTextColor } from '#lib/utils/contrast.js';
+	import Modal from '#lib/components/Modal.svelte';
+	import IdentityNeighborhoodGraph from '#lib/components/IdentityNeighborhoodGraph.svelte';
+	import MemberForm from '#lib/components/MemberForm.svelte';
+	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
+	import { resolveEditFormSpec, resolveGoverningClass } from '#lib/utils/identity-schema-index.js';
+	import { editIdentity } from '#lib/utils/identity-mutations.js';
+	import { SYNC_SOURCE_PREDICATE_IRI } from '#lib/utils/iri.js';
+	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
+	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
 
 	const EMPTY_CLASS_HIERARCHY_INDEX: ClassHierarchyIndex = {
 		classNamespaceByIri: new Map(),

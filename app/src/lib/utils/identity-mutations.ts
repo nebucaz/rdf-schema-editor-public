@@ -1,4 +1,4 @@
-import { sparqlConnector } from '$lib/services/sparql-connector';
+import { sparqlConnector } from '#lib/services/sparql-connector.js';
 import type { AttributeValueSubmission } from './attribute-values';
 import type { RelationValueSubmission } from './relation-values';
 

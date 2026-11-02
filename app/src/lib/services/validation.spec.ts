@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { checkShaclWellFormedness, checkStructural, checkCatalogStructural } from './validation';
 import { parseTurtle } from './turtle';
-import { BACKSTAGE_KIND_PREDICATE_IRI } from '$lib/utils/iri';
+import { BACKSTAGE_KIND_PREDICATE_IRI } from '#lib/utils/iri.js';
 
 /** A configured catalog marker class IRI (Sprint 5 Story 014) — an arbitrary user-owned class, no
  *  longer the hardcoded `AUTHORITATIVE_ENTITY_IRI` constant, threaded into `checkStructural` as its

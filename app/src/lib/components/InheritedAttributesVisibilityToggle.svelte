@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { inheritedAttributesVisibilityStore } from '$lib/stores/inherited-attributes-visibility-store.svelte';
+	import { inheritedAttributesVisibilityStore } from '#lib/stores/inherited-attributes-visibility-store.svelte.js';
 
 	const showInheritedAttributes = $derived(inheritedAttributesVisibilityStore.getShowInheritedAttributes());
 </script>

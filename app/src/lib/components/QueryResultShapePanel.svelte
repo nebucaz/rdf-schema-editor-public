@@ -7,22 +7,22 @@
 	 * renders what `allowedSortKeys` etc. allow, so an invalid combination (sorting by an un-grouped
 	 * column) cannot be produced from here.
 	 */
-	import type { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-	import { allowedSortKeys } from '$lib/services/query-model-edit';
+	import type { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+	import { allowedSortKeys } from '#lib/services/query-model-edit.js';
 	import {
 		validateRunnableQueryModel,
 		EXPORT_ROW_CAP,
 		type HavingOp,
 		type MeasureFn,
 		type QueryModel
-	} from '$lib/services/query-model';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
+	} from '#lib/services/query-model.js';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
 	import {
 		havingMeasures,
 		measureFnsForColumn,
 		parseLimitInput,
 		shapeGroupOpenByDefault
-	} from '$lib/services/query-builder-parity';
+	} from '#lib/services/query-builder-parity.js';
 
 	interface Props {
 		model: QueryModel;

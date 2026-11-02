@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { XSD_DATATYPES, type XsdDatatype } from '$lib/utils/iri';
+	import { XSD_DATATYPES, type XsdDatatype } from '#lib/utils/iri.js';
 
 	interface Props {
 		initialName?: string;

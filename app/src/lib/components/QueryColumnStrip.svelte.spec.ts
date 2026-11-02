@@ -1,12 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import QueryColumnStrip from './QueryColumnStrip.svelte';
-import { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-import { buildBuilderSchema } from '$lib/services/query-builder-schema';
-import { applyStartClass } from '$lib/services/query-add-column';
-import { columnChoices } from '$lib/services/query-add-column';
-import { NOTE_PASTEL_COLORS } from '$lib/utils/color-palette';
-import type { FetchedSchema } from '$lib/services/sparql-connector';
+import { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+import { buildBuilderSchema } from '#lib/services/query-builder-schema.js';
+import { applyStartClass } from '#lib/services/query-add-column.js';
+import { columnChoices } from '#lib/services/query-add-column.js';
+import { NOTE_PASTEL_COLORS } from '#lib/utils/color-palette.js';
+import type { FetchedSchema } from '#lib/services/sparql-connector.js';
 
 const NS = 'http://example.org/org';
 const o = (n: string) => `${NS}#${n}`;

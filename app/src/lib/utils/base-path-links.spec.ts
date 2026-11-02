@@ -1,14 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 
 // Every link builder with APP_BASE_PATH=/path (STORY-008).
-vi.mock('$lib/utils/urls', async (importOriginal) => {
-	const original = await importOriginal<typeof import('$lib/utils/urls')>();
+vi.mock('#lib/utils/urls.js', async (importOriginal) => {
+	const original = await importOriginal<typeof import('#lib/utils/urls.js')>();
 	return { ...original, ...original.createUrls({ appBasePath: '/path', apiPrefix: '/p' }) };
 });
 
-import { adHocLink, adHocReportLink, resolveSharedLoad, savedQueryLinks } from '$lib/services/share-links';
-import { shareLinkFor, shortLinkUrl } from '$lib/services/short-links';
-import type { QueryModel } from '$lib/services/query-model';
+import { adHocLink, adHocReportLink, resolveSharedLoad, savedQueryLinks } from '#lib/services/share-links.js';
+import { shareLinkFor, shortLinkUrl } from '#lib/services/short-links.js';
+import type { QueryModel } from '#lib/services/query-model.js';
 import { buildIdentitySearchUrl, parseIdentitySearchParams } from './identity-search-url';
 import { resolveRouteView } from './route-views';
 

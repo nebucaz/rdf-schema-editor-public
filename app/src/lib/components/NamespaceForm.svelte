@@ -1,7 +1,7 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
 
-	import { isWellFormedIri } from '$lib/utils/iri';
+	import { isWellFormedIri } from '#lib/utils/iri.js';
 
 	interface Props {
 		mode: 'create' | 'edit';

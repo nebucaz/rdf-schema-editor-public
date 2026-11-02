@@ -1,6 +1,6 @@
 import { apiUrl as buildApiUrl } from '../utils/urls';
 import { isShortId } from './short-links';
-import { requestActivity } from '$lib/stores/request-activity.svelte';
+import { requestActivity } from '#lib/stores/request-activity.svelte.js';
 import { nameableEntitiesFromSchema, dedupeByIri } from './addable-elements';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
@@ -82,13 +82,13 @@ import {
 	kebabCase,
 	XSD_NAMESPACE,
 	type XsdDatatype
-} from '$lib/utils/iri';
+} from '#lib/utils/iri.js';
 import {
 	DEFAULT_NAMESPACE_BASE_IRI,
 	namespaceGraphs,
 	SCHEMA_GRAPH,
 	type NamespaceGraphs
-} from '$lib/config';
+} from '#lib/config.js';
 import {
 	parseTurtle,
 	quadsToTurtle,
@@ -123,7 +123,7 @@ import {
 	checkCatalogStructural,
 	SchemaValidationError
 } from './validation';
-import { gridPosition } from '$lib/stores/layout-store';
+import { gridPosition } from '#lib/stores/layout-store.js';
 
 export interface SparqlBinding {
 	[key: string]: {

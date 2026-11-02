@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { devLogin } from '$lib/services/auth-client';
+	import { devLogin } from '#lib/services/auth-client.js';
 
 	interface Props {
 		/** `devLoginEnabled` from `/api/config`; the login button never renders when false. */

@@ -5,19 +5,19 @@
 	 * and re-queries), paging is OFFSET-based. Separate from the console's `ResultsTable`, which stays
 	 * a generic `head.vars × bindings` grid.
 	 */
-	import type { CompiledColumn } from '$lib/services/query-compiler';
-	import type { SortKey } from '$lib/services/query-model';
-	import type { PageInfo, ResultRows } from '$lib/services/query-results';
-	import { PAGE_SIZES } from '$lib/services/query-results';
-	import type { ColumnRule } from '$lib/services/column-rules';
-	import { chipStyle, ruleCellStyle } from '$lib/services/column-rules';
-	import { cellRule, rowRuleColor } from '$lib/services/column-rules-editor';
-	import { sparqlConnector, type FetchedAnnotation } from '$lib/services/sparql-connector';
+	import type { CompiledColumn } from '#lib/services/query-compiler.js';
+	import type { SortKey } from '#lib/services/query-model.js';
+	import type { PageInfo, ResultRows } from '#lib/services/query-results.js';
+	import { PAGE_SIZES } from '#lib/services/query-results.js';
+	import type { ColumnRule } from '#lib/services/column-rules.js';
+	import { chipStyle, ruleCellStyle } from '#lib/services/column-rules.js';
+	import { cellRule, rowRuleColor } from '#lib/services/column-rules-editor.js';
+	import { sparqlConnector, type FetchedAnnotation } from '#lib/services/sparql-connector.js';
 	import {
 		annotationsForFact,
 		loadPageAnnotations,
 		type BadgeUser
-	} from '$lib/services/annotation-badges';
+	} from '#lib/services/annotation-badges.js';
 	import AnnotationBadge from './AnnotationBadge.svelte';
 	import AnnotationPanel from './AnnotationPanel.svelte';
 	import {
@@ -26,12 +26,12 @@
 		withAnnotation,
 		withReplacedAnnotation,
 		withoutAnnotation
-	} from '$lib/services/annotation-edits';
-	import { deleteAnnotationRequest, postAnnotation } from '$lib/services/annotation-client';
-	import { factKeyString, type AnnotationInput } from '$lib/services/sparql-connector';
-	import { toFactKey } from '$lib/services/annotation-badges';
-	import type { ResultCell } from '$lib/services/query-results';
-	import type { ColumnMarkerState } from '$lib/services/query-column-groups';
+	} from '#lib/services/annotation-edits.js';
+	import { deleteAnnotationRequest, postAnnotation } from '#lib/services/annotation-client.js';
+	import { factKeyString, type AnnotationInput } from '#lib/services/sparql-connector.js';
+	import { toFactKey } from '#lib/services/annotation-badges.js';
+	import type { ResultCell } from '#lib/services/query-results.js';
+	import type { ColumnMarkerState } from '#lib/services/query-column-groups.js';
 	import ColumnMarkers from './ColumnMarkers.svelte';
 
 	interface Props {

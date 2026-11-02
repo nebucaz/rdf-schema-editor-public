@@ -6,8 +6,8 @@
 	 * "nothing searched yet" from "searched, zero results" via `hasSearched`, mirroring the original's
 	 * `query`-presence check.
 	 */
-	import type { FetchedClass, FetchedNamespace, IndividualSearchResult } from '$lib/services/sparql-connector';
-	import { displayLabel, labelOrPrettify } from '$lib/utils/resource-page-format';
+	import type { FetchedClass, FetchedNamespace, IndividualSearchResult } from '#lib/services/sparql-connector.js';
+	import { displayLabel, labelOrPrettify } from '#lib/utils/resource-page-format.js';
 
 	interface Props {
 		results: IndividualSearchResult[];

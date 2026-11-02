@@ -1,4 +1,4 @@
-import type { XsdDatatype } from '$lib/utils/iri';
+import type { XsdDatatype } from '#lib/utils/iri.js';
 import type { CanvasModel, EntityNodeSpec, ExternalNodeSpec } from './canvas-model';
 
 /**

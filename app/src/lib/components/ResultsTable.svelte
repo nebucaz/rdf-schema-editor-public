@@ -1,6 +1,6 @@
 <script module lang="ts">
-	import { XSD_NAMESPACE, extractLocalName } from '$lib/utils/iri';
-	import type { SparqlBinding, SparqlSelectResults } from '$lib/services/sparql-connector';
+	import { XSD_NAMESPACE, extractLocalName } from '#lib/utils/iri.js';
+	import type { SparqlBinding, SparqlSelectResults } from '#lib/services/sparql-connector.js';
 
 	/** Client-side render cap (plan ADR "Large result sets") — no `LIMIT` is injected into the
 	 *  user's query, so an unbounded result set is instead capped at render time. */

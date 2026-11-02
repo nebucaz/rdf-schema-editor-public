@@ -8,10 +8,10 @@
 	 * STORY-248: a collapse toggle (the strip owns the state) and a tint picker from the verified
 	 * `GROUP_TINTS` palette; neither touches the model.
 	 */
-	import type { ColumnGroup } from '$lib/services/query-column-groups';
-	import { groupRemovalSummary, isDestructive } from '$lib/services/query-group-removal';
-	import type { QueryModel } from '$lib/services/query-model';
-	import { GROUP_TINTS } from '$lib/stores/workbench-group-color-store';
+	import type { ColumnGroup } from '#lib/services/query-column-groups.js';
+	import { groupRemovalSummary, isDestructive } from '#lib/services/query-group-removal.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
+	import { GROUP_TINTS } from '#lib/stores/workbench-group-color-store.js';
 
 	interface Props {
 		group: ColumnGroup;

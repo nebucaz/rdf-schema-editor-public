@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { sparqlConnector } from '$lib/services/sparql-connector';
+import { sparqlConnector } from '#lib/services/sparql-connector.js';
 import { settingsStore } from './settings-store.svelte';
 
 describe('settingsStore — represents-predicate setting (Backstage-sync STORY-104)', () => {

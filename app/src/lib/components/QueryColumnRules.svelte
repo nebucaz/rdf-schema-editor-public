@@ -4,9 +4,9 @@
 	 * match wins). Rendering only — every change goes through `QueryBuilderStore` → the pure helpers in
 	 * `column-rules-editor.ts`, and colours are palette keys, so no free-form CSS can be produced.
 	 */
-	import type { QueryBuilderStore } from '$lib/stores/query-builder-store.svelte';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { QueryModel } from '$lib/services/query-model';
+	import type { QueryBuilderStore } from '#lib/stores/query-builder-store.svelte.js';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
 	import {
 		PALETTE_COLORS,
 		RULE_OPS,
@@ -15,8 +15,8 @@
 		type ColumnRule,
 		type PaletteColor,
 		type RuleOp
-	} from '$lib/services/column-rules';
-	import { enumerationValuesForColumn, rulesForColumn } from '$lib/services/column-rules-editor';
+	} from '#lib/services/column-rules.js';
+	import { enumerationValuesForColumn, rulesForColumn } from '#lib/services/column-rules-editor.js';
 
 	interface Props {
 		model: QueryModel;

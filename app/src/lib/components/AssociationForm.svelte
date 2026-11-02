@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
+	import type { FetchedNamespace } from '#lib/services/sparql-connector.js';
 
 	interface EntityOption {
 		iri: string;

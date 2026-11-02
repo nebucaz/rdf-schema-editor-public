@@ -9,7 +9,7 @@
  * browser) use the fallback below.
  */
 
-import { apiUrl } from '$lib/utils/urls';
+import { apiUrl } from '#lib/utils/urls.js';
 
 const FALLBACK_SCHEMA_NAMESPACE = 'http://ld.pageagent.com/rdf-schema-editor/schema#';
 

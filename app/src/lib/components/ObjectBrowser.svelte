@@ -9,9 +9,9 @@
 	 * reports them; applying them to the model (`applyBrowserSelection`) is the host's job.
 	 */
 	import { tick } from 'svelte';
-	import type { BuilderSchema } from '$lib/services/query-builder-schema';
-	import type { FetchedNamespace } from '$lib/services/sparql-connector';
-	import type { QueryModel } from '$lib/services/query-model';
+	import type { BuilderSchema } from '#lib/services/query-builder-schema.js';
+	import type { FetchedNamespace } from '#lib/services/sparql-connector.js';
+	import type { QueryModel } from '#lib/services/query-model.js';
 	import {
 		DEEP_PATH_THRESHOLD,
 		classPane,
@@ -24,9 +24,9 @@
 		type BrowseStep,
 		type BrowserPick,
 		type PaneColumn
-	} from '$lib/services/query-object-browser';
-	import { extractLocalName } from '$lib/utils/iri';
-	import { propertyHints } from '$lib/utils/query-class-picker';
+	} from '#lib/services/query-object-browser.js';
+	import { extractLocalName } from '#lib/utils/iri.js';
+	import { propertyHints } from '#lib/utils/query-class-picker.js';
 
 	interface Props {
 		schema: BuilderSchema;

@@ -10,7 +10,7 @@
  * in GraphDB, not the browser — so it's a `.svelte.ts` reactive singleton (like
  * `workbench-actions.svelte.ts`) rather than an injectable-storage class.
  */
-import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
+import { sparqlConnector, type FetchedNamespace } from '#lib/services/sparql-connector.js';
 
 function createNamespaceStore() {
 	let namespaces = $state<FetchedNamespace[]>([]);

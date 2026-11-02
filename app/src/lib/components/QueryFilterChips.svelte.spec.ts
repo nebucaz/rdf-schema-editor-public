@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import QueryFilterChips from './QueryFilterChips.svelte';
-import type { FilterMarker } from '$lib/services/query-column-groups';
-import type { Filter } from '$lib/services/query-model';
+import type { FilterMarker } from '#lib/services/query-column-groups.js';
+import type { Filter } from '#lib/services/query-model.js';
 
 const f = (id: string, extra: Partial<Filter> = {}): Filter =>
 	({ id, hopId: null, propertyIri: `urn:p#${id}`, op: 'eq', value: id, ...extra }) as Filter;

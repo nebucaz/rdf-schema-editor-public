@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ViewMode } from '$lib/stores/view-mode-store';
+	import type { ViewMode } from '#lib/stores/view-mode-store.js';
 
 	interface Props {
 		viewMode: ViewMode;

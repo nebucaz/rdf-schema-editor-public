@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { sparqlConnector, type FetchedNamespace } from '$lib/services/sparql-connector';
-	import { namespaceStore } from '$lib/stores/namespace-store.svelte';
-	import { workbenchActions } from '$lib/stores/workbench-actions.svelte';
+	import { sparqlConnector, type FetchedNamespace } from '#lib/services/sparql-connector.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
 	import NamespaceForm from './NamespaceForm.svelte';
 
 	let loadError = $state<string | null>(null);
