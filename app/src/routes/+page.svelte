@@ -75,6 +75,7 @@
 		type FetchedSubClassOf
 	} from '#lib/services/sparql-connector.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
 	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
@@ -3120,6 +3121,9 @@
 		const timing = createLoadTiming({ enabled: import.meta.env.DEV, requestCount: () => requestActivity.started });
 		const viaStore = (store: { refresh(): Promise<void>; ensureLoaded(): Promise<void> }, force: boolean) =>
 			force ? store.refresh() : store.ensureLoaded();
+		// Reload exists to pick up writes this client did not make (e.g. the Backstage sync worker), which the
+		// shared schema store cannot see (reduce-requests STORY-296).
+		if (options.force ?? true) schemaStore.invalidate();
 		try {
 			await loadWorkspaceSchema(
 				{
@@ -3146,7 +3150,7 @@
 						await graphDbLayoutStore.reload(activeWorkspaceIri);
 						workspaceMembers = graphDbLayoutStore.getMemberIris();
 					},
-					fetchSchema: (namespaces) => sparqlConnector.fetchFullSchemaForAllNamespaces(namespaces),
+					fetchSchema: (namespaces) => sparqlConnector.fetchSchemaBatched(namespaces, { includeInstances: true }),
 					fetchNotes: () => sparqlConnector.fetchNotesForWorkspace(activeWorkspaceIri),
 					apply: (schema, notes) => {
 						lastFetchedSchema = schema;
@@ -3197,7 +3201,7 @@
 			for (const a of added) graphDbLayoutStore.setPosition(a.elementIri, a.x, a.y);
 			if (added.some((a) => !nodes.some((n) => n.id === a.elementIri))) {
 				// The canvas predates some of these classes; refetch once, as the single-add path does.
-				lastFetchedSchema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+				lastFetchedSchema = await schemaStore.refresh('full');
 				buildAndApplyCanvasModel(lastFetchedSchema);
 			}
 			const positions = new Map(added.map((a) => [a.elementIri, { x: a.x, y: a.y }]));
@@ -3279,7 +3283,7 @@
 				// The canvas was built from a `lastFetchedSchema` that predates this element — re-fetch so
 				// its node exists (positioned from the membership row just written) instead of the add
 				// silently showing nothing until a page reload.
-				lastFetchedSchema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+				lastFetchedSchema = await schemaStore.refresh('full');
 				buildAndApplyCanvasModel(lastFetchedSchema);
 			}
 			nodes = nodes.map((n) => (n.id === iri ? { ...n, position } : n));
@@ -3503,14 +3507,12 @@
 			label="+ Add Entity"
 			menuLabel="More ways to add entities"
 			onMain={() => void openAddEntityDialog()}
-			items={[{ label: 'Add entities from namespace…', onSelect: () => openAddNamespaceClasses(null) }]}
+			items={[
+				{ label: 'Add entities from namespace…', onSelect: () => openAddNamespaceClasses(null) },
+				{ label: 'Add attributed relationship…', onSelect: () => (showAddAssociation = true) },
+				{ label: 'Add external class…', onSelect: () => (showAddExternalClass = true) }
+			]}
 		/>
-		<button class="add-entity secondary-action" onclick={() => (showAddAssociation = true)}>
-			+ Add Attributed Relationship
-		</button>
-		<button class="add-entity secondary-action" onclick={() => (showAddExternalClass = true)}>
-			+ Add External Class
-		</button>
 		<button class="add-entity secondary-action" onclick={() => void handleAddNote()}>+ Add Note</button>
 		{#if errorMessage}
 			<span class="error-banner">{errorMessage}</span>
@@ -3531,7 +3533,7 @@
 			bind:viewport
 			{nodeTypes}
 			{edgeTypes}
-			deleteKey={null}
+			deleteKey={[]}
 			onconnect={handleConnect}
 			onconnectend={handleConnectEnd}
 			onnodedragstop={handleNodeDragStop}

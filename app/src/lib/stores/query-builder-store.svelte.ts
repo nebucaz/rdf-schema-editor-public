@@ -1,4 +1,4 @@
-import { sparqlConnector } from '#lib/services/sparql-connector.js';
+import { schemaStore } from '#lib/stores/schema-store.js';
 import { buildBuilderSchema, type BuilderSchema } from '#lib/services/query-builder-schema.js';
 import type { QueryModel, ColumnSource, Filter, Having, Measure } from '#lib/services/query-model.js';
 import type { ColumnRule } from '#lib/services/column-rules.js';
@@ -49,11 +49,14 @@ export class QueryBuilderStore {
 	schemaError = $state<string | null>(null);
 	model = $state<QueryModel | null>(null);
 
-	async loadSchema(): Promise<void> {
+	/** The builder lists individuals, so it needs the `full` schema. Served from the shared schema store; `force`
+	 *  refetches through it (reduce-requests STORY-301). */
+	async loadSchema(options: { force?: boolean } = {}): Promise<void> {
 		this.schemaLoading = true;
 		this.schemaError = null;
 		try {
-			this.schema = buildBuilderSchema(await sparqlConnector.fetchFullSchemaForAllNamespaces());
+			const schema = options.force ? await schemaStore.refresh('full') : await schemaStore.ensureLoaded('full');
+			this.schema = buildBuilderSchema(schema);
 		} catch (e) {
 			this.schemaError = e instanceof Error ? e.message : 'Failed to load the schema';
 		} finally {

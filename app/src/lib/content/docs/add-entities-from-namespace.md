@@ -6,7 +6,9 @@ each class.
 ## Opening it
 
 - **Toolbar:** click the chevron on the **+ Add Entity** button and choose **Add entities from namespace…**.
-  The classes land on a grid starting at the centre of the current view.
+  The classes land on a grid starting at the centre of the current view. The same menu also holds
+  **Add attributed relationship…** (see [Association Form](association-form)) and **Add external class…**
+  (see [External Class Form](external-class-form)).
 - **Canvas menu:** Option/Alt+click an empty spot on the canvas and choose **Add entities from namespace…**.
   The grid starts at the point you clicked.
 

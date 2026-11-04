@@ -35,6 +35,7 @@
 		splitOutgoingTriples
 	} from '#lib/utils/resource-page-format.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { buildClassHierarchyIndex, resolveNodeColor, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
 	import { contrastTextColor } from '#lib/utils/contrast.js';
 
@@ -110,7 +111,7 @@
 	async function loadColorIndex() {
 		try {
 			await namespaceStore.ensureLoaded();
-			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+			const schema = await schemaStore.ensureLoaded('schema');
 			classHierarchyIndex = buildClassHierarchyIndex(schema.classes, schema.subClassOf);
 			namespaceColorByBaseIri = new Map(
 				namespaceStore.namespaces.filter((ns) => ns.color).map((ns) => [ns.baseIri, ns.color as string])

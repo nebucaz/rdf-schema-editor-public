@@ -209,30 +209,36 @@
 			{#if page.data.user}
 				{#if isCanvasView}
 					{#if namespaceStore.namespaces.length > 0}
-						<select
-							class="namespace-select"
-							aria-label="Active namespace"
-							title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
-							value={workbenchActions.activeNamespace}
-							onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
-						>
-							{#each namespaceStore.namespaces as ns (ns.baseIri)}
-								<option value={ns.baseIri}>{ns.prefix}</option>
-							{/each}
-						</select>
+						<div class="select-field">
+							<label class="select-caption" for="namespace-select">Namespace</label>
+							<select
+								id="namespace-select"
+								class="namespace-select"
+								title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
+								value={workbenchActions.activeNamespace}
+								onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
+							>
+								{#each namespaceStore.namespaces as ns (ns.baseIri)}
+									<option value={ns.baseIri}>{ns.prefix}</option>
+								{/each}
+							</select>
+						</div>
 					{/if}
 					{#if workspaceStore.workspaces.length > 0}
-						<select
-							class="workspace-select"
-							aria-label="Active workspace"
-							title="Active workspace — which diagram is shown on the canvas"
-							value={workbenchActions.activeWorkspace}
-							onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
-						>
-							{#each workspaceStore.workspaces as ws (ws.iri)}
-								<option value={ws.iri}>{ws.label}</option>
-							{/each}
-						</select>
+						<div class="select-field">
+							<label class="select-caption" for="workspace-select">Workspace</label>
+							<select
+								id="workspace-select"
+								class="workspace-select"
+								title="Active workspace — which diagram is shown on the canvas"
+								value={workbenchActions.activeWorkspace}
+								onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
+							>
+								{#each workspaceStore.workspaces as ws (ws.iri)}
+									<option value={ws.iri}>{ws.label}</option>
+								{/each}
+							</select>
+						</div>
 					{/if}
 					<ViewModeToggle
 						viewMode={workbenchActions.viewMode}
@@ -571,6 +577,19 @@
 		background: var(--color-bg-secondary);
 		color: var(--color-text);
 		font-size: 0.85rem;
+	}
+
+	.select-field {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.1rem;
+	}
+
+	.select-caption {
+		font-size: 0.65rem;
+		line-height: 1;
+		color: var(--color-text-muted);
 	}
 
 	.menu-divider {

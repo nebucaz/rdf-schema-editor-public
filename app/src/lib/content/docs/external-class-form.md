@@ -3,6 +3,9 @@
 Registers a reference to a class from an external vocabulary on the canvas, creating an [External
 Class Node](external-class-node).
 
+Open the form from the chevron menu on the **+ Add Entity** toolbar button and choose **Add external
+class…**, or from the Option/Alt+click canvas menu.
+
 ## Fields
 
 - **Prefixed name** — e.g. `schema:Organization`. The prefix must be a known one — either a built-in

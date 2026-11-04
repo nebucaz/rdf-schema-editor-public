@@ -27,6 +27,7 @@
 	import IdentityNeighborhoodGraph from '#lib/components/IdentityNeighborhoodGraph.svelte';
 	import MemberForm from '#lib/components/MemberForm.svelte';
 	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { resolveEditFormSpec, resolveGoverningClass } from '#lib/utils/identity-schema-index.js';
 	import { editIdentity } from '#lib/utils/identity-mutations.js';
 	import { SYNC_SOURCE_PREDICATE_IRI } from '#lib/utils/iri.js';
@@ -278,9 +279,11 @@
 	async function ensureAssertionOptionsLoaded() {
 		if (assertionOptionsLoaded) return;
 		assertionOptionsLoaded = true;
+		// One shared full load (cached in the store) for both lists instead of one each (STORY-297).
+		const schema = await schemaStore.ensureLoaded('full');
 		const [predicateOptions, objectOptions] = await Promise.all([
-			sparqlConnector.fetchRelationPredicateOptions(),
-			sparqlConnector.fetchNameableEntities()
+			sparqlConnector.fetchRelationPredicateOptions(schema),
+			sparqlConnector.fetchNameableEntities(schema)
 		]);
 		assertionPredicateOptions = predicateOptions;
 		assertionObjectOptions = objectOptions;

@@ -6,6 +6,9 @@ also called an association class — a relationship modeled as its own `owl:Clas
 classes it relates. Example: `EmploymentAssignment` linking `Employee` and `Company`, itself carrying
 a `startDate` attribute.
 
+Open the form from the chevron menu on the **+ Add Entity** toolbar button and choose
+**Add attributed relationship…**.
+
 ## Fields
 
 - **Name** — the association class's `rdfs:label` (e.g. `EmploymentAssignment`).

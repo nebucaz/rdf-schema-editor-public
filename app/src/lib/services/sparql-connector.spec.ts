@@ -10693,7 +10693,8 @@ describe('SparqlConnector — reusing a supplied namespace list (loading-spinner
 		await connector.fetchFullSchemaForAllNamespaces([registeredDefault]);
 		expect(nsSpy).not.toHaveBeenCalled();
 		expect(schemaSpy).toHaveBeenCalledTimes(1);
-		expect(schemaSpy).toHaveBeenCalledWith(DEFAULT_NAMESPACE_BASE_IRI);
+		// The list is handed down so no per-namespace query refetches it (reduce-requests STORY-294).
+		expect(schemaSpy).toHaveBeenCalledWith(DEFAULT_NAMESPACE_BASE_IRI, { knownNamespaces: [registeredDefault] });
 	});
 });
 

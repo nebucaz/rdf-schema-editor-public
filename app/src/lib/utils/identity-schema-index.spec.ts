@@ -34,6 +34,27 @@ function emptySchema(overrides: Partial<FetchedSchema> = {}): FetchedSchema {
 	};
 }
 
+describe('buildEntityNodeIndex without instances (reduce-requests STORY-295)', () => {
+	it('gives the Add/Edit identity forms the same spec whether or not individuals were loaded', () => {
+		const person = classIri('Person');
+		const base = {
+			classes: [fetchedClass(person, 'Person')],
+			datatypeProperties: [datatypeProp(person, 'name')]
+		};
+		const withInstances = emptySchema({
+			...base,
+			individuals: [{ iri: 'http://example.org/ada', label: 'Ada', classIri: person, namespaceBaseIri: NS } as never]
+		});
+		const schemaOnly = emptySchema(base);
+
+		const a = resolveEditFormSpec(buildEntityNodeIndex(withInstances), person);
+		const b = resolveEditFormSpec(buildEntityNodeIndex(schemaOnly), person);
+
+		expect(b).toEqual(a);
+		expect(b.attributes.map((x) => x.name)).toEqual(['name']);
+	});
+});
+
 describe('buildEntityNodeIndex', () => {
 	it('indexes buildCanvasModel entity nodes by class IRI, exposing their attributes', () => {
 		const person = classIri('Person');

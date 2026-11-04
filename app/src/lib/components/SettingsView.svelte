@@ -3,6 +3,7 @@
 	import { sparqlConnector, type FetchedSchema } from '#lib/services/sparql-connector.js';
 	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { extractLocalName } from '#lib/utils/iri.js';
 	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
 	import { gridVisibilityStore } from '#lib/stores/grid-visibility-store.svelte.js';
@@ -31,8 +32,9 @@
 		try {
 			await namespaceStore.ensureLoaded();
 			await settingsStore.ensureLoaded();
+			// Only `schema.classes` is read, so the shared schema-only copy is enough (reduce-requests STORY-302).
 			[schema, objectProperties] = await Promise.all([
-				sparqlConnector.fetchFullSchemaForAllNamespaces(),
+				schemaStore.ensureLoaded('schema'),
 				sparqlConnector.fetchAllDeclaredObjectProperties()
 			]);
 			selected = settingsStore.authoritativeEntityClassIri ?? '';

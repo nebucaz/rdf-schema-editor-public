@@ -6,6 +6,7 @@
 	import { downloadFile } from '#lib/utils/download.js';
 	import { buildCanvasModel } from '#lib/services/canvas-model.js';
 	import { canvasModelToLinkML } from '#lib/services/linkml.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import CatalogMetadataForm from './CatalogMetadataForm.svelte';
 
@@ -251,7 +252,8 @@
 		exportingLinkML = true;
 		linkMLError = null;
 		try {
-			const schema = await sparqlConnector.fetchFullSchemaForAllNamespaces();
+			// An explicit export wants the current graph, not a cached copy; the refetch still lands in the shared store.
+			const schema = await schemaStore.refresh('full');
 			const model = buildCanvasModel(schema, externalVocabStore.asPrefixMap());
 			const ns = namespaces.find((n) => n.baseIri === selectedNamespace);
 			const yaml = canvasModelToLinkML(model, namespaces, ns?.prefix ?? 'schema');

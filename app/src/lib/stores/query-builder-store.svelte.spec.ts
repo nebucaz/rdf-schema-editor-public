@@ -1,4 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { ensureLoaded, refresh } = vi.hoisted(() => ({ ensureLoaded: vi.fn(), refresh: vi.fn() }));
+vi.mock('#lib/stores/schema-store.js', () => ({ schemaStore: { ensureLoaded, refresh } }));
+
 import { QueryBuilderStore } from './query-builder-store.svelte';
 import { startQueryFromClass } from '#lib/services/query-model-edit.js';
 import type { BrowserPick } from '#lib/services/query-object-browser.js';
@@ -44,5 +48,47 @@ describe('QueryBuilderStore.applyBrowserSelection', () => {
 		const snapshot = JSON.stringify(store.model);
 		expect(store.applyBrowserSelection([pick], [], [NS])).toBe(false);
 		expect(JSON.stringify(store.model)).toBe(snapshot);
+	});
+});
+
+describe('QueryBuilderStore.loadSchema (reduce-requests STORY-301)', () => {
+	const emptySchema = {
+		classes: [],
+		datatypeProperties: [],
+		objectProperties: [],
+		subClassOf: [],
+		individuals: [],
+		individualClassRelations: [],
+		individualIndividualRelations: []
+	};
+
+	beforeEach(() => {
+		ensureLoaded.mockReset().mockResolvedValue(emptySchema);
+		refresh.mockReset().mockResolvedValue(emptySchema);
+	});
+
+	it('takes the full schema (the builder lists individuals) from the shared store', async () => {
+		const store = new QueryBuilderStore();
+		await store.loadSchema();
+		expect(ensureLoaded).toHaveBeenCalledWith('full');
+		expect(refresh).not.toHaveBeenCalled();
+		expect(store.schema).not.toBeNull();
+		expect(store.schemaError).toBeNull();
+	});
+
+	it('refetches through the store when asked to, e.g. on every workbench visit', async () => {
+		const store = new QueryBuilderStore();
+		await store.loadSchema({ force: true });
+		expect(refresh).toHaveBeenCalledWith('full');
+		expect(ensureLoaded).not.toHaveBeenCalled();
+		expect(store.schema).not.toBeNull();
+	});
+
+	it('reports a load error and clears the loading flag', async () => {
+		ensureLoaded.mockRejectedValue(new Error('boom'));
+		const store = new QueryBuilderStore();
+		await store.loadSchema();
+		expect(store.schemaError).toBe('boom');
+		expect(store.schemaLoading).toBe(false);
 	});
 });

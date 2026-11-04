@@ -19,6 +19,7 @@
 	import MemberForm from '#lib/components/MemberForm.svelte';
 	import UnclassifiedBulkBar from '#lib/components/UnclassifiedBulkBar.svelte';
 	import { BULK_UNDO_LIMIT } from '#lib/services/sparql-connector.js';
+	import { schemaStore } from '#lib/stores/schema-store.js';
 	import {
 		sparqlConnector,
 		type FetchedClass,
@@ -504,8 +505,10 @@
 
 	onMount(() => {
 		void namespaceStore.ensureLoaded();
-		sparqlConnector
-			.fetchFullSchemaForAllNamespaces()
+		// Schema only: the page never needs individuals or their relations, and the shared store hands the same
+		// copy to the Explore graph (reduce-requests STORY-297).
+		schemaStore
+			.ensureLoaded('schema')
 			.then((schema) => {
 				classes = excludeReservedNamespaceClasses(schema.classes);
 				subClassOf = schema.subClassOf;

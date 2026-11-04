@@ -1,4 +1,6 @@
 import { apiUrl as buildApiUrl } from '../utils/urls';
+import { createConcurrencyLimiter } from './concurrency-limiter';
+import { callerFromStack, requestLog } from '../utils/request-log';
 import { isShortId } from './short-links';
 import { requestActivity } from '#lib/stores/request-activity.svelte.js';
 import { nameableEntitiesFromSchema, dedupeByIri } from './addable-elements';
@@ -637,6 +639,16 @@ export interface FetchedUntypedIndividual {
 	namespaceBaseIri: string;
 }
 
+/** Options for `fetchFullSchema`. `knownNamespaces` spares the namespace-list request that the generic-relation
+ *  query would otherwise make per call (reduce-requests STORY-294). */
+export interface FetchFullSchemaOptions {
+	knownNamespaces?: FetchedNamespace[];
+	/** `false` skips the five instance queries (individuals, untyped list and count, both individual
+	 *  relation queries) and returns those fields empty — for screens that only need the schema, such as the
+	 *  identity browser (reduce-requests STORY-295). Default `true`. */
+	includeInstances?: boolean;
+}
+
 export interface FetchedSchema {
 	classes: FetchedClass[];
 	datatypeProperties: FetchedProperty[];
@@ -939,6 +951,106 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
 /** Membership rows written per `INSERT DATA` by `addWorkspaceMembers`. */
 export const WORKSPACE_MEMBERS_CHUNK_SIZE = 500;
 
+/** Times `send` and, in dev builds only, records it in the request log under its caller (utils/request-log.ts). */
+async function logRequest<T>(kind: 'query' | 'update', stack: string | undefined, send: () => Promise<T>): Promise<T> {
+	if (!import.meta.env.DEV) return send();
+	const started = performance.now();
+	let ok = false;
+	try {
+		const result = await send();
+		ok = true;
+		return result;
+	} finally {
+		requestLog.record({ kind, caller: callerFromStack(stack), ms: Math.round(performance.now() - started), ok });
+	}
+}
+
+/** Most SPARQL requests in flight at once; further ones wait their turn (reduce-requests STORY-299). Shared by
+ *  every connector instance because the throttle GraphDB applies is per client, not per instance. */
+export const MAX_CONCURRENT_SPARQL_REQUESTS = 6;
+const sparqlRequestLimiter = createConcurrencyLimiter(MAX_CONCURRENT_SPARQL_REQUESTS);
+
+/** What the per-namespace queries return before they are combined into a `FetchedSchema`. */
+interface RawNamespaceSchema {
+	classes: FetchedClass[];
+	datatypeRaw: FetchedPropertyBase[];
+	objectRaw: FetchedPropertyBase[];
+	constraints: FetchedShapeConstraint[];
+	subClassOf: FetchedSubClassOf[];
+	individuals: FetchedIndividual[];
+	untypedIndividuals: FetchedUntypedIndividual[];
+	untypedTotal: number;
+	genericObjectProperties: FetchedObjectProperty[];
+	individualClassRelations: FetchedIndividualClassRelation[];
+	individualIndividualRelations: FetchedIndividualIndividualRelation[];
+	labelRequiredClassIris: string[];
+	shapeInConstraints: FetchedInConstraint[];
+}
+
+/** One namespace's raw query results as a `FetchedSchema`: joins the SHACL cardinality onto the properties by
+ *  `sh:path`. Shared by `fetchFullSchema` and `fetchSchemaBatched` so both produce identical records. */
+function assembleNamespaceSchema(raw: RawNamespaceSchema): FetchedSchema {
+	const constraintByPath = new Map(raw.constraints.map((c) => [c.path, c]));
+	const mergeCardinality = (props: FetchedPropertyBase[]): FetchedProperty[] =>
+		props.map((p) => {
+			const constraint = constraintByPath.get(p.iri);
+			return {
+				...p,
+				required: (constraint?.minCount ?? 0) >= 1,
+				repeatable: constraint?.maxCount === undefined,
+				minCount: constraint?.minCount,
+				maxCount: constraint?.maxCount,
+				requiredForSubclasses: constraint?.requiredForSubclasses ?? false
+			};
+		});
+
+	return {
+		classes: raw.classes,
+		datatypeProperties: mergeCardinality(raw.datatypeRaw),
+		objectProperties: [
+			...mergeCardinality(raw.objectRaw).map((p) => ({ ...p, relationKind: 'specific' as const })),
+			...raw.genericObjectProperties
+		],
+		subClassOf: raw.subClassOf,
+		individuals: raw.individuals,
+		untypedIndividuals: raw.untypedIndividuals,
+		untypedTotal: raw.untypedTotal,
+		individualClassRelations: raw.individualClassRelations,
+		individualIndividualRelations: raw.individualIndividualRelations,
+		labelRequiredClassIris: raw.labelRequiredClassIris,
+		shapeInConstraints: raw.shapeInConstraints
+	};
+}
+
+/** Concatenates per-namespace schemas, in namespace order. Each record already carries its own
+ *  `namespaceBaseIri`, so a plain concatenation keeps them distinguishable. */
+function mergeNamespaceSchemas(schemas: FetchedSchema[], namespaces: FetchedNamespace[]): FetchedSchema {
+	return {
+		classes: schemas.flatMap((s) => s.classes),
+		datatypeProperties: schemas.flatMap((s) => s.datatypeProperties),
+		objectProperties: schemas.flatMap((s) => s.objectProperties),
+		subClassOf: schemas.flatMap((s) => s.subClassOf),
+		individuals: schemas.flatMap((s) => s.individuals),
+		// A namespace's own base IRI is its declaration subject, never an individual; and the same
+		// IRI must not become two canvas nodes.
+		untypedIndividuals: [
+			...new Map(
+				schemas
+					.flatMap((s) => s.untypedIndividuals ?? [])
+					.filter((u) => !namespaces.some((n) => n.baseIri === u.iri))
+					.map((u) => [u.iri, u] as const)
+			).values()
+		]
+			.sort((a, b) => a.label.localeCompare(b.label) || a.iri.localeCompare(b.iri))
+			.slice(0, UNCLASSIFIED_CANVAS_CAP),
+		untypedTotal: schemas.reduce((sum, s) => sum + (s.untypedTotal ?? 0), 0),
+		individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
+		individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
+		labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
+		shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? [])
+	};
+}
+
 export class SparqlConnector {
 	private apiUrl: string;
 	/** Idempotent migration checks that have already succeeded in this page session (STORY-269). */
@@ -968,22 +1080,46 @@ export class SparqlConnector {
 		return result.boolean;
 	}
 
+	private writes = 0;
+
+	/** Number of updates sent through this connector, successful or not. The shared schema store compares it
+	 *  with the value at load time to know when its cached copy may be stale (reduce-requests STORY-296). */
+	get writeCount(): number {
+		return this.writes;
+	}
+
 	/** Execute a raw SPARQL Update (INSERT DATA, DELETE DATA, DELETE/INSERT WHERE, etc.). */
 	async executeUpdate(update: string): Promise<void> {
-		return requestActivity.track(async () => {
-			const response = await fetch(`${this.apiUrl}/update`, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ update })
-			});
+		// Dev only: who sent this request, captured before the first await (see utils/request-log.ts).
+		const stack = import.meta.env.DEV ? new Error().stack : undefined;
+		try {
+			await this.sendUpdate(update, stack);
+		} finally {
+			// Counted when it settles, so a load that started before this write sees the count move.
+			this.writes++;
+		}
+	}
 
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				throw new Error(
-					errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
-				);
-			}
-		});
+	private async sendUpdate(update: string, stack?: string): Promise<void> {
+		// `track` outside the limiter, so a queued request already counts as pending.
+		return requestActivity.track(() =>
+			sparqlRequestLimiter.run(() =>
+				logRequest('update', stack, async () => {
+					const response = await fetch(`${this.apiUrl}/update`, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ update })
+					});
+
+					if (!response.ok) {
+						const errorData = await response.json().catch(() => ({}));
+						throw new Error(
+							errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
+						);
+					}
+				})
+			)
+		);
 	}
 
 	// -- Classes (owl:Class) ------------------------------------------------------------------
@@ -3724,9 +3860,10 @@ export class SparqlConnector {
 	 * classes can each have their own same-named attribute without an IRI clash, which means the
 	 * bare label alone can't disambiguate them in this flattened, cross-class typeahead list.
 	 */
-	async fetchNameableEntities(): Promise<NameableEntity[]> {
+	async fetchNameableEntities(knownSchema?: FetchedSchema): Promise<NameableEntity[]> {
+		// `knownSchema` lets a caller that already holds the (shared, cached) full schema skip the reload.
 		const [schema, relationInstances] = await Promise.all([
-			this.fetchFullSchemaForAllNamespaces(),
+			knownSchema ?? this.fetchFullSchemaForAllNamespaces(),
 			this.fetchAllReifiedStatements()
 		]);
 		const all = [...nameableEntitiesFromSchema(schema), ...relationInstances];
@@ -3754,8 +3891,8 @@ export class SparqlConnector {
 	 * Typing an unlisted name mints a fresh namespace-scoped generic predicate via
 	 * `resolveOrMintPredicate`.
 	 */
-	async fetchRelationPredicateOptions(): Promise<{ iri: string; label: string }[]> {
-		const schema = await this.fetchFullSchemaForAllNamespaces();
+	async fetchRelationPredicateOptions(knownSchema?: FetchedSchema): Promise<{ iri: string; label: string }[]> {
+		const schema = knownSchema ?? (await this.fetchFullSchemaForAllNamespaces());
 		const byIri = new Map<string, string>();
 		for (const rel of schema.objectProperties) {
 			byIri.set(rel.iri, rel.label);
@@ -6188,7 +6325,11 @@ export class SparqlConnector {
 	 * namespace's three graphs. Pure canvas-model reconstruction from this data lives in
 	 * `canvas-model.ts`, kept separate so it's testable without a running GraphDB.
 	 */
-	async fetchFullSchema(namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI): Promise<FetchedSchema> {
+	async fetchFullSchema(
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI,
+		options: FetchFullSchemaOptions = {}
+	): Promise<FetchedSchema> {
+		const includeInstances = options.includeInstances ?? true;
 		const [
 			classes,
 			datatypeRaw,
@@ -6209,46 +6350,31 @@ export class SparqlConnector {
 			this.fetchAllObjectProperties(namespaceBaseIri),
 			this.fetchAllShapesAndProperties(namespaceBaseIri),
 			this.fetchAllSubClassOf(namespaceBaseIri),
-			this.fetchAllIndividuals(namespaceBaseIri),
-			this.fetchUntypedIndividuals(namespaceBaseIri),
-			this.fetchUntypedIndividualCount(namespaceBaseIri),
-			this.fetchGenericObjectPropertyEdges(namespaceBaseIri),
-			this.fetchAllIndividualClassRelations(namespaceBaseIri),
-			this.fetchAllIndividualIndividualRelations(namespaceBaseIri),
+			includeInstances ? this.fetchAllIndividuals(namespaceBaseIri) : Promise.resolve([]),
+			includeInstances ? this.fetchUntypedIndividuals(namespaceBaseIri) : Promise.resolve([]),
+			includeInstances ? this.fetchUntypedIndividualCount(namespaceBaseIri) : Promise.resolve(0),
+			this.fetchGenericObjectPropertyEdges(namespaceBaseIri, options.knownNamespaces),
+			includeInstances ? this.fetchAllIndividualClassRelations(namespaceBaseIri) : Promise.resolve([]),
+			includeInstances ? this.fetchAllIndividualIndividualRelations(namespaceBaseIri) : Promise.resolve([]),
 			this.fetchLabelRequiredClasses(namespaceBaseIri),
 			this.fetchInConstraints(namespaceBaseIri)
 		]);
 
-		const constraintByPath = new Map(constraints.map((c) => [c.path, c]));
-		const mergeCardinality = (props: FetchedPropertyBase[]): FetchedProperty[] =>
-			props.map((p) => {
-				const constraint = constraintByPath.get(p.iri);
-				return {
-					...p,
-					required: (constraint?.minCount ?? 0) >= 1,
-					repeatable: constraint?.maxCount === undefined,
-					minCount: constraint?.minCount,
-					maxCount: constraint?.maxCount,
-					requiredForSubclasses: constraint?.requiredForSubclasses ?? false
-				};
-			});
-
-		return {
+		return assembleNamespaceSchema({
 			classes,
-			datatypeProperties: mergeCardinality(datatypeRaw),
-			objectProperties: [
-				...mergeCardinality(objectRaw).map((p) => ({ ...p, relationKind: 'specific' as const })),
-				...genericObjectProperties
-			],
+			datatypeRaw,
+			objectRaw,
+			constraints,
 			subClassOf,
 			individuals,
 			untypedIndividuals,
 			untypedTotal,
+			genericObjectProperties,
 			individualClassRelations,
 			individualIndividualRelations,
 			labelRequiredClassIris,
 			shapeInConstraints
-		};
+		});
 	}
 
 	/**
@@ -6257,33 +6383,388 @@ export class SparqlConnector {
 	 * narrows the view from there. Each namespace's `fetchFullSchema` call already tags its own
 	 * records with `namespaceBaseIri`, so a plain concatenation is enough to keep them distinguishable.
 	 */
-	async fetchFullSchemaForAllNamespaces(knownNamespaces?: FetchedNamespace[]): Promise<FetchedSchema> {
+	async fetchFullSchemaForAllNamespaces(
+		knownNamespaces?: FetchedNamespace[],
+		options: Pick<FetchFullSchemaOptions, 'includeInstances'> = {}
+	): Promise<FetchedSchema> {
 		const namespaces = knownNamespaces ?? (await this.fetchNamespaces());
-		const schemas = await Promise.all(namespaces.map((ns) => this.fetchFullSchema(ns.baseIri)));
-		return {
-			classes: schemas.flatMap((s) => s.classes),
-			datatypeProperties: schemas.flatMap((s) => s.datatypeProperties),
-			objectProperties: schemas.flatMap((s) => s.objectProperties),
-			subClassOf: schemas.flatMap((s) => s.subClassOf),
-			individuals: schemas.flatMap((s) => s.individuals),
-			// A namespace's own base IRI is its declaration subject, never an individual; and the same
-			// IRI must not become two canvas nodes.
-			untypedIndividuals: [
-				...new Map(
-					schemas
-						.flatMap((s) => s.untypedIndividuals ?? [])
-						.filter((u) => !namespaces.some((n) => n.baseIri === u.iri))
-						.map((u) => [u.iri, u] as const)
-				).values()
-			]
-				.sort((a, b) => a.label.localeCompare(b.label) || a.iri.localeCompare(b.iri))
-				.slice(0, UNCLASSIFIED_CANVAS_CAP),
-			untypedTotal: schemas.reduce((sum, s) => sum + (s.untypedTotal ?? 0), 0),
-			individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
-			individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
-			labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
-			shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? [])
-		};
+		// Passed down so no per-namespace query refetches the list (reduce-requests STORY-294).
+		const schemas = await Promise.all(
+			namespaces.map((ns) => this.fetchFullSchema(ns.baseIri, { knownNamespaces: namespaces, includeInstances: options.includeInstances }))
+		);
+		return mergeNamespaceSchemas(schemas, namespaces);
+	}
+
+	/**
+	 * The schema-only equivalent of `fetchFullSchemaForAllNamespaces(namespaces, { includeInstances: false })` in a
+	 * constant number of requests (reduce-requests STORY-298): 7, whatever the number of namespaces, instead of 8 per
+	 * namespace. One query per kind of record covers every namespace at once, as `VALUES ?g { <graphs> }` over
+	 * `GRAPH ?g { ... }` — never a `FROM` clause mixed with `GRAPH` (see `fetchAllIndividuals`). The namespace of
+	 * each row comes from its graph, so records are tagged exactly as the per-namespace path tags them, and
+	 * `assembleNamespaceSchema`/`mergeNamespaceSchemas` then build the result with the same code that path uses
+	 * (cardinality is joined per owning namespace only). Takes the namespace list because every graph IRI is derived
+	 * from it; individuals and their relations come back empty.
+	 *
+	 * The two datatype/object property queries are one query here (`VALUES ?ptype`). Generic relations join each
+	 * namespace's shapes graph with the schema graphs of *all* namespaces, as the per-namespace query does.
+	 */
+	async fetchSchemaBatched(
+		namespaces: FetchedNamespace[],
+		options: Pick<FetchFullSchemaOptions, 'includeInstances'> = {}
+	): Promise<FetchedSchema> {
+		if (namespaces.length === 0) return mergeNamespaceSchemas([], namespaces);
+		const includeInstances = options.includeInstances ?? false;
+
+		const graphs = namespaces.map((ns) => ({ baseIri: ns.baseIri, ...namespaceGraphs(ns.baseIri) }));
+		for (const g of graphs) {
+			this.assertSafeSparqlIri(g.schema, 'schema graph IRI');
+			this.assertSafeSparqlIri(g.shapes, 'shapes graph IRI');
+			this.assertSafeSparqlIri(g.instances, 'instances graph IRI');
+		}
+		const values = (variable: string, list: string[]) => `VALUES ${variable} { ${list.map((g) => `<${g}>`).join(' ')} }`;
+		const schemaValues = (variable: string) => values(variable, graphs.map((g) => g.schema));
+		const shapesValues = (variable: string) => values(variable, graphs.map((g) => g.shapes));
+		const nsOfSchema = new Map(graphs.map((g) => [g.schema, g.baseIri] as const));
+		const nsOfShapes = new Map(graphs.map((g) => [g.shapes, g.baseIri] as const));
+		const nsOfInstances = new Map(graphs.map((g) => [g.instances, g.baseIri] as const));
+		const instancesValues = (variable: string) => values(variable, graphs.map((g) => g.instances));
+		const baseIriList = graphs.map((g) => `<${g.baseIri}>`).join(', ');
+
+		const run = async (query: string) => (await this.selectQuery(query)).results.bindings;
+		const none = Promise.resolve([] as Awaited<ReturnType<typeof run>>);
+		const [
+			classRows,
+			propertyRows,
+			constraintRows,
+			subClassRows,
+			labelRows,
+			inRows,
+			genericRows,
+			individualRows,
+			untypedRows,
+			untypedCountRows,
+			classRelationRows,
+			individualRelationRows
+		] = await Promise.all([
+			run(`
+				${PREFIXES}
+				SELECT ?g ?c ?label ?comment WHERE {
+					${schemaValues('?g')}
+					GRAPH ?g {
+						?c a owl:Class .
+						${VOCAB_FILTER('?c')}
+						OPTIONAL { ?c rdfs:label ?label }
+						OPTIONAL { ?c rdfs:comment ?comment }
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT ?g ?ptype ?p ?label ?domain ?range ?reverseOf WHERE {
+					${schemaValues('?g')}
+					VALUES ?ptype { owl:DatatypeProperty owl:ObjectProperty }
+					GRAPH ?g {
+						?p a ?ptype ; rdfs:domain ?domain ; rdfs:range ?range .
+						OPTIONAL { ?p rdfs:label ?label }
+						OPTIONAL { ?p <${GENERATED_REVERSE_OF_PREDICATE_IRI}> ?reverseOf }
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT ?g ?path ?minCount ?maxCount ?requiredForSubclasses WHERE {
+					${shapesValues('?g')}
+					GRAPH ?g {
+						?shape a sh:NodeShape ; sh:property ?ps .
+						?ps sh:path ?path .
+						OPTIONAL { ?ps sh:minCount ?minCount }
+						OPTIONAL { ?ps sh:maxCount ?maxCount }
+						OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT ?g ?sub ?super WHERE {
+					${schemaValues('?g')}
+					GRAPH ?g {
+						?sub rdfs:subClassOf ?super .
+						${VOCAB_FILTER('?sub')}
+						${VOCAB_FILTER('?super')}
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT ?g ?class ?minCount WHERE {
+					${shapesValues('?g')}
+					GRAPH ?g {
+						?shape a sh:NodeShape ; sh:targetClass ?class ; sh:property ?ps .
+						?ps sh:path rdfs:label .
+						OPTIONAL { ?ps sh:minCount ?minCount }
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT ?g ?class ?path ?value WHERE {
+					${shapesValues('?g')}
+					GRAPH ?g {
+						?shape sh:targetClass ?class ; sh:property ?ps .
+						?ps sh:path ?path ; sh:in/rdf:rest*/rdf:first ?value .
+					}
+				}
+			`),
+			run(`
+				${PREFIXES}
+				SELECT DISTINCT ?gs ?p ?label ?domain ?range ?minCount ?maxCount WHERE {
+					${shapesValues('?gs')}
+					GRAPH ?gs {
+						?shape sh:targetClass ?domain ; sh:property ?ps .
+						?ps sh:path ?p .
+						{ ?ps sh:class ?range }
+						UNION
+						{ ?ps sh:or/rdf:rest*/rdf:first/sh:class ?range }
+						OPTIONAL { ?ps sh:minCount ?minCount }
+						OPTIONAL { ?ps sh:maxCount ?maxCount }
+					}
+					${schemaValues('?sg')}
+					GRAPH ?sg { ?p a owl:ObjectProperty }
+					FILTER NOT EXISTS { ${schemaValues('?sg2')} GRAPH ?sg2 { ?p rdfs:domain ?anyDomain } }
+					OPTIONAL { ${schemaValues('?sg3')} GRAPH ?sg3 { ?p rdfs:label ?label } }
+				}
+			`),
+			// Instance data (`includeInstances`): five more queries, still independent of the namespace count.
+			// An instances graph's IRI is its namespace's base IRI, so `?g` doubles as the namespace tag.
+			includeInstances
+				? run(`
+				${PREFIXES}
+				SELECT ?g ?i ?type ?label ?syncSource ?syncStatus WHERE {
+					${instancesValues('?g')}
+					GRAPH ?g {
+						?i a ?type .
+						OPTIONAL { ?i rdfs:label ?label }
+						OPTIONAL { ?i <${SYNC_SOURCE_PREDICATE_IRI}> ?syncSource }
+						OPTIONAL { ?i <${SYNC_STATUS_PREDICATE_IRI}> ?syncStatus }
+					}
+					GRAPH ?classGraph { ?type a owl:Class }
+					FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))
+					${VOCAB_FILTER('?i')}
+				}
+			`)
+				: none,
+			includeInstances
+				? run(`
+				${PREFIXES}
+				SELECT ?g ?i ?label WHERE {
+					${instancesValues('?g')}
+					GRAPH ?g {
+						?i rdfs:label ?label .
+						FILTER NOT EXISTS { ?i rdf:type ?t }
+						FILTER(!isBlank(?i))
+						FILTER(?i NOT IN (${baseIriList}))
+						${VOCAB_FILTER('?i')}
+					}
+				}
+				ORDER BY ?label ?i
+				LIMIT ${UNCLASSIFIED_CANVAS_CAP * namespaces.length}
+			`)
+				: none,
+			includeInstances
+				? run(`
+				${PREFIXES}
+				SELECT ?g (COUNT(DISTINCT ?i) AS ?n) WHERE {
+					${instancesValues('?g')}
+					GRAPH ?g {
+						?i rdfs:label ?label .
+						FILTER NOT EXISTS { ?i rdf:type ?t }
+						FILTER(!isBlank(?i))
+						FILTER(?i != ?g)
+						${VOCAB_FILTER('?i')}
+					}
+				}
+				GROUP BY ?g
+			`)
+				: none,
+			includeInstances
+				? run(`
+				${PREFIXES}
+				SELECT ?g ?s ?p ?plabel ?class WHERE {
+					${instancesValues('?g')}
+					GRAPH ?g { ?s ?p ?class }
+					GRAPH ?classGraph { ?class a owl:Class }
+					FILTER(?p != rdf:type && ?p != rdfs:label)
+					OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+				}
+			`)
+				: none,
+			includeInstances
+				? run(`
+				${PREFIXES}
+				SELECT DISTINCT ?g ?s ?p ?plabel ?o WHERE {
+					${instancesValues('?g')}
+					GRAPH ?g { ?s ?p ?o }
+					GRAPH ?og { ?o a ?otype }
+					FILTER(?p != rdf:type && ?p != rdfs:label)
+					FILTER(?otype NOT IN (owl:Class, owl:DatatypeProperty, owl:ObjectProperty, sh:NodeShape))
+					OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+				}
+			`)
+				: none
+		]);
+
+		const raw = new Map<string, RawNamespaceSchema>(
+			graphs.map((g) => [
+				g.baseIri,
+				{
+					classes: [],
+					datatypeRaw: [],
+					objectRaw: [],
+					constraints: [],
+					subClassOf: [],
+					individuals: [],
+					untypedIndividuals: [],
+					untypedTotal: 0,
+					genericObjectProperties: [],
+					individualClassRelations: [],
+					individualIndividualRelations: [],
+					labelRequiredClassIris: [],
+					shapeInConstraints: []
+				}
+			])
+		);
+		const inByKey = new Map<string, FetchedInConstraint>();
+
+		for (const b of classRows) {
+			const ns = nsOfSchema.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.classes.push({
+				iri: b.c.value,
+				label: b.label?.value ?? extractLocalName(b.c.value),
+				comment: b.comment?.value ?? null,
+				namespaceBaseIri: ns
+			});
+		}
+		for (const b of propertyRows) {
+			const ns = nsOfSchema.get(b.g.value);
+			if (!ns) continue;
+			const property: FetchedPropertyBase = {
+				iri: b.p.value,
+				label: b.label?.value ?? extractLocalName(b.p.value),
+				domain: b.domain.value,
+				range: b.range.value,
+				namespaceBaseIri: ns,
+				generatedReverseOf: b.reverseOf?.value
+			};
+			const target = raw.get(ns)!;
+			if (b.ptype.value === OWL.DatatypeProperty) target.datatypeRaw.push(property);
+			else if (b.ptype.value === OWL.ObjectProperty) target.objectRaw.push(property);
+		}
+		for (const b of constraintRows) {
+			const ns = nsOfShapes.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.constraints.push({
+				path: b.path.value,
+				minCount: b.minCount ? parseInt(b.minCount.value, 10) : undefined,
+				maxCount: b.maxCount ? parseInt(b.maxCount.value, 10) : undefined,
+				requiredForSubclasses: b.requiredForSubclasses?.value === 'true'
+			});
+		}
+		for (const b of subClassRows) {
+			const ns = nsOfSchema.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.subClassOf.push({ sub: b.sub.value, super: b.super.value, namespaceBaseIri: ns });
+		}
+		for (const b of labelRows) {
+			const ns = nsOfShapes.get(b.g.value);
+			if (!ns) continue;
+			if (b.minCount !== undefined && parseInt(b.minCount.value, 10) >= 1) {
+				raw.get(ns)!.labelRequiredClassIris.push(b.class.value);
+			}
+		}
+		for (const b of inRows) {
+			const ns = nsOfShapes.get(b.g.value);
+			if (!ns) continue;
+			// Grouped per namespace, as the per-namespace path groups per call.
+			const key = `${ns}\u0000${b.class.value}\u0000${b.path.value}`;
+			let constraint = inByKey.get(key);
+			if (!constraint) {
+				constraint = { classIri: b.class.value, propertyIri: b.path.value, values: [] };
+				inByKey.set(key, constraint);
+				raw.get(ns)!.shapeInConstraints.push(constraint);
+			}
+			constraint.values.push({ value: b.value.value, isIri: b.value.type === 'uri' });
+		}
+		for (const b of individualRows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.individuals.push({
+				iri: b.i.value,
+				classIri: b.type.value,
+				label: b.label?.value ?? extractLocalName(b.i.value),
+				namespaceBaseIri: ns,
+				syncSource: b.syncSource?.value ?? null,
+				syncStatus: b.syncStatus?.value ?? null
+			});
+		}
+		// One entry per IRI per namespace, as `fetchUntypedIndividuals` does; the merge dedupes across namespaces.
+		const untypedSeen = new Set<string>();
+		for (const b of untypedRows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (!ns) continue;
+			const key = `${ns}\u0000${b.i.value}`;
+			if (untypedSeen.has(key)) continue;
+			untypedSeen.add(key);
+			const target = raw.get(ns)!.untypedIndividuals;
+			if (target.length < UNCLASSIFIED_CANVAS_CAP) target.push({ iri: b.i.value, label: b.label.value, namespaceBaseIri: ns });
+		}
+		for (const b of untypedCountRows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (ns) raw.get(ns)!.untypedTotal = Number(b.n?.value ?? 0);
+		}
+		for (const b of classRelationRows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.individualClassRelations.push({
+				individualIri: b.s.value,
+				predicateIri: b.p.value,
+				name: b.plabel?.value ?? extractLocalName(b.p.value),
+				classIri: b.class.value,
+				namespaceBaseIri: ns
+			});
+		}
+		for (const b of individualRelationRows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (!ns) continue;
+			raw.get(ns)!.individualIndividualRelations.push({
+				individualIri: b.s.value,
+				predicateIri: b.p.value,
+				name: b.plabel?.value ?? extractLocalName(b.p.value),
+				targetIndividualIri: b.o.value,
+				namespaceBaseIri: ns
+			});
+		}
+		for (const b of genericRows) {
+			const ns = nsOfShapes.get(b.gs.value);
+			if (!ns) continue;
+			raw.get(ns)!.genericObjectProperties.push({
+				iri: b.p.value,
+				label: b.label?.value ?? extractLocalName(b.p.value),
+				domain: b.domain.value,
+				range: b.range.value,
+				namespaceBaseIri: ns,
+				required: b.minCount !== undefined && parseInt(b.minCount.value, 10) >= 1,
+				repeatable: b.maxCount === undefined,
+				minCount: b.minCount !== undefined ? parseInt(b.minCount.value, 10) : undefined,
+				maxCount: b.maxCount !== undefined ? parseInt(b.maxCount.value, 10) : undefined,
+				relationKind: 'generic' as const
+			});
+		}
+
+		return mergeNamespaceSchemas(
+			namespaces.map((ns) => assembleNamespaceSchema(raw.get(ns.baseIri)!)),
+			namespaces
+		);
 	}
 
 	// -- Identity browsing (STORY-115/116/117, `spec/browse-identity/plan.md`) ------------------
@@ -7758,10 +8239,11 @@ export class SparqlConnector {
 	 * already-existing duplicate).
 	 */
 	private async fetchGenericObjectPropertyEdges(
-		namespaceBaseIri: string
+		namespaceBaseIri: string,
+		knownNamespaces?: FetchedNamespace[]
 	): Promise<FetchedObjectProperty[]> {
 		const graphs = namespaceGraphs(namespaceBaseIri);
-		const namespaces = await this.fetchNamespaces();
+		const namespaces = knownNamespaces ?? (await this.fetchNamespaces());
 		const allSchemaGraphs = namespaces.map((ns) => namespaceGraphs(ns.baseIri).schema);
 		const results = await this.selectQuery(`
 			${PREFIXES}
@@ -7848,22 +8330,29 @@ export class SparqlConnector {
 	}
 
 	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
-		return requestActivity.track(async () => {
-			const response = await fetch(this.apiUrl, {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
-			});
+		// Dev only: who sent this request, captured before the first await (see utils/request-log.ts).
+		const stack = import.meta.env.DEV ? new Error().stack : undefined;
+		// `track` outside the limiter, so a queued request already counts as pending.
+		return requestActivity.track(() =>
+			sparqlRequestLimiter.run(() =>
+				logRequest('query', stack, async () => {
+					const response = await fetch(this.apiUrl, {
+						method: 'POST',
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
+					});
 
-			if (!response.ok) {
-				const errorData = await response.json().catch(() => ({}));
-				throw new Error(
-					errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
-				);
-			}
+					if (!response.ok) {
+						const errorData = await response.json().catch(() => ({}));
+						throw new Error(
+							errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
+						);
+					}
 
-			return await response.json();
-		});
+					return (await response.json()) as T;
+				})
+			)
+		);
 	}
 
 	/**

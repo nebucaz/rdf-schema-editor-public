@@ -55,7 +55,8 @@
 	// visit would hide classes imported since — e.g. the SOC sample imported after first opening the
 	// workbench — until a hard reload.
 	onMount(() => {
-		if (!queryBuilderStore.schemaLoading) void queryBuilderStore.loadSchema();
+		// `force` keeps the every-visit behaviour above; the load still goes through the shared schema store.
+		if (!queryBuilderStore.schemaLoading) void queryBuilderStore.loadSchema({ force: true });
 	});
 
 	const scope = $derived(workbenchNamespaceStore.selected ?? []);
@@ -147,7 +148,10 @@
 	const user = $derived(page.data.user as { sub: string; displayName: string } | null | undefined);
 
 	$effect(() => {
-		void savedQueriesStore.load(user ?? null);
+		const current = user ?? null;
+		// Untracked: the request's synchronous start reads `requestActivity.pending`, which would otherwise make
+		// this effect re-run (and re-request) every time a request finishes.
+		untrack(() => void savedQueriesStore.load(current));
 	});
 
 	let openError = $state<string | null>(null);
