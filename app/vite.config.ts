@@ -2,7 +2,18 @@ import { defineConfig, loadEnv } from 'vite';
 import type { ViteUserConfig } from 'vitest/config';
 import adapter from '@sveltejs/adapter-static';
 import { sveltekit } from '@sveltejs/kit/vite';
+import { execSync } from 'node:child_process';
+import pkg from './package.json' with { type: 'json' };
+import { formatAppVersion } from './src/lib/utils/app-version.ts';
 import { apiProxyKey, apiProxyRewrite, normalizeBasePath } from './src/lib/utils/base-paths.ts';
+
+function gitDescribe(): string | undefined {
+	try {
+		return execSync('git describe --tags --always --dirty --match "v*"', { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+	} catch {
+		return undefined;
+	}
+}
 
 export default defineConfig(({ mode }) => {
 	// Dev-only: nginx is absent under `vite dev`, so the dev server plays its part — strips `/api` and
@@ -15,10 +26,14 @@ export default defineConfig(({ mode }) => {
 	// <host><prefix>/api. Not secrets — they are baked into the bundle via `define` below.
 	const appBasePath = normalizeBasePath(env.APP_BASE_PATH, 'APP_BASE_PATH');
 	const apiPrefix = normalizeBasePath(env.API_PREFIX, 'API_PREFIX');
+	// `git describe` shown beside the version (tag, commits since, short hash, -dirty). APP_GIT_DESCRIBE (a
+	// Docker build arg — the image build has no .git) wins; otherwise ask git; with neither, version only.
+	const appGitDescribe = env.APP_GIT_DESCRIBE || gitDescribe();
 	return {
 		define: {
 			__APP_BASE_PATH__: JSON.stringify(appBasePath),
-			__API_PREFIX__: JSON.stringify(apiPrefix)
+			__API_PREFIX__: JSON.stringify(apiPrefix),
+			__APP_VERSION__: JSON.stringify(formatAppVersion(pkg.version, appGitDescribe))
 		},
 		server: {
 			proxy: {

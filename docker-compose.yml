@@ -36,6 +36,7 @@ services:
       args:
         APP_BASE_PATH: ${APP_BASE_PATH:-}
         API_PREFIX: ${API_PREFIX:-}
+        APP_GIT_DESCRIBE: ${APP_GIT_DESCRIBE:-}
     restart: unless-stopped
     depends_on:
       backend:

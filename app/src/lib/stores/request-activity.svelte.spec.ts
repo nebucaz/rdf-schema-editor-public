@@ -1,3 +1,4 @@
+import { flushSync } from 'svelte';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { requestActivity } from './request-activity.svelte';
 
@@ -65,5 +66,46 @@ describe('requestActivity.started', () => {
 		await requestActivity.track(async () => 1);
 		requestActivity.reset();
 		expect(requestActivity.started).toBe(0);
+	});
+});
+
+describe('requestActivity.track inside an $effect', () => {
+	beforeEach(() => requestActivity.reset());
+
+	it('does not make the calling effect depend on pending', async () => {
+		let runs = 0;
+		const releases: Array<() => void> = [];
+		const dispose = $effect.root(() => {
+			$effect(() => {
+				runs++;
+				void requestActivity.track(() => new Promise<void>((r) => releases.push(r)));
+			});
+		});
+		flushSync();
+		expect(runs).toBe(1);
+		// Finishing the request writes `pending` again; the effect must not re-run for it.
+		releases.forEach((r) => r());
+		await Promise.resolve();
+		flushSync();
+		expect(runs).toBe(1);
+		dispose();
+	});
+
+	it('keeps pending and busy reactive for readers outside track', async () => {
+		const seen: number[] = [];
+		const dispose = $effect.root(() => {
+			$effect(() => {
+				seen.push(requestActivity.pending);
+			});
+		});
+		flushSync();
+		let release!: () => void;
+		const p = requestActivity.track(() => new Promise<void>((r) => (release = r)));
+		flushSync();
+		release();
+		await p;
+		flushSync();
+		expect(seen).toEqual([0, 1, 0]);
+		dispose();
 	});
 });

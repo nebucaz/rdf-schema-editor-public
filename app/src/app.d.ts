@@ -15,6 +15,8 @@ declare global {
 declare global {
 	const __APP_BASE_PATH__: string;
 	const __API_PREFIX__: string;
+	/** `version` from package.json; use `APP_VERSION` from `lib/utils/app-version.ts`. */
+	const __APP_VERSION__: string;
 }
 
 export {};

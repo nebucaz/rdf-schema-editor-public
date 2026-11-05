@@ -12,6 +12,9 @@ COPY . .
 ARG APP_BASE_PATH=
 ARG API_PREFIX=
 ENV APP_BASE_PATH=${APP_BASE_PATH} API_PREFIX=${API_PREFIX}
+# `git describe` output shown beside the version (the build context has no .git). Optional: unset = version only.
+ARG APP_GIT_DESCRIBE=
+ENV APP_GIT_DESCRIBE=${APP_GIT_DESCRIBE}
 RUN bun run build
 # Security headers incl. the hash of SvelteKit's inline bootstrap script (changes every build).
 RUN bun run scripts/csp-snippet.ts build/index.html /tmp/security-headers.conf

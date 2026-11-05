@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { appUrl } from '#lib/utils/urls.js';
+	import { APP_VERSION } from '#lib/utils/app-version.js';
 	import { page } from '$app/state';
 	import { refreshAll } from '$app/navigation';
 	import SignInRequired from '#lib/components/SignInRequired.svelte';
@@ -380,6 +381,8 @@
 						<button type="button" class="menu-item" onclick={toggleMode}>
 							{mode.current === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
 						</button>
+						<hr class="menu-divider" />
+						<p class="menu-version" data-testid="app-version">Version {APP_VERSION}</p>
 					{/snippet}
 				</DropdownMenu>
 				<UserMenu
@@ -590,6 +593,14 @@
 		font-size: 0.65rem;
 		line-height: 1;
 		color: var(--color-text-muted);
+	}
+
+	.menu-version {
+		margin: 0;
+		padding: 0.25rem 0.75rem;
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+		user-select: text;
 	}
 
 	.menu-divider {

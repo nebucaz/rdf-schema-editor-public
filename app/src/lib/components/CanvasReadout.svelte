@@ -12,8 +12,11 @@
 <style>
 	.canvas-readout {
 		position: absolute;
+		/* Top left: Svelte Flow's <Controls /> owns the bottom-left corner, <MiniMap /> the bottom-right,
+		   CanvasSearch the top-right. */
 		left: 0.5rem;
-		bottom: 0.5rem;
+		top: 0.5rem;
+		white-space: nowrap;
 		z-index: 5;
 		pointer-events: none;
 		padding: 0.15rem 0.5rem;

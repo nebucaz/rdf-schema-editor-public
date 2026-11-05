@@ -252,6 +252,23 @@ bun run check     # type-check with svelte-check
 bun run test      # run unit tests (vitest)
 ```
 
+## App version
+
+The version shown at the bottom of the Settings menu is `version` in `app/package.json`, followed by
+`git describe` in brackets, baked into the bundle at build time (`__APP_VERSION__` in `vite.config.ts`, read
+through `lib/utils/app-version.ts`):
+
+| Build | Shows |
+|---|---|
+| clean, exactly on tag `v1.0.9` | `1.0.9` |
+| 3 commits after the tag | `1.0.9 (v1.0.9-3-ga1b2c3d)` |
+| uncommitted changes | `… -dirty` appended inside the brackets |
+
+Release: bump `version` in `app/package.json`, merge, then tag the merge commit `v<version>` and push the
+tag. The Docker build has no `.git`, so pass the value in:
+`APP_GIT_DESCRIBE=$(git describe --tags --always --dirty --match 'v*') docker compose up --build`
+(unset = version only).
+
 ## Syncing from Backstage
 
 The backend can pull entities from a [Backstage](https://backstage.io) software catalog and mint them
