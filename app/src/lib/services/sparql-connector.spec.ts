@@ -8952,7 +8952,60 @@ describe('SparqlConnector — searchIndividuals all-strings mode (STORY-186)', (
 		await connector.searchIndividuals({ query: 'sap' });
 
 		expect(queries[0]).not.toContain('matchedProperty');
-		expect(queries[0]).not.toContain('GROUP BY');
+	});
+});
+
+describe('SparqlConnector — one row per individual and class (double-key)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('groups by individual and class, picking label, graph and sync values with MIN', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		await new SparqlConnector('/api/sparql').searchIndividuals({ query: 'a' });
+
+		expect(queries[0]).toContain('GROUP BY ?i ?type');
+		expect(queries[0]).toContain('(MIN(?label) AS ?labelMin)');
+		expect(queries[0]).toContain('(MIN(?ig) AS ?igMin)');
+		expect(queries[0]).toContain('BIND(?labelMin AS ?label)');
+		expect(queries[0]).toContain('ORDER BY ?label ?i');
+	});
+
+	it('applies the unclassified keyset to the picked label, outside the grouped subquery', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		await new SparqlConnector('/api/sparql').searchIndividuals({
+			unclassified: true,
+			after: { label: 'Bob', iri: 'urn:b' }
+		});
+
+		expect(queries[0].indexOf('STR(?label) > "Bob"')).toBeGreaterThan(queries[0].indexOf('GROUP BY ?i ?type'));
+	});
+});
+
+describe('SparqlConnector — fetchResourcePage lists each triple once (double-key)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('collapses rows repeated by a second graph or a second label', async () => {
+		const iri = `${DEFAULT_NAMESPACE_BASE_IRI}#Alice`;
+		const pred = `${DEFAULT_NAMESPACE_BASE_IRI}#knows`;
+		const other = `${DEFAULT_NAMESPACE_BASE_IRI}#Bob`;
+		const out = { p: { type: 'uri', value: pred }, o: { type: 'uri', value: other } };
+		const inc = { s: { type: 'uri', value: other }, p: { type: 'uri', value: pred } };
+		let call = 0;
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () => {
+				const bindings = call++ === 0 ? [out, { ...out, oLabel: { type: 'literal', value: 'Bob' } }] : [inc, { ...inc, sLabel: { type: 'literal', value: 'Bob' } }];
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+			})
+		);
+
+		const page = await new SparqlConnector('/api/sparql').fetchResourcePage(iri);
+
+		expect(page.outgoing).toHaveLength(1);
+		expect(page.incoming).toHaveLength(1);
 	});
 });
 

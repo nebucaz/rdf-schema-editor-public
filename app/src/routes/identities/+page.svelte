@@ -443,7 +443,10 @@
 				offset: nextOffset,
 				after: lastFacets.classIri === UNCLASSIFIED_FACET ? keysetAfter(results) : undefined
 			});
-			results = [...results, ...searchPage.results];
+			// An individual with two classes legitimately appears twice (once per class group), so the key is both.
+			const rowKey = (r: IndividualSearchResult) => `${r.classIri}\u0000${r.iri}`;
+			const known = new Set(results.map(rowKey));
+			results = [...results, ...searchPage.results.filter((r) => !known.has(rowKey(r)))];
 			hasMore = searchPage.hasMore;
 			nextOffset += PAGE_SIZE;
 		} catch (err) {

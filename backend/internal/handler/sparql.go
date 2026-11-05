@@ -41,7 +41,8 @@ func (h *SparqlHandler) setBasicAuth(req *http.Request) {
 	}
 }
 
-// Query handles POST /sparql — form-encoded `query` (and optional `infer=false`), forwarded to
+// Query handles POST /sparql — form-encoded `query` (and optional `infer=false`; `sameAs=false` is
+// always added), forwarded to
 // GraphDB's SPARQL protocol endpoint, returning its sparql-results+json response unchanged.
 func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 	params, err := readSparqlParams(r)
@@ -58,7 +59,9 @@ func (h *SparqlHandler) Query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	form := url.Values{"query": {query}}
+	// sameAs=false always: GraphDB otherwise expands owl:sameAs equivalents into extra result rows,
+	// which the app (one row per resource) cannot tell apart from duplicates.
+	form := url.Values{"query": {query}, "sameAs": {"false"}}
 	if params.inferOff {
 		form.Set("infer", "false")
 	}

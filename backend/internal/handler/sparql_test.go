@@ -63,6 +63,9 @@ func TestSparqlHandler_Query_Success(t *testing.T) {
 	if !strings.Contains(gotBody, "infer=false") {
 		t.Errorf("GraphDB request body = %q, want infer=false", gotBody)
 	}
+	if !strings.Contains(gotBody, "sameAs=false") {
+		t.Errorf("GraphDB request body = %q, want sameAs=false", gotBody)
+	}
 	if w.Code != http.StatusOK {
 		t.Errorf("response status = %d, want 200", w.Code)
 	}

@@ -37,6 +37,9 @@ func TestClient_Select_Success(t *testing.T) {
 	if !strings.Contains(gotBody, "infer=false") {
 		t.Errorf("request body = %q, want infer=false", gotBody)
 	}
+	if !strings.Contains(gotBody, "sameAs=false") {
+		t.Errorf("request body = %q, want sameAs=false", gotBody)
+	}
 	if len(result.Results.Bindings) != 1 {
 		t.Fatalf("bindings = %d, want 1", len(result.Results.Bindings))
 	}

@@ -60,9 +60,10 @@ type askResult struct {
 }
 
 // Select runs a SPARQL SELECT query with `infer=false` (asserted statements only, matching this
-// app's other whole-graph reads) and returns the parsed bindings.
+// app's other whole-graph reads) and `sameAs=false` (no owl:sameAs expansion, which would return one
+// row per equivalent IRI) and returns the parsed bindings.
 func (c *Client) Select(ctx context.Context, query string) (SelectResult, error) {
-	form := url.Values{"query": {query}, "infer": {"false"}}
+	form := url.Values{"query": {query}, "infer": {"false"}, "sameAs": {"false"}}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -96,7 +97,7 @@ func (c *Client) Select(ctx context.Context, query string) (SelectResult, error)
 // sync.Engine's idempotent bootstrap checks (mirroring the app's own `askQuery`/`ASK`-then-INSERT
 // convention, e.g. `ensureNamespaceClass`).
 func (c *Client) Ask(ctx context.Context, query string) (bool, error) {
-	form := url.Values{"query": {query}, "infer": {"false"}}
+	form := url.Values{"query": {query}, "infer": {"false"}, "sameAs": {"false"}}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpointURL, strings.NewReader(form.Encode()))
 	if err != nil {

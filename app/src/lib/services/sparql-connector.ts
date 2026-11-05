@@ -619,6 +619,17 @@ const unclassifiedBlock = () => `{
 				${VOCAB_FILTER('?i')}
 			}`;
 
+/** Keeps the first item for each key, in order. */
+function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
+	const seen = new Set<string>();
+	return items.filter((item) => {
+		const k = key(item);
+		if (seen.has(k)) return false;
+		seen.add(k);
+		return true;
+	});
+}
+
 export interface BulkUnclassifiedFilter {
 	query?: string;
 	namespaceBaseIri?: string;
@@ -6828,10 +6839,13 @@ export class SparqlConnector {
 			);
 		}
 		if (matchAll) filters.push('FILTER(?type != rdf:Statement)');
+		// The keyset compares against the label the list shows, i.e. the one picked after grouping, so it
+		// lives in the outer pattern while every other filter narrows the raw rows inside the grouped subquery.
 		const keyset = unclassifiedOnly ? params.after : undefined;
+		const outerFilters: string[] = [];
 		if (keyset) {
 			const l = this.escapeString(keyset.label);
-			filters.push(
+			outerFilters.push(
 				`FILTER(STR(?label) > "${l}" || (STR(?label) = "${l}" && STR(?i) > "${this.escapeString(keyset.iri)}"))`
 			);
 		}
@@ -6846,10 +6860,13 @@ export class SparqlConnector {
 			? `?i ?mp ?mv .
 					FILTER(isLiteral(?mv) && CONTAINS(LCASE(STR(?mv)), LCASE("${this.escapeString(query!)}")))`
 			: '';
-		const selectVars = matchAll
-			? `?i ?type ?label ?ig ?syncSource ?syncStatus (SAMPLE(?mp) AS ?matchedProperty) (SAMPLE(?mv) AS ?matchedValue)`
-			: '?i ?type ?label ?ig ?syncSource ?syncStatus';
-		const groupBy = matchAll ? 'GROUP BY ?i ?type ?label ?ig ?syncSource ?syncStatus' : '';
+		// One row per (individual, type): an individual with several `rdfs:label`s, the same type asserted in
+		// several graphs, several sync values, or a class declared in several graphs would otherwise come back
+		// once per combination, and the list keys its rows by IRI. `MIN` picks the same value on every page.
+		const selectVars = `?i ?type (MIN(?label) AS ?labelMin) (MIN(?ig) AS ?igMin) (MIN(?syncSource) AS ?syncSourceMin) (MIN(?syncStatus) AS ?syncStatusMin)${
+			matchAll ? ' (SAMPLE(?mp) AS ?matchedProperty) (SAMPLE(?mv) AS ?matchedValue)' : ''
+		}`;
+		const outerVars = `?i ?type ?label ?ig ?syncSource ?syncStatus${matchAll ? ' ?matchedProperty ?matchedValue' : ''}`;
 
 		const typedBlock = `{
 					GRAPH ?ig {
@@ -6866,11 +6883,20 @@ export class SparqlConnector {
 
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ${selectVars} WHERE {
-				${[typedBlock, untypedBlock].filter((_, n) => (n === 0 ? includeTyped : includeUntyped)).join(' UNION ')}
-				${filters.join('\n\t\t\t\t')}
+			SELECT ${outerVars} WHERE {
+				{
+					SELECT ${selectVars} WHERE {
+						${[typedBlock, untypedBlock].filter((_, n) => (n === 0 ? includeTyped : includeUntyped)).join(' UNION ')}
+						${filters.join('\n\t\t\t\t\t\t')}
+					}
+					GROUP BY ?i ?type
+				}
+				BIND(?labelMin AS ?label)
+				BIND(?igMin AS ?ig)
+				BIND(?syncSourceMin AS ?syncSource)
+				BIND(?syncStatusMin AS ?syncStatus)
+				${outerFilters.join('\n\t\t\t\t')}
 			}
-			${groupBy}
 			ORDER BY ${unclassifiedOnly ? 'STR(?label) STR(?i)' : '?label ?i'}
 			LIMIT ${limit + 1}
 			${keyset ? '' : `OFFSET ${offset}`}
@@ -7071,7 +7097,13 @@ export class SparqlConnector {
 			predicateLabel: b.pLabel?.value ?? extractLocalName(b.p.value)
 		}));
 
-		return { iri, outgoing, incoming };
+		// The two queries have no DISTINCT and join optional labels, so a triple stored in two graphs or a
+		// predicate/resource with two labels comes back more than once; the page lists each triple once.
+		return {
+			iri,
+			outgoing: uniqueBy(outgoing, (t) => `${t.predicateIri}\u0000${t.objectType}\u0000${t.object}`),
+			incoming: uniqueBy(incoming, (t) => `${t.subjectIri}\u0000${t.predicateIri}`)
+		};
 	}
 
 	/** The two SELECT strings `fetchResourcePage` actually runs for `iri` — one FILTER-free triple
