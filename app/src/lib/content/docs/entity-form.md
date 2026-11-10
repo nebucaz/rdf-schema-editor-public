@@ -20,6 +20,12 @@ choosing **Edit** from an existing one's menu.
   attribute's own Required checkbox.
 - **Namespace** *(create mode only)* — which registered namespace mints this class's IRI.
 
+- **Defined by concept** *(shown once a vocabulary namespace exists)* — links the class to the term in the
+  [Vocabulary](vocabulary) that defines it. The definition is kept in the vocabulary and shown here read-only,
+  with a link to open it; the class keeps its own name. While you type the name of a new class, matching
+  concepts are suggested so you can link one instead of defining the same thing twice. A class has at most
+  one concept; several classes may share one.
+
 ## Notes
 
 - The class's IRI is derived once from its name at creation and never changes; renaming here only

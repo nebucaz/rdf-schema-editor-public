@@ -8,6 +8,13 @@ describe('resolveRouteView', () => {
 			isValidationView: false,
 			isWorkbenchView: false,
 			isReportView: false,
+			isQuestionsView: false,
+			isPipelineView: false,
+			isVocabularyView: false,
+			isTaxonomyView: false,
+			isGovernanceView: false,
+			isPipelineArea: false,
+			isReviewView: false,
 			isCanvasView: true
 		});
 	});
@@ -33,5 +40,60 @@ describe('resolveRouteView', () => {
 		expect(resolveRouteView('/validation').isCanvasView).toBe(false);
 		expect(resolveRouteView('/identities').isIdentitiesView).toBe(true);
 		expect(resolveRouteView('/validation').isValidationView).toBe(true);
+	});
+
+	it('flags /pipeline as its own view, not the canvas', () => {
+		const v = resolveRouteView('/pipeline');
+		expect(v.isPipelineView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+	});
+
+	it('flags /questions as its own view, not the canvas', () => {
+		const v = resolveRouteView('/questions');
+		expect(v.isQuestionsView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+	});
+
+	it('flags /vocabulary as its own view, not the canvas', () => {
+		const v = resolveRouteView('/vocabulary');
+		expect(v.isVocabularyView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+	});
+});
+
+describe('resolveRouteView /taxonomy (STORY-328)', () => {
+	it('flags /taxonomy as its own view, not the canvas', () => {
+		const v = resolveRouteView('/taxonomy');
+		expect(v.isTaxonomyView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+		expect(resolveRouteView('/').isTaxonomyView).toBe(false);
+	});
+});
+
+describe('resolveRouteView /governance (STORY-331)', () => {
+	it('flags /governance as its own view, not the canvas', () => {
+		const v = resolveRouteView('/governance');
+		expect(v.isGovernanceView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+	});
+});
+
+describe('resolveRouteView /review (STORY-335)', () => {
+	it('flags /review pages as the review view, not the canvas', () => {
+		for (const p of ['/review', '/review/questions', '/review/concept']) {
+			const v = resolveRouteView(p);
+			expect(v.isReviewView).toBe(true);
+			expect(v.isCanvasView).toBe(false);
+		}
+		expect(resolveRouteView('/reviewer-notes').isCanvasView).toBe(false);
+	});
+
+	it('groups the pipeline pages into one area', () => {
+		for (const p of ['/pipeline', '/questions', '/vocabulary', '/taxonomy', '/governance']) {
+			expect(resolveRouteView(p).isPipelineArea).toBe(true);
+		}
+		for (const p of ['/', '/identities', '/workbench', '/review/pipeline']) {
+			expect(resolveRouteView(p).isPipelineArea).toBe(false);
+		}
 	});
 });

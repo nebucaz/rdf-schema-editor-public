@@ -17,7 +17,8 @@ describe('AppNav under a base path', () => {
 			'/path/identities',
 			'/path/',
 			'/path/workbench',
-			'/path/validation'
+			'/path/validation',
+			'/path/pipeline'
 		]);
 		const current = links.filter((a) => a.getAttribute('aria-current') === 'page');
 		expect(current.map((a) => a.textContent?.trim())).toEqual(['Report']);

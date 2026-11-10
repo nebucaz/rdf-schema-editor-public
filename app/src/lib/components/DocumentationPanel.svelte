@@ -74,6 +74,16 @@
 		documentationStore.setLastSectionId(id);
 	}
 
+	/** Cross-section links in the Markdown are written as `[text](section-id)`. Open the section instead of
+	 *  navigating, which would 404. Other links (absolute URLs, `#anchors`) behave as usual. */
+	function handleBodyClick(event: MouseEvent) {
+		const anchor = (event.target as HTMLElement).closest('a');
+		const href = anchor?.getAttribute('href');
+		if (!href || !docSections.some((s) => s.id === href)) return;
+		event.preventDefault();
+		selectSection(href);
+	}
+
 	const selectedSection = $derived(docSections.find((s) => s.id === selectedId));
 </script>
 
@@ -127,7 +137,8 @@
 			{/if}
 		</nav>
 
-		<div class="panel-body">
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+		<div class="panel-body" onclick={handleBodyClick}>
 			{#if selectedSection}
 				<SvelteMarkdown source={selectedSection.content} />
 			{:else}

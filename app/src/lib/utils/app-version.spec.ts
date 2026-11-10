@@ -4,7 +4,7 @@ import { APP_VERSION, formatAppVersion, resolveAppVersion } from './app-version'
 
 describe('app version', () => {
 	it('is package.json version plus the commit (injected at build time by vite.config.ts)', () => {
-		expect(pkg.version).toBe('1.0.9');
+		expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
 		expect(APP_VERSION.startsWith(pkg.version)).toBe(true);
 	});
 

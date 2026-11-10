@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
 	import { onMount, untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { mode } from 'mode-watcher';
 	import {
 		SvelteFlow,
@@ -35,6 +36,8 @@
 	import InstanceOfEdge from '#lib/components/InstanceOfEdge.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import ExportErdDialog, { type ExportErdChoice } from '#lib/components/ExportErdDialog.svelte';
+	import { classCreatedEntry, classDeletedEntry, classEditEntries } from '#lib/services/change-log.js';
+	import { recordChange } from '#lib/services/change-log-actions.js';
 	import { buildErdSvg } from '#lib/services/erd-export.js';
 	import { downloadBlob, downloadFile } from '#lib/utils/download.js';
 	import { svgToPngBlob } from '#lib/utils/svg-to-png.js';
@@ -74,6 +77,9 @@
 		type FetchedIndividualIndividualRelation,
 		type FetchedSubClassOf
 	} from '#lib/services/sparql-connector.js';
+	import { runLinkGates } from '#lib/services/gates/link.js';
+	import { conceptStore } from '#lib/stores/concept-store.svelte.js';
+	import type { Concept } from '#lib/services/skos-concept.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
@@ -133,6 +139,8 @@
 	let nodes = $state.raw<CanvasNode[]>([]);
 	let edges = $state.raw<Edge[]>([]);
 	let errorMessage = $state<string | null>(null);
+	/** Why a class is created, edited or deleted; written to the change log with the change (ontology-pipeline STORY-331). */
+	let entityRationale = $state('');
 	let loading = $state(false);
 	/** What the full-canvas overlay announces: the initial load or a workspace switch. */
 	let loadingLabel = $state('Loading workspace');
@@ -203,6 +211,15 @@
 			width: node.measured?.width ?? NEW_NODE_SIZE.width,
 			height: node.measured?.height ?? NEW_NODE_SIZE.height
 		});
+	}
+
+	/** `/?focus=<class IRI>` (linked from the Gate report): select that node and pan to it, if the active
+	 *  Workspace shows it. */
+	function focusFromUrl() {
+		const iri = page.url.searchParams.get('focus');
+		if (!iri || !nodes.some((n) => n.id === iri)) return;
+		nodes = nodes.map((n) => ({ ...n, selected: n.id === iri }));
+		handleSearchSelect({ id: iri });
 	}
 
 	// -- Orientation grid origin (canvas-navigation Story 003) ---------------------------------------
@@ -706,6 +723,7 @@
 			members,
 			isAssociationClass,
 			isAuthoritativeEntity,
+			definedByConcept: lastClassConcepts.get(classIriValue),
 			onEdit: () => {
 				if (isAssociationClass) {
 					editAssociationId = classIriValue;
@@ -808,18 +826,48 @@
 		nodes = nodes.map((n) => (n.id === classIriValue && n.type === 'entity' ? { ...n, data: updater(n.data) } : n));
 	}
 
+	/** Stores (or clears) a class's defining concept and keeps the canvas snapshot in step. */
+	async function linkClassConcept(classIriValue: string, conceptIri: string, namespaceBaseIri: string) {
+		if ((lastClassConcepts.get(classIriValue) ?? '') === conceptIri) return;
+		await sparqlConnector.setClassConcept(classIriValue, conceptIri || null, namespaceBaseIri);
+		const next = new Map(lastClassConcepts);
+		if (conceptIri) next.set(classIriValue, conceptIri);
+		else next.delete(classIriValue);
+		lastClassConcepts = next;
+	}
+
+	/** Loads the vocabulary for the entity forms; skipped, so costing no request, when no namespace is marked as one. */
+	async function loadFormConcepts() {
+		if (!namespaceStore.namespaces.some((n) => n.vocabulary)) {
+			formConcepts = [];
+			return;
+		}
+		try {
+			formConcepts = await conceptStore.ensureLoaded();
+		} catch {
+			formConcepts = [];
+		}
+	}
+
+	$effect(() => {
+		if (showAddEntity || pendingEntityFromConnection !== null || editEntityId !== null) void loadFormConcepts();
+	});
+
 	async function handleCreateEntity(
 		name: string,
 		description: string,
 		color: string | undefined,
 		namespaceBaseIri: string | undefined,
 		backstageKind: string,
-		conceptNamespace: string
+		conceptNamespace: string,
+		_subclassAttributeValues: Record<string, string>,
+		definedByConcept: string
 	) {
 		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
 		if (conceptNamespace) await sparqlConnector.updateClassNamespace(iri, conceptNamespace, resolvedNamespaceBaseIri);
+		await linkClassConcept(iri, definedByConcept, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		// The Option/Alt+click-on-canvas context menu's "+ Add Entity" choice overrides the
@@ -836,6 +884,17 @@
 		};
 		nodes = [...nodes, newNode];
 		showAddEntity = false;
+		await logClassChange([classCreatedEntry(iri, name, entityRationale)]);
+	}
+
+	/** Records class changes after they were made; a failing log write is shown, the change stays. */
+	async function logClassChange(entries: ReturnType<typeof classEditEntries>) {
+		const rationale = entityRationale;
+		entityRationale = '';
+		for (const entry of entries) {
+			const problem = await recordChange({ ...entry, rationale });
+			if (problem) errorMessage = problem;
+		}
 	}
 
 	/** Opens the "Add Entity" dialog and loads existing classes/individuals for its name-lookup
@@ -878,7 +937,9 @@
 		color: string | undefined,
 		namespaceBaseIri: string | undefined,
 		backstageKind: string,
-		conceptNamespace: string
+		conceptNamespace: string,
+		_subclassAttributeValues: Record<string, string>,
+		definedByConcept: string
 	) {
 		if (!pendingEntityFromConnection) return;
 		const { sourceNodeId, position } = pendingEntityFromConnection;
@@ -886,6 +947,7 @@
 		const { iri } = await sparqlConnector.insertClass(name, description || undefined, resolvedNamespaceBaseIri);
 		if (backstageKind) await sparqlConnector.setBackstageKind(iri, backstageKind, resolvedNamespaceBaseIri);
 		if (conceptNamespace) await sparqlConnector.updateClassNamespace(iri, conceptNamespace, resolvedNamespaceBaseIri);
+		await linkClassConcept(iri, definedByConcept, resolvedNamespaceBaseIri);
 		if (color) nodeColorStore.setColor(iri, color);
 		nodeNamespaces.set(iri, resolvedNamespaceBaseIri);
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
@@ -898,6 +960,7 @@
 		};
 		nodes = [...nodes, newNode];
 		pendingEntityFromConnection = null;
+		await logClassChange([classCreatedEntry(iri, name, entityRationale)]);
 		pendingRelationCreate = { source: sourceNodeId, target: iri, sourceHandle: null, targetHandle: null };
 		void loadGenericRelationOptions();
 	}
@@ -909,13 +972,20 @@
 		_namespaceBaseIri: string | undefined,
 		backstageKind: string,
 		conceptNamespace: string,
-		subclassAttributeValues: Record<string, string>
+		subclassAttributeValues: Record<string, string>,
+		definedByConcept: string
 	) {
 		if (!editEntityId) return;
 		const node = findEntityNode(editEntityId);
 		if (!node) return;
 
 		const entityNamespaceBaseIri = nodeNamespaces.get(node.data.classIri) ?? activeNamespaceBaseIri();
+		const logEntries = classEditEntries(
+			node.data.classIri,
+			{ name: node.data.name, description: node.data.description },
+			{ name, description },
+			''
+		);
 		if (name !== node.data.name) {
 			await sparqlConnector.renameClass(node.data.classIri, name, entityNamespaceBaseIri);
 		}
@@ -948,6 +1018,7 @@
 				);
 			}
 		}
+		await linkClassConcept(node.data.classIri, definedByConcept, entityNamespaceBaseIri);
 		nodeColorStore.setColor(node.data.classIri, color);
 		updateNodeData(editEntityId, (d) =>
 			makeNodeData(d.classIri, name, description, d.attributes, nodeNamespaces.get(d.classIri), color, d.members, d.relationFields)
@@ -959,11 +1030,13 @@
 		editEntityRequireConceptNamespace = false;
 		editEntitySubclassRequiredAttributes = [];
 		editEntitySubclassAttributeValues = {};
+		await logClassChange(logEntries);
 	}
 
 	async function handleDeleteEntityConfirm(force: boolean) {
 		if (!deleteEntityId) return;
 		const classIriValue = deleteEntityId;
+		const deletedName = deletingNode?.data.name ?? classIriValue;
 		deleteEntityBusy = true;
 		errorMessage = null;
 		try {
@@ -987,6 +1060,7 @@
 			applyNoteNodesAndEdges();
 			deleteEntityId = null;
 			deleteEntityWarning = null;
+			await logClassChange([classDeletedEntry(classIriValue, deletedName, '')]);
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to delete entity';
 		} finally {
@@ -1903,6 +1977,17 @@
 	/** Classes currently carrying the `AttributedRelationship` marker (STORY-020) — read directly
 	 *  off `buildCanvasModel`'s output, itself derived from the persisted `rdfs:subClassOf` triple. */
 	let lastAssociationClassIris = $state<Set<string>>(new Set());
+	/** Class IRI -> the vocabulary concept that defines it (ontology-pipeline STORY-325), from the last schema load. */
+	let lastClassConcepts = $state<Map<string, string>>(new Map());
+	/** The core vocabulary's concepts for the entity forms; empty when there is no vocabulary. */
+	let formConcepts = $state<Concept[]>([]);
+
+	/** Link findings about the class being edited (STORY-327); none while there is no vocabulary. */
+	const editEntityGateFindings = $derived(
+		editEntityId && lastFetchedSchema && namespaceStore.namespaces.some((n) => n.vocabulary)
+			? runLinkGates(lastFetchedSchema, formConcepts).filter((f) => f.elementIri === editEntityId)
+			: []
+	);
 	/** Most recent unfiltered `buildCanvasModel` output — the Export ERD source (STORY-159). */
 	let lastCanvasModel: CanvasModel | null = null;
 
@@ -2780,6 +2865,9 @@
 		});
 		lastCanvasModel = model;
 		lastAssociationClassIris = model.associationClassIris;
+		lastClassConcepts = new Map(
+			schema.classes.flatMap((c) => (c.definedByConcept ? [[c.iri, c.definedByConcept] as [string, string]] : []))
+		);
 		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
 		lastLabelRequiredClassIris = model.labelRequiredClassIris;
 		lastSubclassRequiredAttributesByClass = new Map(
@@ -3112,9 +3200,52 @@
 		return workspaceStore.workspaces[0]?.iri ?? defaultWorkspaceIri;
 	}
 
+	/** Bumped by every (re)load so a relation fetch of an earlier load cannot overwrite a later one. */
+	let individualRelationsGeneration = 0;
+	/** Workspace members whose outgoing relations were requested for the current load. */
+	let relationSubjectsRequested = new Set<string>();
+	/** True once the first render of a load is done; from then on `workspaceMembers` changes trigger the fetch below. */
+	let individualRelationsReady = $state(false);
+
+	/** The individual→individual relations are not part of the workspace load: unrestricted, that query scans every
+	 *  triple of the instances graphs and GraphDB answers nothing else meanwhile. A relation is only drawn when both
+	 *  ends are on the workspace, so this fetches the outgoing relations of the members whose relations are not
+	 *  loaded yet (all of them after a load, the new ones after a switch or an add) and adds their edges. Relations
+	 *  the user created in the meantime are kept. */
+	async function loadMissingIndividualRelations(members: Set<string>) {
+		const generation = individualRelationsGeneration;
+		const missing = [...members].filter((iri) => !relationSubjectsRequested.has(iri));
+		if (missing.length === 0) return;
+		for (const iri of missing) relationSubjectsRequested.add(iri);
+		try {
+			const fetched = await sparqlConnector.fetchIndividualRelationsBatched(namespaceStore.namespaces, { subjects: missing });
+			if (generation !== individualRelationsGeneration || !lastFetchedSchema) return;
+			const byKey = new Map<string, FetchedIndividualIndividualRelation>();
+			for (const r of [...lastFetchedSchema.individualIndividualRelations, ...fetched]) {
+				byKey.set(`${r.individualIri}\u0000${r.predicateIri}\u0000${r.targetIndividualIri}`, r);
+			}
+			lastFetchedSchema = { ...lastFetchedSchema, individualIndividualRelations: [...byKey.values()] };
+			buildAndApplyCanvasModel(lastFetchedSchema);
+			applyNoteNodesAndEdges();
+		} catch (err) {
+			if (generation !== individualRelationsGeneration) return;
+			for (const iri of missing) relationSubjectsRequested.delete(iri); // the next members change retries
+			errorMessage = err instanceof Error ? err.message : 'Failed to load relations between individuals';
+		}
+	}
+
+	$effect(() => {
+		const members = workspaceMembers;
+		if (!individualRelationsReady) return;
+		untrack(() => void loadMissingIndividualRelations(members));
+	});
+
 	/** `force` refetches the shared stores (Reload, saves); the first load reuses whatever `+layout.svelte`'s
 	 *  `ensureLoaded()` calls already fetched or have in flight. */
 	async function loadSchemaFromGraphDB(options: { force?: boolean } = {}) {
+		individualRelationsGeneration++; // a relation fetch of an earlier load is now obsolete
+		relationSubjectsRequested = new Set();
+		individualRelationsReady = false;
 		loading = true;
 		loadingLabel = 'Loading workspace';
 		errorMessage = null;
@@ -3135,6 +3266,7 @@
 					loadExternalVocabularies: (force) => viaStore(externalVocabStore, force),
 					loadSettings: (force) => viaStore(settingsStore, force),
 					loadWorkspaces: (force) => viaStore(workspaceStore, force),
+					probeMigrations: () => sparqlConnector.probeMigrations(),
 					onNamespacesLoaded: seedDefaultNamespaceVisibility,
 					migrateDefaultNamespace: (namespaces) => sparqlConnector.ensureDefaultNamespaceMigrated(namespaces),
 					ensureAttributedRelationship: () => sparqlConnector.ensureAttributedRelationshipClass(),
@@ -3150,7 +3282,8 @@
 						await graphDbLayoutStore.reload(activeWorkspaceIri);
 						workspaceMembers = graphDbLayoutStore.getMemberIris();
 					},
-					fetchSchema: (namespaces) => sparqlConnector.fetchSchemaBatched(namespaces, { includeInstances: true }),
+					fetchSchema: (namespaces) =>
+						sparqlConnector.fetchSchemaBatched(namespaces, { includeInstances: true, individualRelations: false }),
 					fetchNotes: () => sparqlConnector.fetchNotesForWorkspace(activeWorkspaceIri),
 					apply: (schema, notes) => {
 						lastFetchedSchema = schema;
@@ -3161,6 +3294,7 @@
 				},
 				{ force: options.force ?? true }
 			);
+			individualRelationsReady = true; // the effect above fetches the members' relations
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to load schema from GraphDB';
 		} finally {
@@ -3397,7 +3531,7 @@
 		workbenchActions.registerSetViewMode(handleViewModeChange);
 		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
 		workbenchActions.registerSetActiveNamespace(handleActiveNamespaceChange);
-		void loadSchemaFromGraphDB({ force: false });
+		void loadSchemaFromGraphDB({ force: false }).then(focusFromUrl);
 	});
 
 	// -- Workspace-scoped Triples entry point (STORY-082) -------------------------------------------
@@ -3664,6 +3798,7 @@
 		namespaceOptions={namespaceStore.namespaces}
 		initialNamespaceBaseIri={activeNamespaceBaseIri()}
 		existingOptions={addEntityExistingOptions}
+		concepts={formConcepts}
 		submitLabel="Create"
 		onCancel={() => {
 			showAddEntity = false;
@@ -3671,6 +3806,7 @@
 		}}
 		onSubmit={handleCreateEntity}
 		onSelectExisting={handleSelectExistingEntityForAdd}
+		bind:rationale={entityRationale}
 	/>
 </Modal>
 
@@ -3684,9 +3820,11 @@
 		mode="create"
 		namespaceOptions={namespaceStore.namespaces}
 		initialNamespaceBaseIri={activeNamespaceBaseIri()}
+		concepts={formConcepts}
 		submitLabel="Create"
 		onCancel={() => (pendingEntityFromConnection = null)}
 		onSubmit={handleCreateEntityFromConnectionSubmit}
+		bind:rationale={entityRationale}
 	/>
 </Modal>
 
@@ -3719,9 +3857,13 @@
 			requireConceptNamespace={editEntityRequireConceptNamespace}
 			subclassRequiredAttributes={editEntitySubclassRequiredAttributes}
 			subclassAttributeValues={editEntitySubclassAttributeValues}
+			concepts={formConcepts}
+			initialConceptIri={lastClassConcepts.get(editingNode.data.classIri) ?? ''}
+			gateFindings={editEntityGateFindings}
 			submitLabel="Save"
 			onCancel={() => (editEntityId = null)}
 			onSubmit={handleEditEntitySubmit}
+			bind:rationale={entityRationale}
 		/>
 	{/if}
 </Modal>

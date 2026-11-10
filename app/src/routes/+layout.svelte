@@ -11,6 +11,8 @@
 	import '../app.css';
 	import { ModeWatcher, toggleMode, mode } from 'mode-watcher';
 	import AppNav from '#lib/components/AppNav.svelte';
+	import PipelineSubNav from '#lib/components/PipelineSubNav.svelte';
+	import { documentationStore } from '#lib/stores/documentation-store.js';
 	import UserMenu from '#lib/components/UserMenu.svelte';
 	import ProfileView from '#lib/components/ProfileView.svelte';
 	import DropdownMenu from '#lib/components/DropdownMenu.svelte';
@@ -20,6 +22,7 @@
 	import DescriptionVisibilityToggle from '#lib/components/DescriptionVisibilityToggle.svelte';
 	import InheritedAttributesVisibilityToggle from '#lib/components/InheritedAttributesVisibilityToggle.svelte';
 	import ReverseRelationsVisibilityToggle from '#lib/components/ReverseRelationsVisibilityToggle.svelte';
+	import ConceptBadgeToggle from '#lib/components/ConceptBadgeToggle.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import NamespaceManagementView from '#lib/components/NamespaceManagementView.svelte';
 	import WorkspaceManagementView from '#lib/components/WorkspaceManagementView.svelte';
@@ -86,7 +89,7 @@
 	 *  canvas. */
 	const isCanvasView = $derived(routeView.isCanvasView);
 	/** Menu items that operate on canvas state and are hidden on both non-canvas "area" routes. */
-	const hideCanvasOnlyItems = $derived(isIdentitiesView || isWorkbenchView || routeView.isReportView);
+	const hideCanvasOnlyItems = $derived(isIdentitiesView || isWorkbenchView || routeView.isReportView || routeView.isQuestionsView || routeView.isPipelineView || routeView.isVocabularyView || routeView.isTaxonomyView || routeView.isGovernanceView || routeView.isReviewView);
 
 	let showProfile = $state(false);
 
@@ -248,6 +251,9 @@
 					<DescriptionVisibilityToggle />
 					<InheritedAttributesVisibilityToggle />
 					<ReverseRelationsVisibilityToggle />
+					{#if namespaceStore.namespaces.some((n) => n.vocabulary)}
+						<ConceptBadgeToggle />
+					{/if}
 					<NamespaceFilter
 						namespaces={filterListedNamespaces(namespaceStore.namespaces)}
 						hiddenNamespaces={workbenchActions.hiddenNamespaces}
@@ -401,6 +407,15 @@
 			{/if}
 		</div>
 	</header>
+	{#if page.data.user && routeView.isPipelineArea}
+		<PipelineSubNav
+			{routeView}
+			onOpenGuide={() => {
+				documentationStore.setLastSectionId('pipeline-quick-start');
+				showDocumentation = true;
+			}}
+		/>
+	{/if}
 	<main class="app-main">
 		{#if page.data.user}
 			{@render children()}

@@ -100,3 +100,28 @@ describe('MemberForm class selector', () => {
 		expect((onSubmit.mock.calls[0] as unknown[])[5]).toBeUndefined();
 	});
 });
+
+describe('MemberForm assertion suggestions (loop-issues STORY-315)', () => {
+	const open = () => fireEvent.click(screen.getByRole('button', { name: '+ Add assertion' }));
+
+	it('renders the form while the suggestions are still loading, and says so', async () => {
+		setup({ optionsStatus: 'loading' });
+		expect(screen.getByLabelText('Class')).toBeInTheDocument();
+		await open();
+		expect(screen.getByRole('status')).toHaveTextContent('Loading suggestions');
+		expect(screen.getByLabelText('Predicate')).toBeInTheDocument();
+	});
+
+	it('shows an error but keeps the inputs usable when the suggestions failed', async () => {
+		setup({ optionsStatus: 'error' });
+		await open();
+		expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
+		expect(screen.getByLabelText('Object')).toBeInTheDocument();
+	});
+
+	it('shows no notice once ready', async () => {
+		setup();
+		await open();
+		expect(screen.queryByRole('status')).toBeNull();
+	});
+});

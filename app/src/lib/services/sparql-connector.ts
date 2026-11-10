@@ -1,7 +1,44 @@
 import { apiUrl as buildApiUrl } from '../utils/urls';
-import { createConcurrencyLimiter } from './concurrency-limiter';
 import { callerFromStack, requestLog } from '../utils/request-log';
 import { isShortId } from './short-links';
+import {
+	formatExpectedResult,
+	parseExpectedResult,
+	COMPETENCY_RUN_HISTORY_LIMIT,
+	type CompetencyQuestion,
+	type CompetencyQuestionDraft,
+	type CompetencyQuestionRun,
+	type RunOutcome
+} from './competency-question';
+import type { BackfillWrite } from './concept-backfill';
+import {
+	CONCEPT_STATUSES,
+	validateConceptDraft,
+	validateStatusChange,
+	type Concept,
+	type ConceptDraft,
+	type ConceptScheme,
+	type SchemeScope,
+	type ConceptStatus,
+	type LangText,
+	type MappingKind,
+	type RelationKind,
+	MAPPING_KINDS
+} from './skos-concept';
+import {
+	allowedOutcomes,
+	canStartReview,
+	REQUEST_STATUSES,
+	validateOutcome,
+	validateRequestDraft,
+	type ChangeRequest,
+	type ChangeRequestDraft,
+	type RequestOutcome,
+	type RequestStatus
+} from './change-request';
+import type { Snapshot, SnapshotDiff } from './impact-assessment';
+import { CHANGE_KINDS, type ChangeKind } from './change-log';
+import { EMPTY_GOVERNANCE, MATURITY_LEVELS, validateGovernance, type Governance, type MaturityLevel } from './governance';
 import { requestActivity } from '#lib/stores/request-activity.svelte.js';
 import { nameableEntitiesFromSchema, dedupeByIri } from './addable-elements';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
@@ -35,6 +72,43 @@ import {
 	NAMESPACE_LOCKED_PREDICATE_IRI,
 	NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI,
 	NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI,
+	NAMESPACE_PIPELINE_PREDICATE_IRI,
+	NAMESPACE_VOCABULARY_PREDICATE_IRI,
+	NAMESPACE_STEWARD_PREDICATE_IRI,
+	NAMESPACE_AUTHORITY_PREDICATE_IRI,
+	NAMESPACE_MATURITY_PREDICATE_IRI,
+	OWL_VERSION_INFO_IRI,
+	CHANGE_REQUEST_CLASS_IRI,
+	CR_REQUESTOR_PREDICATE_IRI,
+	CR_TERM_PREDICATE_IRI,
+	CR_DEFINITION_PREDICATE_IRI,
+	CR_RELATIONS_PREDICATE_IRI,
+	CR_RATIONALE_PREDICATE_IRI,
+	CR_QUESTION_PREDICATE_IRI,
+	CR_CHANGE_KIND_PREDICATE_IRI,
+	CR_STATUS_PREDICATE_IRI,
+	CR_OUTCOME_RATIONALE_PREDICATE_IRI,
+	CR_DECIDED_BY_PREDICATE_IRI,
+	CR_DECIDED_AT_PREDICATE_IRI,
+	CR_CREATED_AT_PREDICATE_IRI,
+	CR_BASELINE_PREDICATE_IRI,
+	CR_IMPACT_PREDICATE_IRI,
+	SKOS,
+	SKOS_NS,
+	CONCEPT_DISAMBIGUATION_PREDICATE_IRI,
+	CONCEPT_STATUS_PREDICATE_IRI,
+	CONCEPT_SOURCE_PREDICATE_IRI,
+	CONCEPT_AUTHORITY_PREDICATE_IRI,
+	CONCEPT_REPLACED_BY_PREDICATE_IRI,
+	CONCEPT_DEPRECATION_REASON_PREDICATE_IRI,
+	CONCEPT_DEPRECATED_ON_PREDICATE_IRI,
+	CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI,
+	SCHEME_PURPOSE_PREDICATE_IRI,
+	SCHEME_DECISIONS_PREDICATE_IRI,
+	SCHEME_OUT_OF_SCOPE_PREDICATE_IRI,
+	SCHEME_STAKEHOLDERS_PREDICATE_IRI,
+	conceptIri,
+	conceptSchemeIri,
 	WORKSPACE_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
@@ -64,6 +138,22 @@ import {
 	savedQueryIri,
 	SHARED_QUERY_CLASS_IRI,
 	sharedQueryIri,
+	COMPETENCY_QUESTION_CLASS_IRI,
+	CQ_EXPECTED_RESULT_PREDICATE_IRI,
+	CQ_QUERY_PREDICATE_IRI,
+	CQ_SAVED_QUERY_PREDICATE_IRI,
+	CQ_LINKED_ELEMENT_PREDICATE_IRI,
+	CQ_OWNER_PREDICATE_IRI,
+	CQ_LAST_REVIEWED_PREDICATE_IRI,
+	CQ_RUN_CLASS_IRI,
+	CQ_RUN_OF_PREDICATE_IRI,
+	CQ_RUN_AT_PREDICATE_IRI,
+	CQ_RUN_OUTCOME_PREDICATE_IRI,
+	CQ_RUN_ACTUAL_PREDICATE_IRI,
+	CQ_RUN_ROW_COUNT_PREDICATE_IRI,
+	CQ_RUN_DURATION_PREDICATE_IRI,
+	CQ_RUN_MESSAGE_PREDICATE_IRI,
+	competencyQuestionIri,
 	NOTE_CLASS_IRI,
 	NOTE_WORKSPACE_PREDICATE_IRI,
 	NOTE_TEXT_PREDICATE_IRI,
@@ -247,6 +337,8 @@ export interface FetchedClass {
 	 *  already scoped to one namespace's graphs, so this is just that namespace echoed back onto
 	 *  each record for `canvas-model.ts` to carry through to the canvas's namespace filter. */
 	namespaceBaseIri: string;
+	/** The vocabulary concept that defines this class (STORY-325), when linked. */
+	definedByConcept?: string;
 }
 
 /** A property declaration with domain/range but no cardinality yet — see `FetchedProperty`. */
@@ -619,6 +711,46 @@ const unclassifiedBlock = () => `{
 				${VOCAB_FILTER('?i')}
 			}`;
 
+/** The individual→individual relation query over the given instances graphs, shared by `fetchSchemaBatched` and
+ *  `fetchIndividualRelationsBatched`. An object is only kept when it carries a non-meta `rdf:type` (it "looks like
+ *  an individual"); `isIRI` runs first so literal objects never reach the type join. `subjects` (already checked
+ *  for safety) binds `?s`, which turns the scan of every triple into one lookup per subject. */
+function individualRelationsQuery(instanceGraphs: string[], subjects?: string[]): string {
+	const graphList = instanceGraphs.map((g) => '<' + g + '>').join(' ');
+	const subjectsClause = subjects ? 'VALUES ?s { ' + subjects.map((s) => '<' + s + '>').join(' ') + ' }' : '';
+	return `
+		${PREFIXES}
+		SELECT DISTINCT ?g ?s ?p ?plabel ?o WHERE {
+			VALUES ?g { ${graphList} }
+			${subjectsClause}
+			GRAPH ?g { ?s ?p ?o }
+			FILTER(isIRI(?o))
+			GRAPH ?og { ?o a ?otype }
+			FILTER(?p != rdf:type && ?p != rdfs:label)
+			FILTER(?otype NOT IN (owl:Class, owl:DatatypeProperty, owl:ObjectProperty, sh:NodeShape))
+			OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
+		}
+	`;
+}
+
+/** Collapses rows that name the same individual (one per graph x label) into one entry: the lowest
+ *  graph IRI and lowest label win, so the result is deterministic. Safety net behind the `GROUP BY`. */
+function mergeIndividualRows(
+	rows: Array<{ iri: string; label: string | null; namespaceBaseIri: string }>
+): Array<{ iri: string; label: string; namespaceBaseIri: string }> {
+	const byIri = new Map<string, { iri: string; label: string | null; namespaceBaseIri: string }>();
+	for (const row of rows) {
+		const kept = byIri.get(row.iri);
+		if (!kept) {
+			byIri.set(row.iri, { ...row });
+			continue;
+		}
+		if (row.namespaceBaseIri < kept.namespaceBaseIri) kept.namespaceBaseIri = row.namespaceBaseIri;
+		if (row.label !== null && (kept.label === null || row.label < kept.label)) kept.label = row.label;
+	}
+	return [...byIri.values()].map((r) => ({ ...r, label: r.label ?? extractLocalName(r.iri) }));
+}
+
 /** Keeps the first item for each key, in order. */
 function uniqueBy<T>(items: T[], key: (item: T) => string): T[] {
 	const seen = new Set<string>();
@@ -658,6 +790,10 @@ export interface FetchFullSchemaOptions {
 	 *  relation queries) and returns those fields empty — for screens that only need the schema, such as the
 	 *  identity browser (reduce-requests STORY-295). Default `true`. */
 	includeInstances?: boolean;
+	/** `false` leaves out only the individual→individual relation query, the one expensive instance query (it
+	 *  scans every triple of the instances graphs, and GraphDB holds other requests back while it runs); fetch
+	 *  them afterwards with `fetchIndividualRelationsBatched`. Default: same as `includeInstances`. */
+	individualRelations?: boolean;
 }
 
 export interface FetchedSchema {
@@ -682,6 +818,19 @@ export interface FetchedSchema {
 	/** `sh:in` value lists on a class's `sh:property` shapes (query-workbench STORY-174) — optional
 	 *  for the same reason as `labelRequiredClassIris`. Always populated by `fetchFullSchema`. */
 	shapeInConstraints?: FetchedInConstraint[];
+	/** Every NodeShape, from `fetchSchemaBatched` only (the per-namespace path does not read them); absent
+	 *  means "not loaded", which is different from "no shapes". */
+	shapes?: FetchedShape[];
+}
+
+/** A `sh:NodeShape`: the class it targets (if any) and the `sh:path` of each of its property shapes.
+ *  Read by the quality gates (ontology-pipeline STORY-319). */
+export interface FetchedShape {
+	iri: string;
+	targetClassIri?: string;
+	paths: string[];
+	/** The namespace whose shapes graph holds the shape. */
+	namespaceBaseIri: string;
 }
 
 /** One `sh:property [ sh:path ?p ; sh:in (...) ]` list on `classIri`'s NodeShape. List order is not
@@ -719,6 +868,11 @@ export interface FetchedNamespace {
 	/** `listedInFilter` flag (STORY-097) — when `false`, the namespace is omitted entirely from
 	 *  `NamespaceFilter.svelte`'s toggle list. Defaults to `true` when absent. */
 	listedInFilter: boolean;
+	/** `vocabularyNamespace` marker (STORY-321) — the one core namespace that owns a `/vocab`
+	 *  graph. Defaults to `false` when absent. */
+	vocabulary: boolean;
+	/** `ontologyPipeline` flag — whether the Pipeline page lists this namespace. Defaults to `false`. */
+	pipeline: boolean;
 }
 
 // -- Workspace management (STORY-071/072/073) ----------------------------------------------------
@@ -962,8 +1116,19 @@ function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; sc
 /** Membership rows written per `INSERT DATA` by `addWorkspaceMembers`. */
 export const WORKSPACE_MEMBERS_CHUNK_SIZE = 500;
 
+/** The projected variables of a SELECT (`?g ?c ?label`), for labelling a request in the dev log. */
+function selectVariables(query: string): string {
+	const m = /SELECT\s+(?:DISTINCT\s+)?([\s\S]*?)\s+WHERE/i.exec(query);
+	return (m?.[1] ?? '?').replace(/\s+/g, ' ').slice(0, 60);
+}
+
 /** Times `send` and, in dev builds only, records it in the request log under its caller (utils/request-log.ts). */
-async function logRequest<T>(kind: 'query' | 'update', stack: string | undefined, send: () => Promise<T>): Promise<T> {
+async function logRequest<T>(
+	kind: 'query' | 'update',
+	stack: string | undefined,
+	send: () => Promise<T>,
+	query?: string
+): Promise<T> {
 	if (!import.meta.env.DEV) return send();
 	const started = performance.now();
 	let ok = false;
@@ -972,14 +1137,16 @@ async function logRequest<T>(kind: 'query' | 'update', stack: string | undefined
 		ok = true;
 		return result;
 	} finally {
-		requestLog.record({ kind, caller: callerFromStack(stack), ms: Math.round(performance.now() - started), ok });
+		const caller = callerFromStack(stack);
+		requestLog.record({
+			kind,
+			// The batched schema load sends 12 different queries under one caller: tell them apart by their variables.
+			caller: caller === 'fetchSchemaBatched' && query ? `${caller} [${selectVariables(query)}]` : caller,
+			ms: Math.round(performance.now() - started),
+			ok
+		});
 	}
 }
-
-/** Most SPARQL requests in flight at once; further ones wait their turn (reduce-requests STORY-299). Shared by
- *  every connector instance because the throttle GraphDB applies is per client, not per instance. */
-export const MAX_CONCURRENT_SPARQL_REQUESTS = 6;
-const sparqlRequestLimiter = createConcurrencyLimiter(MAX_CONCURRENT_SPARQL_REQUESTS);
 
 /** What the per-namespace queries return before they are combined into a `FetchedSchema`. */
 interface RawNamespaceSchema {
@@ -996,6 +1163,7 @@ interface RawNamespaceSchema {
 	individualIndividualRelations: FetchedIndividualIndividualRelation[];
 	labelRequiredClassIris: string[];
 	shapeInConstraints: FetchedInConstraint[];
+	shapes?: FetchedShape[];
 }
 
 /** One namespace's raw query results as a `FetchedSchema`: joins the SHACL cardinality onto the properties by
@@ -1029,7 +1197,8 @@ function assembleNamespaceSchema(raw: RawNamespaceSchema): FetchedSchema {
 		individualClassRelations: raw.individualClassRelations,
 		individualIndividualRelations: raw.individualIndividualRelations,
 		labelRequiredClassIris: raw.labelRequiredClassIris,
-		shapeInConstraints: raw.shapeInConstraints
+		shapeInConstraints: raw.shapeInConstraints,
+		...(raw.shapes ? { shapes: raw.shapes } : {})
 	};
 }
 
@@ -1058,7 +1227,8 @@ function mergeNamespaceSchemas(schemas: FetchedSchema[], namespaces: FetchedName
 		individualClassRelations: schemas.flatMap((s) => s.individualClassRelations),
 		individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
 		labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
-		shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? [])
+		shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? []),
+		...(schemas.some((s) => s.shapes) ? { shapes: schemas.flatMap((s) => s.shapes ?? []) } : {})
 	};
 }
 
@@ -1086,8 +1256,8 @@ export class SparqlConnector {
 	}
 
 	/** Execute a raw SPARQL ASK query, returning the boolean result. */
-	async askQuery(query: string): Promise<boolean> {
-		const result = await this.executeQuery<SparqlAskResults>(query);
+	async askQuery(query: string, options?: { infer?: boolean }): Promise<boolean> {
+		const result = await this.executeQuery<SparqlAskResults>(query, options);
 		return result.boolean;
 	}
 
@@ -1112,24 +1282,21 @@ export class SparqlConnector {
 	}
 
 	private async sendUpdate(update: string, stack?: string): Promise<void> {
-		// `track` outside the limiter, so a queued request already counts as pending.
 		return requestActivity.track(() =>
-			sparqlRequestLimiter.run(() =>
-				logRequest('update', stack, async () => {
-					const response = await fetch(`${this.apiUrl}/update`, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ update })
-					});
+			logRequest('update', stack, async () => {
+				const response = await fetch(`${this.apiUrl}/update`, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ update })
+				});
 
-					if (!response.ok) {
-						const errorData = await response.json().catch(() => ({}));
-						throw new Error(
-							errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
-						);
-					}
-				})
-			)
+				if (!response.ok) {
+					const errorData = await response.json().catch(() => ({}));
+					throw new Error(
+						errorData.message || `SPARQL update failed: ${response.status} ${response.statusText}`
+					);
+				}
+			})
 		);
 	}
 
@@ -1566,13 +1733,17 @@ export class SparqlConnector {
 		this.assertSafeSparqlIri(classIriValue, 'class IRI');
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?i ?label ?g WHERE { GRAPH ?g { ?i a <${classIriValue}> . OPTIONAL { ?i rdfs:label ?label } } }
-		`);
-		return results.results.bindings.map((b) => ({
-			iri: b.i.value,
-			label: b.label?.value ?? extractLocalName(b.i.value),
-			namespaceBaseIri: b.g.value
-		}));
+			SELECT ?i (MIN(?l) AS ?label) (MIN(?graph) AS ?g) WHERE {
+				GRAPH ?graph { ?i a <${classIriValue}> . OPTIONAL { ?i rdfs:label ?l } }
+			} GROUP BY ?i
+		`, { infer: false });
+		return mergeIndividualRows(
+			results.results.bindings.map((b) => ({
+				iri: b.i.value,
+				label: b.label?.value ?? null,
+				namespaceBaseIri: b.g.value
+			}))
+		);
 	}
 
 	/**
@@ -2786,6 +2957,29 @@ export class SparqlConnector {
 		this.attributedRelationshipEnsured = true;
 	}
 
+	/** One request telling whether both one-time migrations (the `AttributedRelationship` marker class and
+	 *  the Default workspace backfill) are already done, instead of one ASK each on every page load. When a
+	 *  marker is present the matching `ensure…` call becomes a no-op; when it is absent, or this probe fails,
+	 *  nothing is recorded and the `ensure…` call performs its own check and migration as before. */
+	async probeMigrations(): Promise<void> {
+		if (this.attributedRelationshipEnsured && this.defaultWorkspaceEnsured) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		try {
+			const results = await this.selectQuery(`
+				${PREFIXES}
+				SELECT ?attributed ?backfilled WHERE {
+					BIND(EXISTS { GRAPH <${graphs.schema}> { <${ATTRIBUTED_RELATIONSHIP_IRI}> a owl:Class } } AS ?attributed)
+					BIND(EXISTS { GRAPH <${graphs.schema}> { <${workspaceIri('Default')}> <${WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI}> true } } AS ?backfilled)
+				}
+			`);
+			const row = results.results.bindings[0];
+			if (row?.attributed?.value === 'true') this.attributedRelationshipEnsured = true;
+			if (row?.backfilled?.value === 'true') this.defaultWorkspaceEnsured = true;
+		} catch {
+			// The individual checks run next and report a real failure.
+		}
+	}
+
 	/** Marks/unmarks `classIriValue` as an attributed-relationship (association) class by
 	 *  inserting/deleting its `rdfs:subClassOf <SCHEMA_NAMESPACE>AttributedRelationship` triple —
 	 *  the sole signal `canvas-model.ts` uses to classify a class as an association class. Written
@@ -3431,17 +3625,19 @@ export class SparqlConnector {
 	): Promise<Array<{ iri: string; label: string; namespaceBaseIri: string }>> {
 		this.assertSafeSparqlIri(classIri, 'class IRI');
 		const results = await this.selectQuery(`
-			${PREFIXES} SELECT ?s ?label ?g WHERE {
-				GRAPH ?g { ?s ?p <${classIri}> }
+			${PREFIXES} SELECT ?s (MIN(?l) AS ?label) (MIN(?graph) AS ?g) WHERE {
+				GRAPH ?graph { ?s ?p <${classIri}> }
 				GRAPH ?pg { ?p rdfs:label "isMasterFor" }
-				OPTIONAL { ?s rdfs:label ?label }
-			}
-		`);
-		return results.results.bindings.map((b) => ({
-			iri: b.s.value,
-			label: b.label?.value ?? extractLocalName(b.s.value),
-			namespaceBaseIri: b.g.value
-		}));
+				OPTIONAL { ?s rdfs:label ?l }
+			} GROUP BY ?s
+		`, { infer: false });
+		return mergeIndividualRows(
+			results.results.bindings.map((b) => ({
+				iri: b.s.value,
+				label: b.label?.value ?? null,
+				namespaceBaseIri: b.g.value
+			}))
+		);
 	}
 
 	// -- Generalized individual→class relations (data-catalog Story 017) ------------------------
@@ -3760,6 +3956,7 @@ export class SparqlConnector {
 		const results = await this.selectQuery(`
 			${PREFIXES} SELECT DISTINCT ?s ?p ?plabel ?o WHERE {
 				GRAPH <${graphs.instances}> { ?s ?p ?o }
+				FILTER(isIRI(?o))
 				GRAPH ?og { ?o a ?otype }
 				FILTER(?p != rdf:type && ?p != rdfs:label)
 				FILTER(?otype NOT IN (owl:Class, owl:DatatypeProperty, owl:ObjectProperty, sh:NodeShape))
@@ -3842,20 +4039,23 @@ export class SparqlConnector {
 		const namespaceBaseIri = await this.findNamespaceOfPossiblyUntypedIndividual(individualIri);
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
-			${PREFIXES} SELECT ?p ?plabel ?o ?olabel WHERE {
+			${PREFIXES} SELECT ?p ?o (MIN(?pl) AS ?plabel) (MIN(?ol) AS ?olabel) WHERE {
 				GRAPH <${graphs.instances}> { <${individualIri}> ?p ?o }
 				FILTER(?p != rdf:type && ?p != rdfs:label && ?p != rdf:subject && ?p != rdf:predicate && ?p != rdf:object)
-				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
-				OPTIONAL { GRAPH ?og { ?o rdfs:label ?olabel } }
-			}
-		`);
-		return results.results.bindings.map((b) => ({
-			individualIri,
-			predicateIri: b.p.value,
-			predicateLabel: b.plabel?.value ?? extractLocalName(b.p.value),
-			objectIri: b.o.value,
-			objectLabel: b.olabel?.value ?? extractLocalName(b.o.value)
-		}));
+				OPTIONAL { GRAPH ?pg { ?p rdfs:label ?pl } }
+				OPTIONAL { GRAPH ?og { ?o rdfs:label ?ol } }
+			} GROUP BY ?p ?o
+		`, { infer: false });
+		return uniqueBy(
+			results.results.bindings.map((b) => ({
+				individualIri,
+				predicateIri: b.p.value,
+				predicateLabel: b.plabel?.value ?? extractLocalName(b.p.value),
+				objectIri: b.o.value,
+				objectLabel: b.olabel?.value ?? extractLocalName(b.o.value)
+			})),
+			(a) => `${a.predicateIri}\u0000${a.objectIri}`
+		);
 	}
 
 	/**
@@ -4551,7 +4751,7 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?ns ?prefix ?desc ?color ?publisher ?license ?locked ?defaultHidden ?listedInFilter ${fromClause(graphs.schema)} WHERE {
+			SELECT ?ns ?prefix ?desc ?color ?publisher ?license ?locked ?defaultHidden ?listedInFilter ?vocabulary ?pipeline ${fromClause(graphs.schema)} WHERE {
 				?ns a <${NAMESPACE_CLASS_IRI}> .
 				OPTIONAL { ?ns <${NAMESPACE_PREFIX_PREDICATE_IRI}> ?prefix }
 				OPTIONAL { ?ns rdfs:comment ?desc }
@@ -4561,6 +4761,8 @@ export class SparqlConnector {
 				OPTIONAL { ?ns <${NAMESPACE_LOCKED_PREDICATE_IRI}> ?locked }
 				OPTIONAL { ?ns <${NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI}> ?defaultHidden }
 				OPTIONAL { ?ns <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> ?listedInFilter }
+				OPTIONAL { ?ns <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> ?vocabulary }
+				OPTIONAL { ?ns <${NAMESPACE_PIPELINE_PREDICATE_IRI}> ?pipeline }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
@@ -4572,7 +4774,9 @@ export class SparqlConnector {
 			license: b.license?.value ?? null,
 			locked: b.locked?.value === 'true',
 			defaultHidden: b.defaultHidden ? b.defaultHidden.value === 'true' : b.ns.value === DEFAULT_NAMESPACE_BASE_IRI,
-			listedInFilter: b.listedInFilter ? b.listedInFilter.value === 'true' : true
+			listedInFilter: b.listedInFilter ? b.listedInFilter.value === 'true' : true,
+			vocabulary: b.vocabulary?.value === 'true',
+			pipeline: b.pipeline?.value === 'true'
 		}));
 	}
 
@@ -4772,6 +4976,90 @@ export class SparqlConnector {
 		`);
 	}
 
+	/** Marks or unmarks a namespace as the vocabulary namespace (STORY-321). At most one namespace
+	 *  carries the marker: marking while another one does throws. Unmarking only removes the triple;
+	 *  an existing `/vocab` graph is left alone. */
+	async updateNamespaceVocabulary(baseIri: string, marked: boolean): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		if (!marked) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${baseIri}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		const taken = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { ?other <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> true . FILTER(?other != <${baseIri}>) }`
+		);
+		if (taken) throw new Error('Another namespace is already the vocabulary namespace; unmark it first');
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> ?old }
+			INSERT { <${baseIri}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> true }
+			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Sets a namespace's `ontologyPipeline` flag — same always-explicit-boolean shape as
+	 *  `updateNamespaceLocked`. */
+	async updateNamespacePipeline(baseIri: string, enabled: boolean): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${baseIri}> <${NAMESPACE_PIPELINE_PREDICATE_IRI}> ?old }
+			INSERT { <${baseIri}> <${NAMESPACE_PIPELINE_PREDICATE_IRI}> ${enabled} }
+			WHERE { OPTIONAL { <${baseIri}> <${NAMESPACE_PIPELINE_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Steward, authority, maturity and version of a namespace (STORY-331), on its declaration node. */
+	async fetchNamespaceGovernance(baseIri: string): Promise<Governance> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?p ?o ${fromClause(graphs.schema)} WHERE {
+				<${baseIri}> ?p ?o .
+				FILTER(?p IN (<${NAMESPACE_STEWARD_PREDICATE_IRI}>, <${NAMESPACE_AUTHORITY_PREDICATE_IRI}>, <${NAMESPACE_MATURITY_PREDICATE_IRI}>, <${OWL_VERSION_INFO_IRI}>))
+			}
+		`);
+		const g: Governance = { ...EMPTY_GOVERNANCE };
+		for (const b of results.results.bindings) {
+			const value = b.o.value;
+			switch (b.p.value) {
+				case NAMESPACE_STEWARD_PREDICATE_IRI: g.steward = value; break;
+				case NAMESPACE_AUTHORITY_PREDICATE_IRI: g.authority = value; break;
+				case NAMESPACE_MATURITY_PREDICATE_IRI:
+					if ((MATURITY_LEVELS as readonly string[]).includes(value)) g.maturity = value as MaturityLevel;
+					break;
+				case OWL_VERSION_INFO_IRI: g.version = value; break;
+			}
+		}
+		return g;
+	}
+
+	/** Replaces the four settings in one request; empty ones are removed. Recorded, not enforced. */
+	async updateNamespaceGovernance(baseIri: string, g: Governance): Promise<void> {
+		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
+		const problems = validateGovernance(g);
+		if (problems.length) throw new Error(problems[0]);
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const fields: [string, string][] = [
+			[NAMESPACE_STEWARD_PREDICATE_IRI, g.steward.trim()],
+			[NAMESPACE_AUTHORITY_PREDICATE_IRI, g.authority.trim()],
+			[NAMESPACE_MATURITY_PREDICATE_IRI, g.maturity],
+			[OWL_VERSION_INFO_IRI, g.version.trim()]
+		];
+		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
+		const deletes = fields.map(([p]) => 'DELETE WHERE { ' + inGraph(`<${baseIri}> <${p}> ?old .`, graphs.schema) + ' } ;').join('\n');
+		const triples = fields.filter(([, v]) => v).map(([p, v]) => `<${baseIri}> <${p}> "${this.escapeString(v)}" .`).join(' ');
+		const insert = triples ? 'INSERT DATA { ' + inGraph(triples, graphs.schema) + ' }' : '';
+		await this.executeUpdate(`${PREFIXES} ${deletes} ${insert}`.replace(/;\s*$/, ''));
+	}
+
 	/**
 	 * Deletes a namespace: refused (returning the total triple count across its three graphs)
 	 * unless `{ force: true }` is passed, mirroring `deleteClass`'s `{force?}` pattern (Decision
@@ -4798,8 +5086,12 @@ export class SparqlConnector {
 			return { deleted: false, entryCount: 0, locked: true };
 		}
 
+		const hasVocab = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(defaultGraphs.schema)} { <${baseIri}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> true }`
+		);
+		const dataGraphs = [graphs.instances, graphs.schema, graphs.shapes, ...(hasVocab ? [namespaceGraphs(baseIri, { vocab: true }).vocab!] : [])];
 		const countResult = await this.selectQuery(
-			`SELECT (COUNT(*) AS ?c) ${fromClause(graphs.instances, graphs.schema, graphs.shapes)} WHERE { ?s ?p ?o }`
+			`SELECT (COUNT(*) AS ?c) ${fromClause(...dataGraphs)} WHERE { ?s ?p ?o }`
 		);
 		const entryCount = parseInt(countResult.results.bindings[0]?.c.value ?? '0', 10);
 
@@ -4834,7 +5126,7 @@ export class SparqlConnector {
 				`;
 			await this.executeUpdate(
 				`${PREFIXES} ${workspaceCleanup} ; ${noteUnlinkCleanup} ; ` +
-					[graphs.instances, graphs.schema, graphs.shapes].map((g) => `DROP GRAPH <${g}>`).join(' ; ')
+					dataGraphs.map((g) => `DROP GRAPH <${g}>`).join(' ; ')
 			);
 		}
 
@@ -5145,6 +5437,823 @@ export class SparqlConnector {
 			`${PREFIXES} SELECT ?model ${fromClause(graphs.schema)} WHERE { <${sharedQueryIri(id)}> a <${SHARED_QUERY_CLASS_IRI}> ; <${SAVED_QUERY_MODEL_PREDICATE_IRI}> ?model }`
 		);
 		return res.results.bindings[0]?.model?.value ?? null;
+	}
+
+	// -- Class to concept link (ontology-pipeline STORY-325) --------------------------------------
+
+	private definedByConceptEnsured = false;
+
+	/** Declares `rse:definedByConcept` once (an object property under `rdfs:isDefinedBy`, no domain or
+	 *  range so it never shows as a relation) and the shape that caps it at one concept per class. */
+	private async ensureDefinedByConceptProperty(): Promise<void> {
+		if (this.definedByConceptEnsured) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const declared = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> a owl:ObjectProperty }`
+		);
+		if (!declared) {
+			const property = inGraph(
+				`<${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> a owl:ObjectProperty ; rdfs:label "defined by concept" ; rdfs:subPropertyOf rdfs:isDefinedBy .`,
+				graphs.schema
+			);
+			const shape = inGraph(
+				`<${SHAPES_NAMESPACE}DefinedByConceptShape> a sh:NodeShape ; sh:targetClass owl:Class ; sh:property [ sh:path <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ; sh:maxCount 1 ] .`,
+				graphs.shapes
+			);
+			await this.executeUpdate(`${PREFIXES} INSERT DATA { ${property} ${shape} }`);
+		}
+		this.definedByConceptEnsured = true;
+	}
+
+	/** Links a class to the concept that defines it, replacing any earlier link in the same request so a
+	 *  class never has two; `null` removes the link. The triple lives in the class's own schema graph. */
+	async setClassConcept(
+		classIri: string,
+		conceptIri: string | null,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<void> {
+		this.assertSafeSparqlIri(classIri, 'class IRI');
+		if (conceptIri !== null) this.assertSafeSparqlIri(conceptIri, 'concept IRI');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		if (conceptIri === null) {
+			await this.executeUpdate(
+				`${PREFIXES} DELETE WHERE { ${inGraph(`<${classIri}> <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?old`, graphs.schema)} }`
+			);
+			return;
+		}
+		await this.ensureDefinedByConceptProperty();
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${classIri}> <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?old }
+			INSERT { <${classIri}> <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${conceptIri}> }
+			WHERE { OPTIONAL { <${classIri}> <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?old } }
+		`);
+	}
+
+	/** Turns an approved or active concept into a class of `namespaceBaseIri`: the IRI follows the usual
+	 *  class rule from the preferred label, and the class and its link to the concept are written in one
+	 *  update. No text is copied (the definition stays in the vocabulary). Refuses an existing class IRI. */
+	async promoteConceptToClass(
+		coreBaseIri: string,
+		conceptIriValue: string,
+		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+	): Promise<{ iri: string }> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(conceptIriValue, 'concept IRI');
+		const found = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?status ?label ${fromClause(vocab)} WHERE {
+				<${conceptIriValue}> <${CONCEPT_STATUS_PREDICATE_IRI}> ?status ; <${SKOS.prefLabel}> ?label
+			} LIMIT 1
+		`);
+		const row = found.results.bindings[0];
+		if (!row) throw new Error(`Concept ${conceptIriValue} not found`);
+		if (row.status.value !== 'approved' && row.status.value !== 'active') {
+			throw new Error('Only an approved or active concept can become a class');
+		}
+		const label = row.label.value;
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const iri = classIri(label, graphs.schema);
+		this.assertSafeSparqlIri(iri, 'class IRI');
+		if (await this.classExists(iri, namespaceBaseIri)) {
+			throw new Error(`A class named "${label}" already exists (${iri})`);
+		}
+		await this.ensureDefinedByConceptProperty();
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(
+				`<${iri}> a owl:Class ; rdfs:label "${this.escapeString(label)}" ; <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${conceptIriValue}> .`,
+				graphs.schema
+			)} }`
+		);
+		return { iri };
+	}
+
+	/** Writes the concepts and class links of a backfill in one update: new concepts into the vocab graph,
+	 *  each link into its class's own schema graph. Everything is checked before anything is sent. */
+	async createConceptsForClasses(
+		coreBaseIri: string,
+		writes: BackfillWrite[]
+	): Promise<{ created: number; linked: number }> {
+		if (writes.length === 0) return { created: 0, linked: 0 };
+		const vocab = this.vocabGraph(coreBaseIri);
+		const today = this.today();
+		const conceptBlocks: string[] = [];
+		const linksByGraph = new Map<string, string[]>();
+		for (const w of writes) {
+			this.assertSafeSparqlIri(w.classIri, 'class IRI');
+			this.assertSafeSparqlIri(w.conceptIri, 'concept IRI');
+			if (w.create) {
+				conceptBlocks.push(
+					`${this.conceptTriples(w.conceptIri, w.create)} <${w.conceptIri}> <${DCT.created}> "${today}"^^xsd:date .`
+				);
+			}
+			const graph = namespaceGraphs(w.namespaceBaseIri).schema;
+			const links = linksByGraph.get(graph) ?? [];
+			links.push(`<${w.classIri}> <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${w.conceptIri}> .`);
+			linksByGraph.set(graph, links);
+		}
+		await this.ensureDefinedByConceptProperty();
+		const blocks = [
+			...(conceptBlocks.length ? [inGraph(conceptBlocks.join(' '), vocab)] : []),
+			...[...linksByGraph].map(([graph, triples]) => inGraph(triples.join(' '), graph))
+		];
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${blocks.join(' ')} }`);
+		return { created: conceptBlocks.length, linked: writes.length };
+	}
+
+	// -- SKOS concepts of the core vocabulary (ontology-pipeline STORY-322) ----------------------
+
+	/** The base IRI of the namespace marked as the vocabulary namespace, or `null` when none is. */
+	async fetchVocabularyNamespace(): Promise<string | null> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?ns ${fromClause(graphs.schema)} WHERE { ?ns <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> true } LIMIT 1
+		`);
+		return results.results.bindings[0]?.ns.value ?? null;
+	}
+
+	private vocabGraph(coreBaseIri: string): string {
+		this.assertSafeSparqlIri(coreBaseIri, 'core namespace base IRI');
+		return namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
+	}
+
+	private today(): string {
+		return new Date().toISOString().slice(0, 10);
+	}
+
+	async insertConceptScheme(coreBaseIri: string, scheme: { name: string; description: string }): Promise<string> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const name = scheme.name.trim();
+		if (!name) throw new Error('Scheme name must not be empty');
+		const iri = conceptSchemeIri(name, coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'concept scheme IRI');
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> ?p ?o }`)) {
+			throw new Error(`A scheme "${name}" already exists (${iri})`);
+		}
+		const description = scheme.description.trim();
+		const comment = description ? ` ; rdfs:comment "${this.escapeString(description)}"` : '';
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${iri}> a <${SKOS.ConceptScheme}> ; rdfs:label "${this.escapeString(name)}"${comment} .`, vocab)} }`
+		);
+		return iri;
+	}
+
+	async fetchConceptSchemes(coreBaseIri: string): Promise<ConceptScheme[]> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?s ?label ?desc ?purpose ?decisions ?outOfScope ?stakeholders ${fromClause(vocab)} WHERE {
+				?s a <${SKOS.ConceptScheme}> .
+				OPTIONAL { ?s rdfs:label ?label }
+				OPTIONAL { ?s rdfs:comment ?desc }
+				OPTIONAL { ?s <${SCHEME_PURPOSE_PREDICATE_IRI}> ?purpose }
+				OPTIONAL { ?s <${SCHEME_DECISIONS_PREDICATE_IRI}> ?decisions }
+				OPTIONAL { ?s <${SCHEME_OUT_OF_SCOPE_PREDICATE_IRI}> ?outOfScope }
+				OPTIONAL { ?s <${SCHEME_STAKEHOLDERS_PREDICATE_IRI}> ?stakeholders }
+			} ORDER BY ?label
+		`);
+		return results.results.bindings.map((b) => ({
+			iri: b.s.value,
+			name: b.label?.value ?? '',
+			description: b.desc?.value ?? '',
+			scope: {
+				purpose: b.purpose?.value ?? '',
+				decisionsSupported: b.decisions?.value ?? '',
+				outOfScope: b.outOfScope?.value ?? '',
+				stakeholders: b.stakeholders?.value ?? ''
+			}
+		}));
+	}
+
+	/** Replaces the scheme's scope record (an empty field is removed). */
+	async updateConceptSchemeScope(coreBaseIri: string, schemeIri: string, scope: SchemeScope): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(schemeIri, 'concept scheme IRI');
+		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${schemeIri}> a <${SKOS.ConceptScheme}> }`))) {
+			throw new Error(`Concept scheme ${schemeIri} not found`);
+		}
+		const fields: [string, string][] = [
+			[SCHEME_PURPOSE_PREDICATE_IRI, scope.purpose],
+			[SCHEME_DECISIONS_PREDICATE_IRI, scope.decisionsSupported],
+			[SCHEME_OUT_OF_SCOPE_PREDICATE_IRI, scope.outOfScope],
+			[SCHEME_STAKEHOLDERS_PREDICATE_IRI, scope.stakeholders]
+		];
+		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
+		const deletes = fields.map(([p]) => 'DELETE WHERE { ' + inGraph(`<${schemeIri}> <${p}> ?old .`, vocab) + ' } ;').join('\n');
+		const filled = fields.filter(([, v]) => v.trim()).map(([p, v]) => `<${schemeIri}> <${p}> "${this.escapeString(v.trim())}" .`);
+		const insert = filled.length ? 'INSERT DATA { ' + inGraph(filled.join(' '), vocab) + ' }' : '';
+		await this.executeUpdate(`${PREFIXES} ${deletes.replace(/ ;$/, filled.length ? ' ;' : '')} ${insert}`);
+	}
+
+	private langLiteral(value: LangText): string {
+		const lang = value.lang.trim();
+		if (lang && !/^[a-zA-Z]{1,8}(-[a-zA-Z0-9]{1,8})*$/.test(lang)) throw new Error(`Invalid language tag "${lang}"`);
+		return `"${this.escapeString(value.text.trim())}"${lang ? `@${lang}` : ''}`;
+	}
+
+	/** Every triple of the concept node except the dates stamped by the store; guards run here. */
+	private conceptTriples(iri: string, d: ConceptDraft): string {
+		const errors = validateConceptDraft(d);
+		if (errors.length) throw new Error(errors[0]);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		const parts = [`a <${SKOS.Concept}>`];
+		const labels = (predicate: string, values: LangText[]) => {
+			for (const v of values.filter((x) => x.text.trim())) parts.push(`<${predicate}> ${this.langLiteral(v)}`);
+		};
+		labels(SKOS.prefLabel, d.prefLabels);
+		labels(SKOS.altLabel, d.altLabels);
+		labels(SKOS.hiddenLabel, d.hiddenLabels);
+		const text = (predicate: string, value: string) => {
+			if (value.trim()) parts.push(`<${predicate}> "${this.escapeString(value.trim())}"`);
+		};
+		text(SKOS.definition, d.definition);
+		text(SKOS.scopeNote, d.scopeNote);
+		text(CONCEPT_DISAMBIGUATION_PREDICATE_IRI, d.disambiguation);
+		text(CONCEPT_SOURCE_PREDICATE_IRI, d.source);
+		text(CONCEPT_AUTHORITY_PREDICATE_IRI, d.authority);
+		text(CONCEPT_DEPRECATION_REASON_PREDICATE_IRI, d.deprecationReason);
+		parts.push(`<${CONCEPT_STATUS_PREDICATE_IRI}> "${d.status}"`);
+		if (d.schemeIri.trim()) {
+			this.assertSafeSparqlIri(d.schemeIri.trim(), 'concept scheme IRI');
+			parts.push(`<${SKOS.inScheme}> <${d.schemeIri.trim()}>`);
+			if (d.topConcept) parts.push(`<${SKOS.topConceptOf}> <${d.schemeIri.trim()}>`);
+		}
+		if (d.replacedBy.trim()) {
+			this.assertSafeSparqlIri(d.replacedBy.trim(), 'replacement concept IRI');
+			parts.push(`<${CONCEPT_REPLACED_BY_PREDICATE_IRI}> <${d.replacedBy.trim()}>`);
+		}
+		parts.push(`<${DCT.modified}> "${this.today()}"^^xsd:date`);
+		return `<${iri}> ${parts.join(' ; ')} .`;
+	}
+
+	/** Stores a new concept, minted from its first preferred label and qualifier; refuses a taken IRI. */
+	async insertConcept(coreBaseIri: string, draft: ConceptDraft): Promise<string> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const label = draft.prefLabels.find((l) => l.text.trim())?.text.trim() ?? '';
+		const iri = conceptIri(label, draft.disambiguation, coreBaseIri);
+		const triples = this.conceptTriples(iri, draft);
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> ?p ?o }`)) {
+			throw new Error(`A concept "${label}" already exists (${iri}); add a disambiguation or reuse it`);
+		}
+		const created = `<${iri}> <${DCT.created}> "${this.today()}"^^xsd:date .`;
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`${triples} ${created}`, vocab)} }`);
+		return iri;
+	}
+
+	/** Replaces the concept's fields in one request; the IRI, `dct:created` and `rse:deprecatedOn` stay. */
+	async updateConcept(coreBaseIri: string, iri: string, draft: ConceptDraft): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const triples = this.conceptTriples(iri, draft);
+		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> a <${SKOS.Concept}> }`))) {
+			throw new Error(`Concept ${iri} not found`);
+		}
+		// The form does not edit the hierarchy, so `skos:broader` survives, unless the concept becomes a top
+		// concept: a top concept has no broader concept.
+		const kept = [
+			DCT.created,
+			CONCEPT_DEPRECATED_ON_PREDICATE_IRI,
+			SKOS.related,
+			...MAPPING_KINDS.map((k) => SKOS[k]),
+			...(draft.topConcept ? [] : [SKOS.broader])
+		];
+		const keptList = kept.map((p) => `<${p}>`).join(', ');
+		await this.executeUpdate(`${PREFIXES}
+			DELETE { ${inGraph(`<${iri}> ?p ?o .`, vocab)} } WHERE { ${inGraph(`<${iri}> ?p ?o . FILTER(?p NOT IN (${keptList}))`, vocab)} } ;
+			INSERT DATA { ${inGraph(triples, vocab)} }`);
+	}
+
+	/** One page of concepts, with every field, from a single query: the page is chosen by a subquery
+	 *  over concept IRIs and then every triple of those concepts is read (one row per triple). */
+	async fetchConcepts(
+		coreBaseIri: string,
+		options: { limit?: number; offset?: number; schemeIri?: string } = {}
+	): Promise<{ concepts: Concept[]; hasMore: boolean }> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
+		const offset = Math.max(0, options.offset ?? 0);
+		let inScheme = '';
+		if (options.schemeIri) {
+			this.assertSafeSparqlIri(options.schemeIri, 'concept scheme IRI');
+			inScheme = `?c <${SKOS.inScheme}> <${options.schemeIri}> .`;
+		}
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?c ?p ?o ?lang ${fromClause(vocab)} WHERE {
+				{ SELECT ?c WHERE { ?c a <${SKOS.Concept}> . ${inScheme} } ORDER BY ?c LIMIT ${limit + 1} OFFSET ${offset} }
+				?c ?p ?o .
+				FILTER(?p != rdf:type)
+				BIND(LANG(?o) AS ?lang)
+			}
+		`);
+		const byIri = new Map<string, Concept>();
+		for (const b of results.results.bindings) {
+			let c = byIri.get(b.c.value);
+			if (!c) {
+				c = {
+					iri: b.c.value,
+					prefLabels: [], altLabels: [], hiddenLabels: [],
+					definition: '', scopeNote: '', disambiguation: '', schemeIri: '', topConcept: false,
+					status: 'proposed', source: '', authority: '', replacedBy: '', deprecationReason: '',
+					created: '', modified: '', deprecatedOn: '', broader: [], related: [], mappings: []
+				};
+				byIri.set(c.iri, c);
+			}
+			const value = b.o.value;
+			const lang = b.lang?.value ?? '';
+			switch (b.p.value) {
+				case SKOS.prefLabel: c.prefLabels.push({ text: value, lang }); break;
+				case SKOS.altLabel: c.altLabels.push({ text: value, lang }); break;
+				case SKOS.hiddenLabel: c.hiddenLabels.push({ text: value, lang }); break;
+				case SKOS.definition: c.definition = value; break;
+				case SKOS.scopeNote: c.scopeNote = value; break;
+				case SKOS.inScheme: c.schemeIri = value; break;
+				case SKOS.topConceptOf: c.topConcept = true; c.schemeIri = c.schemeIri || value; break;
+				case SKOS.broader: (c.broader ??= []).push(value); break;
+				case SKOS.related: (c.related ??= []).push(value); break;
+				case SKOS.exactMatch: case SKOS.closeMatch: case SKOS.relatedMatch: case SKOS.broadMatch: case SKOS.narrowMatch:
+					(c.mappings ??= []).push({ kind: b.p.value.slice(SKOS_NS.length) as MappingKind, target: value });
+					break;
+				case CONCEPT_DISAMBIGUATION_PREDICATE_IRI: c.disambiguation = value; break;
+				case CONCEPT_STATUS_PREDICATE_IRI:
+					if ((CONCEPT_STATUSES as readonly string[]).includes(value)) c.status = value as ConceptStatus;
+					break;
+				case CONCEPT_SOURCE_PREDICATE_IRI: c.source = value; break;
+				case CONCEPT_AUTHORITY_PREDICATE_IRI: c.authority = value; break;
+				case CONCEPT_REPLACED_BY_PREDICATE_IRI: c.replacedBy = value; break;
+				case CONCEPT_DEPRECATION_REASON_PREDICATE_IRI: c.deprecationReason = value; break;
+				case CONCEPT_DEPRECATED_ON_PREDICATE_IRI: c.deprecatedOn = value; break;
+				case DCT.created: c.created = value; break;
+				case DCT.modified: c.modified = value; break;
+			}
+		}
+		const sorted = [...byIri.values()].sort((a, b) => (a.iri < b.iri ? -1 : a.iri > b.iri ? 1 : 0));
+		return { concepts: sorted.slice(0, limit), hasMore: sorted.length > limit };
+	}
+
+	/** Changes one `skos:broader` link of a concept (STORY-328): removes `from` and adds `to`, either of which may
+	 *  be null, in one request. Whether the move is sensible (cycles, top concepts) is `validateReparent`'s call. */
+	async setBroader(
+		coreBaseIri: string,
+		iri: string,
+		change: { from: string | null; to: string | null }
+	): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		if (change.from) this.assertSafeSparqlIri(change.from, 'broader concept IRI');
+		if (change.to) this.assertSafeSparqlIri(change.to, 'broader concept IRI');
+		const ops: string[] = [];
+		if (change.from) ops.push(`DELETE DATA { ${inGraph(`<${iri}> <${SKOS.broader}> <${change.from}> .`, vocab)} }`);
+		if (change.to) {
+			ops.push(
+				`INSERT DATA { ${inGraph(`<${iri}> <${SKOS.broader}> <${change.to}> . <${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date .`, vocab)} }`
+			);
+		}
+		if (ops.length === 0) return;
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	/** Adds one `skos:related` or mapping triple to the concept (STORY-329). Whether the relation is sensible is
+	 *  `validateRelation`'s call; `skos:related` is stated once, not mirrored on the other concept. */
+	async addConceptRelation(coreBaseIri: string, iri: string, kind: RelationKind, target: string): Promise<void> {
+		const triple = this.conceptRelationTriple(iri, kind, target);
+		const vocab = this.vocabGraph(coreBaseIri);
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`${triple} . <${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date .`, vocab)} }`);
+	}
+
+	async removeConceptRelation(coreBaseIri: string, iri: string, kind: RelationKind, target: string): Promise<void> {
+		const triple = this.conceptRelationTriple(iri, kind, target);
+		const vocab = this.vocabGraph(coreBaseIri);
+		await this.executeUpdate(`${PREFIXES} DELETE DATA { ${inGraph(`${triple} .`, vocab)} }`);
+	}
+
+	private conceptRelationTriple(iri: string, kind: RelationKind, target: string): string {
+		if (kind !== 'related' && !(MAPPING_KINDS as readonly string[]).includes(kind)) throw new Error(`Unknown relation "${kind}"`);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		this.assertSafeSparqlIri(target, 'relation target IRI');
+		return `<${iri}> <${SKOS[kind]}> <${target}>`;
+	}
+
+	/** Marks a concept as a top concept of its scheme, or clears the mark. Marking removes its broader links,
+	 *  since a top concept has none; a concept without a scheme cannot be one. */
+	async setTopConcept(coreBaseIri: string, iri: string, top: boolean): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		const ops: string[] = [];
+		if (top) {
+			const scheme = await this.selectQuery(`
+				${PREFIXES}
+				SELECT ?s ${fromClause(vocab)} WHERE { <${iri}> <${SKOS.inScheme}> ?s } LIMIT 1
+			`);
+			const schemeIri = scheme.results.bindings[0]?.s.value;
+			if (!schemeIri) throw new Error('A top concept needs a scheme');
+			this.assertSafeSparqlIri(schemeIri, 'concept scheme IRI');
+			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.broader}> ?old .`, vocab)} }`);
+			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> ?s .`, vocab)} }`);
+			ops.push(`INSERT DATA { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> <${schemeIri}> . <${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date .`, vocab)} }`);
+		} else {
+			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> ?s .`, vocab)} }`);
+		}
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	/** Moves a concept one step along the lifecycle. Deprecation records reason, optional
+	 *  replacement and date; nothing is ever deleted by a status change. */
+	async setConceptStatus(
+		coreBaseIri: string,
+		iri: string,
+		to: ConceptStatus,
+		extra: { reason?: string; replacedBy?: string } = {}
+	): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		const current = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?status ${fromClause(vocab)} WHERE { <${iri}> <${CONCEPT_STATUS_PREDICATE_IRI}> ?status } LIMIT 1
+		`);
+		const from = current.results.bindings[0]?.status.value as ConceptStatus | undefined;
+		if (!from) throw new Error(`Concept ${iri} not found`);
+		const problem = validateStatusChange(from, to, extra);
+		if (problem) throw new Error(problem);
+
+		const replaced = [CONCEPT_STATUS_PREDICATE_IRI, DCT.modified];
+		const added = [
+			`<${iri}> <${CONCEPT_STATUS_PREDICATE_IRI}> "${to}"`,
+			`<${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date`
+		];
+		if (to === 'deprecated') {
+			replaced.push(CONCEPT_DEPRECATION_REASON_PREDICATE_IRI, CONCEPT_REPLACED_BY_PREDICATE_IRI, CONCEPT_DEPRECATED_ON_PREDICATE_IRI);
+			added.push(`<${iri}> <${CONCEPT_DEPRECATION_REASON_PREDICATE_IRI}> "${this.escapeString(extra.reason!.trim())}"`);
+			const replacement = extra.replacedBy?.trim();
+			if (replacement) {
+				this.assertSafeSparqlIri(replacement, 'replacement concept IRI');
+				added.push(`<${iri}> <${CONCEPT_REPLACED_BY_PREDICATE_IRI}> <${replacement}>`);
+			}
+			added.push(`<${iri}> <${CONCEPT_DEPRECATED_ON_PREDICATE_IRI}> "${this.today()}"^^xsd:date`);
+		}
+		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
+		const deletes = replaced.map((p) => 'DELETE WHERE { ' + inGraph(`<${iri}> <${p}> ?old .`, vocab) + ' } ;').join('\n');
+		const inserts = inGraph(added.join(' . ') + ' .', vocab);
+		await this.executeUpdate(`${PREFIXES} ${deletes} INSERT DATA { ${inserts} }`);
+	}
+
+	/** Refuses while classes link to the concept or concepts sit below it, reporting both; `force`
+	 *  removes those links and the concept (as `deleteClass` does for references). */
+	async deleteConcept(
+		coreBaseIri: string,
+		iri: string,
+		options?: { force?: boolean }
+	): Promise<{ deleted: boolean; linkedClasses: string[]; narrower: string[] }> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'concept IRI');
+		const classes = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?cls WHERE { GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${iri}> } }
+		`);
+		const below = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?n ${fromClause(vocab)} WHERE { { ?n <${SKOS.broader}> <${iri}> } UNION { <${iri}> <${SKOS.narrower}> ?n } }
+		`);
+		const linkedClasses = classes.results.bindings.map((b) => b.cls.value);
+		const narrower = below.results.bindings.map((b) => b.n.value);
+		if ((linkedClasses.length || narrower.length) && !options?.force) {
+			return { deleted: false, linkedClasses, narrower };
+		}
+		const cleanup = options?.force
+			? `DELETE WHERE { GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${iri}> } } ;
+			DELETE WHERE { ${inGraph(`?n <${SKOS.broader}> <${iri}> .`, vocab)} } ;
+			DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.narrower}> ?n .`, vocab)} } ;`
+			: '';
+		await this.executeUpdate(`${PREFIXES} ${cleanup} DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, vocab)} }`);
+		return { deleted: true, linkedClasses, narrower };
+	}
+
+	// -- Competency questions (ontology-pipeline STORY-317) --------------------------------------
+
+	/** Idempotently declares `CompetencyQuestion` in the default namespace's `/schema` graph. */
+	async ensureCompetencyQuestionClass(): Promise<void> {
+		if (await this.classExists(COMPETENCY_QUESTION_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI)) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${COMPETENCY_QUESTION_CLASS_IRI}> a owl:Class ; rdfs:label "CompetencyQuestion" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Every competency question, from the default namespace's `/schema` graph. One row per linked
+	 *  element, folded back into one question here. */
+	async fetchCompetencyQuestions(): Promise<CompetencyQuestion[]> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?q ?label ?expected ?text ?saved ?owner ?reviewed ?le ${fromClause(graphs.schema)} WHERE {
+				?q a <${COMPETENCY_QUESTION_CLASS_IRI}> .
+				OPTIONAL { ?q rdfs:label ?label }
+				OPTIONAL { ?q <${CQ_EXPECTED_RESULT_PREDICATE_IRI}> ?expected }
+				OPTIONAL { ?q <${CQ_QUERY_PREDICATE_IRI}> ?text }
+				OPTIONAL { ?q <${CQ_SAVED_QUERY_PREDICATE_IRI}> ?saved }
+				OPTIONAL { ?q <${CQ_OWNER_PREDICATE_IRI}> ?owner }
+				OPTIONAL { ?q <${CQ_LAST_REVIEWED_PREDICATE_IRI}> ?reviewed }
+				OPTIONAL { ?q <${CQ_LINKED_ELEMENT_PREDICATE_IRI}> ?le }
+			}
+		`);
+		const byIri = new Map<string, CompetencyQuestion>();
+		for (const b of results.results.bindings) {
+			let cq = byIri.get(b.q.value);
+			if (!cq) {
+				cq = {
+					iri: b.q.value,
+					question: b.label?.value ?? '',
+					expected: (b.expected && parseExpectedResult(b.expected.value)) || { kind: 'minRows', count: 1 },
+					query: b.saved ? { kind: 'saved', iri: b.saved.value } : { kind: 'sparql', text: b.text?.value ?? '' },
+					linkedElements: [],
+					owner: b.owner?.value ?? '',
+					lastReviewed: b.reviewed?.value ?? ''
+				};
+				byIri.set(cq.iri, cq);
+			}
+			if (b.le && !cq.linkedElements.includes(b.le.value)) cq.linkedElements.push(b.le.value);
+		}
+		return [...byIri.values()];
+	}
+
+	/** The node's triples; every IRI is checked and every literal escaped here, so callers cannot skip it. */
+	private competencyQuestionTriples(iri: string, draft: CompetencyQuestionDraft): string {
+		const question = draft.question.trim();
+		if (!question) throw new Error('Competency question must not be empty');
+		this.assertSafeSparqlIri(iri, 'competency question IRI');
+		const parts = [
+			`a <${COMPETENCY_QUESTION_CLASS_IRI}>`,
+			`rdfs:label "${this.escapeString(question)}"`,
+			`<${CQ_EXPECTED_RESULT_PREDICATE_IRI}> "${this.escapeString(formatExpectedResult(draft.expected))}"`
+		];
+		if (draft.query.kind === 'saved') {
+			this.assertSafeSparqlIri(draft.query.iri, 'saved query IRI');
+			parts.push(`<${CQ_SAVED_QUERY_PREDICATE_IRI}> <${draft.query.iri}>`);
+		} else {
+			parts.push(`<${CQ_QUERY_PREDICATE_IRI}> "${this.escapeString(draft.query.text)}"`);
+		}
+		for (const element of draft.linkedElements) {
+			this.assertSafeSparqlIri(element, 'linked element IRI');
+			parts.push(`<${CQ_LINKED_ELEMENT_PREDICATE_IRI}> <${element}>`);
+		}
+		if (draft.owner.trim()) parts.push(`<${CQ_OWNER_PREDICATE_IRI}> "${this.escapeString(draft.owner.trim())}"`);
+		if (draft.lastReviewed) {
+			parts.push(`<${CQ_LAST_REVIEWED_PREDICATE_IRI}> "${this.escapeString(draft.lastReviewed)}"^^xsd:date`);
+		}
+		return `<${iri}> ${parts.join(' ; ')} .`;
+	}
+
+	/** Stores a new question and returns its minted IRI; refuses a question whose IRI is taken. */
+	async insertCompetencyQuestion(draft: CompetencyQuestionDraft): Promise<string> {
+		const iri = competencyQuestionIri(draft.question);
+		const triples = this.competencyQuestionTriples(iri, draft);
+		await this.ensureCompetencyQuestionClass();
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(graphs.schema)} { <${iri}> ?p ?o }`)) {
+			throw new Error(`A competency question "${draft.question.trim()}" already exists (${iri})`);
+		}
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(triples, graphs.schema)} }`);
+		return iri;
+	}
+
+	/** Replaces the question's triples in one request; its IRI never changes. */
+	async updateCompetencyQuestion(iri: string, draft: CompetencyQuestionDraft): Promise<void> {
+		const triples = this.competencyQuestionTriples(iri, draft);
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`${PREFIXES}
+			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.schema)} } ;
+			INSERT DATA { ${inGraph(triples, graphs.schema)} }`);
+	}
+
+	/** Nothing references a question, so there is no refuse-then-force step. */
+	async deleteCompetencyQuestion(iri: string): Promise<void> {
+		this.assertSafeSparqlIri(iri, 'competency question IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(`${PREFIXES}
+			DELETE WHERE { ${inGraph(`?run <${CQ_RUN_OF_PREDICATE_IRI}> <${iri}> . ?run ?rp ?ro .`, graphs.schema)} } ;
+			DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.schema)} }`);
+	}
+
+	// -- Change requests (ontology-pipeline STORY-332) -------------------------------------------
+
+	private async ensureChangeRequestClass(): Promise<void> {
+		if (await this.classExists(CHANGE_REQUEST_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI)) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${CHANGE_REQUEST_CLASS_IRI}> a owl:Class ; rdfs:label "ChangeRequest" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Stores a new request, open, with the baseline the impact assessment later compares with. */
+	async insertChangeRequest(draft: ChangeRequestDraft, baseline: Snapshot | null): Promise<string> {
+		const problems = validateRequestDraft(draft);
+		if (problems.length) throw new Error(problems[0]);
+		if (draft.questionIri) this.assertSafeSparqlIri(draft.questionIri, 'competency question IRI');
+		if (!(CHANGE_KINDS as readonly string[]).includes(draft.changeKind)) throw new Error('Unknown change kind');
+		await this.ensureChangeRequestClass();
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const iri = `${graphs.schema}#ChangeRequest${crypto.randomUUID().replaceAll('-', '')}`;
+		const text = (p: string, v: string) => (v.trim() ? [`<${p}> "${this.escapeString(v.trim())}"`] : []);
+		const parts = [
+			`a <${CHANGE_REQUEST_CLASS_IRI}>`,
+			`rdfs:label "${this.escapeString(draft.title.trim())}"`,
+			...text(CR_REQUESTOR_PREDICATE_IRI, draft.requestor),
+			...text(CR_TERM_PREDICATE_IRI, draft.proposedTerm),
+			...text(CR_DEFINITION_PREDICATE_IRI, draft.proposedDefinition),
+			...text(CR_RELATIONS_PREDICATE_IRI, draft.proposedRelations),
+			...text(CR_RATIONALE_PREDICATE_IRI, draft.rationale),
+			...(draft.questionIri ? [`<${CR_QUESTION_PREDICATE_IRI}> <${draft.questionIri}>`] : []),
+			`<${CR_CHANGE_KIND_PREDICATE_IRI}> "${draft.changeKind}"`,
+			`<${CR_STATUS_PREDICATE_IRI}> "open"`,
+			`<${CR_CREATED_AT_PREDICATE_IRI}> "${this.today()}"^^xsd:date`,
+			...(baseline ? text(CR_BASELINE_PREDICATE_IRI, JSON.stringify(baseline)) : [])
+		];
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`<${iri}> ${parts.join(' ; ')} .`, graphs.schema)} }`);
+		return iri;
+	}
+
+	async fetchChangeRequests(): Promise<ChangeRequest[]> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const opt = (v: string, p: string) => `OPTIONAL { ?r <${p}> ?${v} }`;
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?r ?title ?requestor ?term ?definition ?relations ?rationale ?question ?kind ?status ?outcome ?by ?at ?created ?baseline ?impact ${fromClause(graphs.schema)} WHERE {
+				?r a <${CHANGE_REQUEST_CLASS_IRI}> .
+				OPTIONAL { ?r rdfs:label ?title }
+				${opt('requestor', CR_REQUESTOR_PREDICATE_IRI)} ${opt('term', CR_TERM_PREDICATE_IRI)}
+				${opt('definition', CR_DEFINITION_PREDICATE_IRI)} ${opt('relations', CR_RELATIONS_PREDICATE_IRI)}
+				${opt('rationale', CR_RATIONALE_PREDICATE_IRI)} ${opt('question', CR_QUESTION_PREDICATE_IRI)}
+				${opt('kind', CR_CHANGE_KIND_PREDICATE_IRI)} ${opt('status', CR_STATUS_PREDICATE_IRI)}
+				${opt('outcome', CR_OUTCOME_RATIONALE_PREDICATE_IRI)} ${opt('by', CR_DECIDED_BY_PREDICATE_IRI)}
+				${opt('at', CR_DECIDED_AT_PREDICATE_IRI)} ${opt('created', CR_CREATED_AT_PREDICATE_IRI)}
+				${opt('baseline', CR_BASELINE_PREDICATE_IRI)} ${opt('impact', CR_IMPACT_PREDICATE_IRI)}
+			}
+		`);
+		const json = <T>(text: string | undefined): T | null => {
+			if (!text) return null;
+			try {
+				return JSON.parse(text) as T;
+			} catch {
+				return null;
+			}
+		};
+		return results.results.bindings
+			.map((b): ChangeRequest => {
+				const status = b.status?.value as RequestStatus | undefined;
+				const kind = b.kind?.value as ChangeKind | undefined;
+				return {
+					iri: b.r.value,
+					title: b.title?.value ?? '',
+					requestor: b.requestor?.value ?? '',
+					proposedTerm: b.term?.value ?? '',
+					proposedDefinition: b.definition?.value ?? '',
+					proposedRelations: b.relations?.value ?? '',
+					rationale: b.rationale?.value ?? '',
+					questionIri: b.question?.value ?? '',
+					changeKind: kind && (CHANGE_KINDS as readonly string[]).includes(kind) ? kind : 'other',
+					status: status && (REQUEST_STATUSES as readonly string[]).includes(status) ? status : 'open',
+					outcomeRationale: b.outcome?.value ?? '',
+					decidedBy: b.by?.value ?? '',
+					decidedAt: b.at?.value ?? '',
+					createdAt: b.created?.value ?? '',
+					baseline: json<Snapshot>(b.baseline?.value),
+					impact: json<SnapshotDiff>(b.impact?.value)
+				};
+			})
+			.sort((a, b) => (a.createdAt === b.createdAt ? a.title.localeCompare(b.title) : a.createdAt < b.createdAt ? 1 : -1));
+	}
+
+	private async readChangeRequestState(iri: string): Promise<{ status: RequestStatus; questionIri: string }> {
+		this.assertSafeSparqlIri(iri, 'change request IRI');
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const res = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?status ?q ${fromClause(graphs.schema)} WHERE {
+				<${iri}> <${CR_STATUS_PREDICATE_IRI}> ?status .
+				OPTIONAL { <${iri}> <${CR_QUESTION_PREDICATE_IRI}> ?q }
+			} LIMIT 1
+		`);
+		const row = res.results.bindings[0];
+		if (!row) throw new Error(`Change request ${iri} not found`);
+		return { status: row.status.value as RequestStatus, questionIri: row.q?.value ?? '' };
+	}
+
+	private async replaceChangeRequestFields(iri: string, fields: [string, string][]): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
+		const deletes = fields.map(([p]) => 'DELETE WHERE { ' + inGraph(`<${iri}> <${p}> ?old .`, graphs.schema) + ' } ;').join('\n');
+		const triples = fields.map(([p, v]) => `<${iri}> <${p}> ${v} .`).join(' ');
+		await this.executeUpdate(`${PREFIXES} ${deletes} INSERT DATA { ${inGraph(triples, graphs.schema)} }`);
+	}
+
+	/** Moves an open request to review; any other status is refused. */
+	async startChangeRequestReview(iri: string): Promise<void> {
+		const state = await this.readChangeRequestState(iri);
+		if (!canStartReview(state)) throw new Error('Only an open request can be taken into review');
+		await this.replaceChangeRequestFields(iri, [[CR_STATUS_PREDICATE_IRI, '"in-review"']]);
+	}
+
+	/** Records the outcome with its rationale, the decider and the date, in one request. The rules are
+	 *  `validateOutcome`'s; a request without a competency question can only be returned or marked a scope change. */
+	async decideChangeRequest(
+		iri: string,
+		outcome: RequestOutcome,
+		decision: { rationale: string; decidedBy: string }
+	): Promise<void> {
+		const state = await this.readChangeRequestState(iri);
+		const problem = validateOutcome(state, outcome, decision.rationale);
+		if (problem) throw new Error(problem);
+		if (!allowedOutcomes(state).includes(outcome)) throw new Error('That outcome is not allowed');
+		await this.replaceChangeRequestFields(iri, [
+			[CR_STATUS_PREDICATE_IRI, `"${outcome}"`],
+			[CR_OUTCOME_RATIONALE_PREDICATE_IRI, `"${this.escapeString(decision.rationale.trim())}"`],
+			[CR_DECIDED_BY_PREDICATE_IRI, `"${this.escapeString(decision.decidedBy.trim())}"`],
+			[CR_DECIDED_AT_PREDICATE_IRI, `"${this.today()}"^^xsd:date`]
+		]);
+	}
+
+	async saveChangeRequestImpact(iri: string, impact: SnapshotDiff): Promise<void> {
+		this.assertSafeSparqlIri(iri, 'change request IRI');
+		await this.replaceChangeRequestFields(iri, [[CR_IMPACT_PREDICATE_IRI, `"${this.escapeString(JSON.stringify(impact))}"`]]);
+	}
+
+	// -- Competency question runs (ontology-pipeline STORY-318) ----------------------------------
+
+	private async ensureCompetencyQuestionRunClass(): Promise<void> {
+		if (await this.classExists(CQ_RUN_CLASS_IRI, DEFAULT_NAMESPACE_BASE_IRI)) return;
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`<${CQ_RUN_CLASS_IRI}> a owl:Class ; rdfs:label "CompetencyQuestionRun" .`, graphs.schema)} }`
+		);
+	}
+
+	/** Stores one run, then drops the question's runs beyond the newest `keep`. */
+	async insertCompetencyQuestionRun(
+		run: CompetencyQuestionRun,
+		keep: number = COMPETENCY_RUN_HISTORY_LIMIT
+	): Promise<void> {
+		this.assertSafeSparqlIri(run.questionIri, 'competency question IRI');
+		await this.ensureCompetencyQuestionRunClass();
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const iri = `${graphs.schema}#Run${crypto.randomUUID().replaceAll('-', '')}`;
+		const parts = [
+			`a <${CQ_RUN_CLASS_IRI}>`,
+			`<${CQ_RUN_OF_PREDICATE_IRI}> <${run.questionIri}>`,
+			`<${CQ_RUN_AT_PREDICATE_IRI}> "${this.escapeString(run.ranAt)}"^^xsd:dateTime`,
+			`<${CQ_RUN_OUTCOME_PREDICATE_IRI}> "${run.outcome}"`,
+			`<${CQ_RUN_ACTUAL_PREDICATE_IRI}> "${this.escapeString(run.actual)}"`,
+			`<${CQ_RUN_DURATION_PREDICATE_IRI}> "${Math.round(run.durationMs)}"^^xsd:integer`
+		];
+		if (run.rowCount !== undefined) {
+			parts.push(`<${CQ_RUN_ROW_COUNT_PREDICATE_IRI}> "${Math.round(run.rowCount)}"^^xsd:integer`);
+		}
+		if (run.message) parts.push(`<${CQ_RUN_MESSAGE_PREDICATE_IRI}> "${this.escapeString(run.message)}"`);
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`<${iri}> ${parts.join(' ; ')} .`, graphs.schema)} }`);
+		await this.pruneCompetencyQuestionRuns(run.questionIri, keep);
+	}
+
+	private async pruneCompetencyQuestionRuns(questionIri: string, keep: number): Promise<void> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const res = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?run ?at ${fromClause(graphs.schema)} WHERE {
+				?run <${CQ_RUN_OF_PREDICATE_IRI}> <${questionIri}> ; <${CQ_RUN_AT_PREDICATE_IRI}> ?at .
+			}
+		`);
+		const stale = res.results.bindings
+			.map((b) => ({ iri: b.run.value, at: b.at.value }))
+			.sort((a, b) => b.at.localeCompare(a.at))
+			.slice(keep);
+		if (stale.length === 0) return;
+		for (const r of stale) this.assertSafeSparqlIri(r.iri, 'run IRI');
+		const deletes = stale.map((r) => `DELETE WHERE { ${inGraph(`<${r.iri}> ?p ?o .`, graphs.schema)} }`);
+		await this.executeUpdate(`${PREFIXES} ${deletes.join(' ;\n')}`);
+	}
+
+	/** Every stored run of every question, newest history included; the caller groups them. */
+	async fetchCompetencyQuestionRuns(): Promise<CompetencyQuestionRun[]> {
+		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
+		const res = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?run ?q ?at ?outcome ?actual ?rows ?ms ?message ${fromClause(graphs.schema)} WHERE {
+				?run a <${CQ_RUN_CLASS_IRI}> ; <${CQ_RUN_OF_PREDICATE_IRI}> ?q ; <${CQ_RUN_AT_PREDICATE_IRI}> ?at ;
+					<${CQ_RUN_OUTCOME_PREDICATE_IRI}> ?outcome .
+				OPTIONAL { ?run <${CQ_RUN_ACTUAL_PREDICATE_IRI}> ?actual }
+				OPTIONAL { ?run <${CQ_RUN_ROW_COUNT_PREDICATE_IRI}> ?rows }
+				OPTIONAL { ?run <${CQ_RUN_DURATION_PREDICATE_IRI}> ?ms }
+				OPTIONAL { ?run <${CQ_RUN_MESSAGE_PREDICATE_IRI}> ?message }
+			}
+		`);
+		return res.results.bindings.map((b) => ({
+			questionIri: b.q.value,
+			ranAt: b.at.value,
+			outcome: b.outcome.value as RunOutcome,
+			actual: b.actual?.value ?? '',
+			...(b.rows ? { rowCount: Number(b.rows.value) } : {}),
+			durationMs: Number(b.ms?.value ?? 0),
+			...(b.message ? { message: b.message.value } : {})
+		}));
 	}
 
 	/** Updates only `rdfs:label` — the saved query's own IRI never changes, mirroring
@@ -6105,18 +7214,20 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?c ?label ?comment ${fromClause(graphs.schema)} WHERE {
+			SELECT ?c ?label ?comment ?concept ${fromClause(graphs.schema)} WHERE {
 				?c a owl:Class .
 				${VOCAB_FILTER('?c')}
 				OPTIONAL { ?c rdfs:label ?label }
 				OPTIONAL { ?c rdfs:comment ?comment }
+				OPTIONAL { ?c <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?concept }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			iri: b.c.value,
 			label: b.label?.value ?? extractLocalName(b.c.value),
 			comment: b.comment?.value ?? null,
-			namespaceBaseIri
+			namespaceBaseIri,
+			...(b.concept ? { definedByConcept: b.concept.value } : {})
 		}));
 	}
 
@@ -6407,6 +7518,38 @@ export class SparqlConnector {
 	}
 
 	/**
+	 * The individual→individual relations of every namespace in one request: the part that
+	 * `fetchSchemaBatched(..., { individualRelations: false })` leaves out. Unrestricted it scans every triple of the
+	 * instances graphs (seconds, and GraphDB answers nothing else meanwhile), so the canvas passes `subjects`, the
+	 * individuals on the active workspace: a relation is only drawn when both ends are on it. An empty `subjects`
+	 * list sends nothing.
+	 */
+	async fetchIndividualRelationsBatched(
+		namespaces: FetchedNamespace[],
+		options: { subjects?: string[] } = {}
+	): Promise<FetchedIndividualIndividualRelation[]> {
+		if (namespaces.length === 0 || options.subjects?.length === 0) return [];
+		const instanceGraphs = namespaces.map((ns) => namespaceGraphs(ns.baseIri).instances);
+		for (const g of instanceGraphs) this.assertSafeSparqlIri(g, 'instances graph IRI');
+		for (const iri of options.subjects ?? []) this.assertSafeSparqlIri(iri, 'subject IRI');
+		const nsOfInstances = new Map(namespaces.map((ns) => [namespaceGraphs(ns.baseIri).instances, ns.baseIri] as const));
+		const rows = (await this.selectQuery(individualRelationsQuery(instanceGraphs, options.subjects))).results.bindings;
+		const relations: FetchedIndividualIndividualRelation[] = [];
+		for (const b of rows) {
+			const ns = nsOfInstances.get(b.g.value);
+			if (!ns) continue;
+			relations.push({
+				individualIri: b.s.value,
+				predicateIri: b.p.value,
+				name: b.plabel?.value ?? extractLocalName(b.p.value),
+				targetIndividualIri: b.o.value,
+				namespaceBaseIri: ns
+			});
+		}
+		return relations;
+	}
+
+	/**
 	 * The schema-only equivalent of `fetchFullSchemaForAllNamespaces(namespaces, { includeInstances: false })` in a
 	 * constant number of requests (reduce-requests STORY-298): 7, whatever the number of namespaces, instead of 8 per
 	 * namespace. One query per kind of record covers every namespace at once, as `VALUES ?g { <graphs> }` over
@@ -6421,10 +7564,11 @@ export class SparqlConnector {
 	 */
 	async fetchSchemaBatched(
 		namespaces: FetchedNamespace[],
-		options: Pick<FetchFullSchemaOptions, 'includeInstances'> = {}
+		options: Pick<FetchFullSchemaOptions, 'includeInstances' | 'individualRelations'> = {}
 	): Promise<FetchedSchema> {
 		if (namespaces.length === 0) return mergeNamespaceSchemas([], namespaces);
 		const includeInstances = options.includeInstances ?? false;
+		const includeIndividualRelations = includeInstances && (options.individualRelations ?? true);
 
 		const graphs = namespaces.map((ns) => ({ baseIri: ns.baseIri, ...namespaceGraphs(ns.baseIri) }));
 		for (const g of graphs) {
@@ -6459,13 +7603,14 @@ export class SparqlConnector {
 		] = await Promise.all([
 			run(`
 				${PREFIXES}
-				SELECT ?g ?c ?label ?comment WHERE {
+				SELECT ?g ?c ?label ?comment ?concept WHERE {
 					${schemaValues('?g')}
 					GRAPH ?g {
 						?c a owl:Class .
 						${VOCAB_FILTER('?c')}
 						OPTIONAL { ?c rdfs:label ?label }
 						OPTIONAL { ?c rdfs:comment ?comment }
+						OPTIONAL { ?c <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?concept }
 					}
 				}
 			`),
@@ -6483,14 +7628,18 @@ export class SparqlConnector {
 			`),
 			run(`
 				${PREFIXES}
-				SELECT ?g ?path ?minCount ?maxCount ?requiredForSubclasses WHERE {
+				SELECT ?g ?path ?minCount ?maxCount ?requiredForSubclasses ?shape ?target WHERE {
 					${shapesValues('?g')}
 					GRAPH ?g {
-						?shape a sh:NodeShape ; sh:property ?ps .
-						?ps sh:path ?path .
-						OPTIONAL { ?ps sh:minCount ?minCount }
-						OPTIONAL { ?ps sh:maxCount ?maxCount }
-						OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
+						?shape a sh:NodeShape .
+						OPTIONAL { ?shape sh:targetClass ?target }
+						OPTIONAL {
+							?shape sh:property ?ps .
+							?ps sh:path ?path .
+							OPTIONAL { ?ps sh:minCount ?minCount }
+							OPTIONAL { ?ps sh:maxCount ?maxCount }
+							OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
+						}
 					}
 				}
 			`),
@@ -6609,19 +7758,7 @@ export class SparqlConnector {
 				}
 			`)
 				: none,
-			includeInstances
-				? run(`
-				${PREFIXES}
-				SELECT DISTINCT ?g ?s ?p ?plabel ?o WHERE {
-					${instancesValues('?g')}
-					GRAPH ?g { ?s ?p ?o }
-					GRAPH ?og { ?o a ?otype }
-					FILTER(?p != rdf:type && ?p != rdfs:label)
-					FILTER(?otype NOT IN (owl:Class, owl:DatatypeProperty, owl:ObjectProperty, sh:NodeShape))
-					OPTIONAL { GRAPH ?pg { ?p rdfs:label ?plabel } }
-				}
-			`)
-				: none
+			includeIndividualRelations ? run(individualRelationsQuery(graphs.map((g) => g.instances))) : none
 		]);
 
 		const raw = new Map<string, RawNamespaceSchema>(
@@ -6640,7 +7777,8 @@ export class SparqlConnector {
 					individualClassRelations: [],
 					individualIndividualRelations: [],
 					labelRequiredClassIris: [],
-					shapeInConstraints: []
+					shapeInConstraints: [],
+					shapes: []
 				}
 			])
 		);
@@ -6653,7 +7791,8 @@ export class SparqlConnector {
 				iri: b.c.value,
 				label: b.label?.value ?? extractLocalName(b.c.value),
 				comment: b.comment?.value ?? null,
-				namespaceBaseIri: ns
+				namespaceBaseIri: ns,
+				...(b.concept ? { definedByConcept: b.concept.value } : {})
 			});
 		}
 		for (const b of propertyRows) {
@@ -6674,6 +7813,17 @@ export class SparqlConnector {
 		for (const b of constraintRows) {
 			const ns = nsOfShapes.get(b.g.value);
 			if (!ns) continue;
+			if (b.shape) {
+				const shapes = (raw.get(ns)!.shapes ??= []);
+				let shape = shapes.find((x) => x.iri === b.shape.value);
+				if (!shape) {
+					shape = { iri: b.shape.value, paths: [], namespaceBaseIri: ns };
+					shapes.push(shape);
+				}
+				if (b.target) shape.targetClassIri = b.target.value;
+				if (b.path && !shape.paths.includes(b.path.value)) shape.paths.push(b.path.value);
+			}
+			if (!b.path) continue;
 			raw.get(ns)!.constraints.push({
 				path: b.path.value,
 				minCount: b.minCount ? parseInt(b.minCount.value, 10) : undefined,
@@ -8364,26 +9514,23 @@ export class SparqlConnector {
 	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
 		// Dev only: who sent this request, captured before the first await (see utils/request-log.ts).
 		const stack = import.meta.env.DEV ? new Error().stack : undefined;
-		// `track` outside the limiter, so a queued request already counts as pending.
 		return requestActivity.track(() =>
-			sparqlRequestLimiter.run(() =>
-				logRequest('query', stack, async () => {
-					const response = await fetch(this.apiUrl, {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
-					});
+			logRequest('query', stack, async () => {
+				const response = await fetch(this.apiUrl, {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
+				});
 
-					if (!response.ok) {
-						const errorData = await response.json().catch(() => ({}));
-						throw new Error(
-							errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
-						);
-					}
+				if (!response.ok) {
+					const errorData = await response.json().catch(() => ({}));
+					throw new Error(
+						errorData.message || `SPARQL query failed: ${response.status} ${response.statusText}`
+					);
+				}
 
-					return (await response.json()) as T;
-				})
-			)
+				return (await response.json()) as T;
+			}, query)
 		);
 	}
 

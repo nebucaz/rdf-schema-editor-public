@@ -21,6 +21,11 @@
 		/** Whether the namespace appears as a togglable row in the namespace filter (STORY-097).
 		 *  Edit mode only, defaults to shown. */
 		initialListedInFilter?: boolean;
+		/** Marks the one core namespace that owns the `/vocab` graph (ontology-pipeline STORY-321).
+		 *  Edit mode only; the connector refuses a second marked namespace. */
+		initialVocabulary?: boolean;
+		/** Whether the namespace takes part in the ontology pipeline (listed on the Pipeline page). */
+		initialPipeline?: boolean;
 		submitLabel: string;
 		onSubmit: (values: {
 			prefix: string;
@@ -32,6 +37,8 @@
 			locked: boolean;
 			defaultHidden: boolean;
 			listedInFilter: boolean;
+			vocabulary: boolean;
+			pipeline: boolean;
 		}) => Promise<void>;
 		onCancel: () => void;
 	}
@@ -47,6 +54,8 @@
 		initialLocked = false,
 		initialDefaultHidden = false,
 		initialListedInFilter = true,
+		initialVocabulary = false,
+		initialPipeline = false,
 		submitLabel,
 		onSubmit,
 		onCancel
@@ -61,6 +70,8 @@
 	let locked = $state(initialLocked);
 	let defaultHidden = $state(initialDefaultHidden);
 	let listedInFilter = $state(initialListedInFilter);
+	let vocabulary = $state(initialVocabulary);
+	let pipeline = $state(initialPipeline);
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
 
@@ -92,7 +103,9 @@
 				license: license.trim(),
 				locked,
 				defaultHidden,
-				listedInFilter
+				listedInFilter,
+				vocabulary,
+				pipeline
 			});
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Something went wrong';
@@ -135,6 +148,10 @@
 		Default license (dct:license)
 		<input type="text" bind:value={license} placeholder="Optional — a license IRI" />
 	</label>
+	<label class="checkbox-label">
+		<input type="checkbox" bind:checked={pipeline} />
+		Part of the ontology pipeline (shown on the Pipeline page)
+	</label>
 	{#if mode === 'edit'}
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={locked} />
@@ -147,6 +164,10 @@
 		<label class="checkbox-label">
 			<input type="checkbox" bind:checked={listedInFilter} />
 			Show in namespace filter
+		</label>
+		<label class="checkbox-label">
+			<input type="checkbox" bind:checked={vocabulary} />
+			Vocabulary namespace (owns the SKOS concept graph; only one namespace can)
 		</label>
 	{/if}
 	{#if error}

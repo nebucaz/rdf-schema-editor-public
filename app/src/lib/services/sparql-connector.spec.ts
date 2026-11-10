@@ -23,6 +23,7 @@ import {
 	NAMESPACE_LOCKED_PREDICATE_IRI,
 	NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI,
 	NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI,
+	NAMESPACE_VOCABULARY_PREDICATE_IRI,
 	WORKSPACE_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_WORKSPACE_PREDICATE_IRI,
@@ -2630,7 +2631,7 @@ describe('SparqlConnector — generic instance assertion editor (data-catalog St
 					{ status: 200 }
 				);
 			}
-			if (q.includes('?p ?plabel ?o ?olabel')) {
+			if (q.includes('AS ?plabel')) {
 				expect(q).toContain(
 					'?p != rdf:type && ?p != rdfs:label && ?p != rdf:subject && ?p != rdf:predicate && ?p != rdf:object'
 				);
@@ -2934,7 +2935,7 @@ describe('SparqlConnector — relation-level assertions / reification (relation-
 		await connector.fetchAssertionsForIndividual(stmtIri);
 
 		const queryCall = fn.mock.calls.find(([, opts]: [string, { body: string }]) =>
-			JSON.parse(opts.body).query?.includes('?p ?plabel ?o ?olabel')
+			JSON.parse(opts.body).query?.includes('AS ?plabel')
 		);
 		const query: string = JSON.parse(queryCall![1].body).query;
 		expect(query).toContain(
@@ -3193,7 +3194,7 @@ describe('SparqlConnector — catalog generation & regeneration (data-catalog St
 					{ status: 200 }
 				);
 			}
-			if (q.includes('SELECT ?s ?label ?g WHERE')) {
+			if (q.includes('AS ?label') && q.includes('"isMasterFor"')) {
 				const bindings = (fixture.masters ?? []).map((m) => {
 					const b: SparqlBinding = { s: { type: 'uri', value: m.s }, g: { type: 'uri', value: m.g } };
 					if (m.label) b.label = { type: 'literal', value: m.label };
@@ -5029,9 +5030,14 @@ function mockNamespaceFetch(
 		namespaceExists?: boolean;
 		entryCount?: number;
 		locked?: boolean;
+		/** Another namespace already carries the vocabularyNamespace marker (STORY-321). */
+		otherVocabularyMarked?: boolean;
+		/** The namespace being deleted carries the marker (STORY-321). */
+		vocabularyMarked?: boolean;
 	} = {}
 ) {
 	const updates: string[] = [];
+	const queries: string[] = [];
 	const fn = vi.fn(async (_url: string, opts: { body: string }) => {
 		const body = JSON.parse(opts.body);
 		if (body.update !== undefined) {
@@ -5039,6 +5045,7 @@ function mockNamespaceFetch(
 			return new Response(JSON.stringify({ success: true }), { status: 200 });
 		}
 		const q: string = body.query;
+		queries.push(q);
 		if (q.includes('COUNT(*)')) {
 			return new Response(
 				JSON.stringify({
@@ -5049,6 +5056,10 @@ function mockNamespaceFetch(
 			);
 		}
 		if (q.includes('ASK')) {
+			if (q.includes(NAMESPACE_VOCABULARY_PREDICATE_IRI)) {
+				const marked = q.includes('FILTER') ? fixture.otherVocabularyMarked : fixture.vocabularyMarked;
+				return new Response(JSON.stringify({ head: {}, boolean: marked ?? false }), { status: 200 });
+			}
 			if (q.includes(NAMESPACE_LOCKED_PREDICATE_IRI)) {
 				return new Response(JSON.stringify({ head: {}, boolean: fixture.locked ?? false }), {
 					status: 200
@@ -5065,7 +5076,7 @@ function mockNamespaceFetch(
 		}
 		return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
 	});
-	return { fn, updates };
+	return { fn, updates, queries };
 }
 
 describe('SparqlConnector — namespace management (STORY-027)', () => {
@@ -5176,7 +5187,9 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 				license: null,
 				locked: false,
 				defaultHidden: false,
-				listedInFilter: true
+				listedInFilter: true,
+				vocabulary: false,
+				pipeline: false
 			}
 		]);
 	});
@@ -5215,7 +5228,9 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 				license: null,
 				locked: false,
 				defaultHidden: false,
-				listedInFilter: true
+				listedInFilter: true,
+				vocabulary: false,
+				pipeline: false
 			}
 		]);
 	});
@@ -5256,7 +5271,9 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 				license: null,
 				locked: true,
 				defaultHidden: true,
-				listedInFilter: false
+				listedInFilter: false,
+				vocabulary: false,
+				pipeline: false
 			}
 		]);
 	});
@@ -5538,6 +5555,101 @@ describe('SparqlConnector — namespace management (STORY-027)', () => {
 
 		expect(updates).toHaveLength(1);
 		expect(updates[0]).toContain(`<${govBase}> <${NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI}> false`);
+	});
+
+	it('updateNamespaceVocabulary marks the namespace when no other one carries the marker (STORY-321)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ otherVocabularyMarked: false });
+		vi.stubGlobal('fetch', fn);
+
+		const coreBase = 'http://example.org/core';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceVocabulary(coreBase, true);
+
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${coreBase}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> true`);
+	});
+
+	it('updateNamespaceVocabulary refuses a second marked namespace (STORY-321)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ otherVocabularyMarked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.updateNamespaceVocabulary('http://example.org/gov', true)).rejects.toThrow(
+			/already the vocabulary namespace/
+		);
+		expect(updates).toHaveLength(0);
+	});
+
+	it('updateNamespaceVocabulary(false) removes the marker without checking others (STORY-321)', async () => {
+		const { fn, updates, queries } = mockNamespaceFetch({ otherVocabularyMarked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const coreBase = 'http://example.org/core';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.updateNamespaceVocabulary(coreBase, false);
+
+		expect(queries).toHaveLength(0);
+		expect(updates).toEqual([
+			expect.stringContaining(`DELETE WHERE { ${inGraph(`<${coreBase}> <${NAMESPACE_VOCABULARY_PREDICATE_IRI}> ?old`, DEFAULT_GRAPHS.schema)} }`)
+		]);
+	});
+
+	it('fetchNamespaces reports the vocabulary marker, false when absent (STORY-321)', async () => {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async () =>
+				new Response(
+					JSON.stringify({
+						head: { vars: [] },
+						results: {
+							bindings: [
+								{ ns: { type: 'uri', value: 'http://example.org/core' }, vocabulary: { type: 'literal', value: 'true' } },
+								{ ns: { type: 'uri', value: 'http://example.org/gov' } }
+							]
+						}
+					}),
+					{ status: 200 }
+				)
+			)
+		);
+		const namespaces = await new SparqlConnector('/api/sparql').fetchNamespaces();
+		expect(namespaces.map((n) => n.vocabulary)).toEqual([true, false]);
+	});
+
+	it('deleteNamespace counts the vocab graph of a marked namespace and refuses without force (STORY-321)', async () => {
+		const { fn, updates, queries } = mockNamespaceFetch({ entryCount: 3, vocabularyMarked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const coreBase = 'http://example.org/core';
+		const connector = new SparqlConnector('/api/sparql');
+		const result = await connector.deleteNamespace(coreBase);
+
+		expect(result).toEqual({ deleted: false, entryCount: 3 });
+		expect(queries.find((q) => q.includes('COUNT(*)'))).toContain(`FROM <${namespaceGraphs(coreBase, { vocab: true }).vocab}>`);
+		expect(updates).toHaveLength(0);
+	});
+
+	it('deleteNamespace does not count or drop a vocab graph for an unmarked namespace (STORY-321)', async () => {
+		const { fn, updates, queries } = mockNamespaceFetch({ entryCount: 3 });
+		vi.stubGlobal('fetch', fn);
+
+		const govBase = 'http://example.org/gov';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteNamespace(govBase, { force: true });
+
+		expect(queries.find((q) => q.includes('COUNT(*)'))).not.toContain('/vocab');
+		expect(updates[0]).not.toContain('/vocab');
+	});
+
+	it('deleteNamespace({force: true}) drops the vocab graph of a marked namespace (STORY-321)', async () => {
+		const { fn, updates } = mockNamespaceFetch({ entryCount: 3, vocabularyMarked: true });
+		vi.stubGlobal('fetch', fn);
+
+		const coreBase = 'http://example.org/core';
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.deleteNamespace(coreBase, { force: true });
+
+		expect(updates[0]).toContain(`DROP GRAPH <${namespaceGraphs(coreBase, { vocab: true }).vocab}>`);
 	});
 
 	it('deleteNamespace without force is refused with the entry count when non-empty', async () => {
@@ -6882,7 +6994,9 @@ describe('SparqlConnector — exportWorkspaceBundle (workspace-export STORY-090)
 				license: null,
 				locked: false,
 				defaultHidden: false,
-				listedInFilter: true
+				listedInFilter: true,
+				vocabulary: false,
+				pipeline: false
 			}))
 		);
 		vi.spyOn(connector, 'fetchExternalVocabularies').mockResolvedValue([]);
@@ -10713,7 +10827,8 @@ describe('SparqlConnector — reusing a supplied namespace list (loading-spinner
 		color: null,
 		locked: false,
 		defaultHidden: false,
-		listedInFilter: true
+		listedInFilter: true,
+		vocabulary: false
 	} as unknown as FetchedNamespace;
 
 	it('ensureDefaultNamespaceMigrated does not fetch namespaces when given a list that has the default', async () => {
@@ -10919,5 +11034,158 @@ describe('SparqlConnector — addWorkspaceMembers (loading-spinner STORY-272)', 
 		const added = await new SparqlConnector('/api/sparql').addWorkspaceMembers(WS, items);
 		expect(added).toHaveLength(items.length);
 		expect(updates).toHaveLength(3);
+	});
+});
+
+describe('SparqlConnector — one row per fact across graphs (loop-issues STORY-309/310)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const uri = (value: string) => ({ type: 'uri', value });
+	const lit = (value: string) => ({ type: 'literal', value });
+	const emptyAnswer = { head: { vars: [] }, results: { bindings: [] } };
+
+	function stubFetch(isTarget: (q: string) => boolean, bindings: Record<string, unknown>[]) {
+		const bodies: Array<{ query: string; infer?: boolean }> = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				const body = JSON.parse(opts.body);
+				bodies.push(body);
+				if (isTarget(body.query)) {
+					return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+				}
+				if (body.query.includes('a ?type')) {
+					return new Response(
+						JSON.stringify({ head: { vars: ['g'] }, results: { bindings: [{ g: uri('urn:ns') }] } }),
+						{ status: 200 }
+					);
+				}
+				return new Response(JSON.stringify(emptyAnswer), { status: 200 });
+			})
+		);
+		return bodies;
+	}
+
+	it('fetchAssertionsForIndividual returns one entry per (predicate, object) and reads without inference', async () => {
+		const row = (ol: string) => ({ p: uri('urn:ns#state'), plabel: lit('state'), o: uri('urn:enum#Freigegeben'), olabel: lit(ol) });
+		const bodies = stubFetch((q) => q.includes('AS ?plabel'), [row('Freigegeben'), row('Freigegeben'), row('Released')]);
+
+		const result = await new SparqlConnector('/api/sparql').fetchAssertionsForIndividual('urn:ns#u');
+
+		expect(result).toHaveLength(1);
+		expect(result[0].objectIri).toBe('urn:enum#Freigegeben');
+		const sent = bodies.find((b) => b.query.includes('AS ?plabel'))!;
+		expect(sent.query).toContain('GROUP BY ?p ?o');
+		expect(sent.infer).toBe(false);
+	});
+
+	it('fetchIndividualsOfClass returns one entry per individual, with the lowest graph as namespace', async () => {
+		const row = (g: string, label: string) => ({ i: uri('urn:i#a'), label: lit(label), g: uri(g) });
+		const bodies = stubFetch(
+			(q) => q.includes('SELECT') && q.includes('?i') && q.includes('GRAPH ?g'),
+			[row('urn:z', 'A'), row('urn:b', 'A'), row('urn:b', 'A2')]
+		);
+
+		const result = await new SparqlConnector('/api/sparql').fetchIndividualsOfClass('urn:C');
+
+		expect(result).toEqual([{ iri: 'urn:i#a', label: 'A', namespaceBaseIri: 'urn:b' }]);
+		const sent = bodies[0];
+		expect(sent.query).toContain('GROUP BY ?i');
+		expect(sent.infer).toBe(false);
+	});
+
+	it('fetchMasterSystemsOfClass returns one entry per individual, with the lowest graph as namespace', async () => {
+		const row = (g: string, label: string) => ({ s: uri('urn:s#a'), label: lit(label), g: uri(g) });
+		const bodies = stubFetch((q) => q.includes('"isMasterFor"'), [row('urn:z', 'S'), row('urn:b', 'S'), row('urn:b', 'S2')]);
+
+		const result = await new SparqlConnector('/api/sparql').fetchMasterSystemsOfClass('urn:C');
+
+		expect(result).toEqual([{ iri: 'urn:s#a', label: 'S', namespaceBaseIri: 'urn:b' }]);
+		expect(bodies[0].query).toContain('GROUP BY ?s');
+		expect(bodies[0].infer).toBe(false);
+	});
+});
+
+describe('SparqlConnector — two-graph fixture (loop-issues STORY-313)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('collapses the fixture rows to one assertion and one entry per individual', async () => {
+		const { twoGraphFetch, FIXTURE_INDIVIDUAL, FIXTURE_CLASS } = await import('./two-graph-fixture');
+		vi.stubGlobal('fetch', vi.fn(twoGraphFetch().fetchImpl));
+		const connector = new SparqlConnector('/api/sparql');
+
+		expect(await connector.fetchAssertionsForIndividual(FIXTURE_INDIVIDUAL)).toHaveLength(1);
+		const targets = await connector.fetchIndividualsOfClass(FIXTURE_CLASS);
+		expect(targets.map((t) => [t.iri, t.label, t.namespaceBaseIri])).toEqual([
+			['urn:fixture#a', 'Alpha', 'urn:fixture'],
+			['urn:fixture#b', 'Beta', 'urn:fixture']
+		]);
+	});
+});
+
+describe('SparqlConnector — probeMigrations (loop-issues load order)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const answer = (row: Record<string, string> | null) =>
+		vi.fn(async () => {
+			const bindings = row
+				? [Object.fromEntries(Object.entries(row).map(([k, v]) => [k, { type: 'literal', value: v }]))]
+				: [];
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings } }), { status: 200 });
+		});
+
+	it('makes both ensure calls send nothing when both markers exist: one request in total', async () => {
+		const fn = answer({ attributed: 'true', backfilled: 'true' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.probeMigrations();
+		await connector.ensureAttributedRelationshipClass();
+		await connector.ensureDefaultWorkspace();
+		expect(fn).toHaveBeenCalledTimes(1);
+	});
+
+	it('leaves a missing marker to its own ensure call', async () => {
+		const fn = answer({ attributed: 'true', backfilled: 'false' });
+		vi.stubGlobal('fetch', fn);
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.probeMigrations();
+		await connector.ensureAttributedRelationshipClass();
+		expect(fn).toHaveBeenCalledTimes(1);
+		await connector.ensureDefaultWorkspace().catch(() => {});
+		expect(fn.mock.calls.length).toBeGreaterThan(1);
+	});
+
+	it('does not throw when the probe request fails', async () => {
+		vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('down')));
+		await expect(new SparqlConnector('/api/sparql').probeMigrations()).resolves.toBeUndefined();
+	});
+
+	it('asks for both markers in the default namespace schema graph', async () => {
+		const fn = answer(null);
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').probeMigrations();
+		const q: string = JSON.parse((fn.mock.calls[0] as unknown as [string, { body: string }])[1].body).query;
+		expect(q).toContain(WORKSPACE_BACKFILL_COMPLETE_PREDICATE_IRI);
+		expect(q).toContain(`${SCHEMA_NAMESPACE}AttributedRelationship`);
+		expect(q).toContain(`${DEFAULT_NAMESPACE_BASE_IRI}/schema`);
+	});
+});
+
+describe('SparqlConnector — individual-individual relation queries skip literal objects (loop-issues)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('fetchAllIndividualIndividualRelations filters to IRI objects before joining on the object type', async () => {
+		const bodies: string[] = [];
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_u: string, opts: { body: string }) => {
+				bodies.push(JSON.parse(opts.body).query);
+				return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+			})
+		);
+		await new SparqlConnector('/api/sparql').fetchAllIndividualIndividualRelations();
+		const q = bodies[0];
+		expect(q.indexOf('FILTER(isIRI(?o))')).toBeGreaterThan(-1);
+		expect(q.indexOf('FILTER(isIRI(?o))')).toBeLessThan(q.indexOf('GRAPH ?og { ?o a ?otype }'));
 	});
 });

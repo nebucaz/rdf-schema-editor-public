@@ -202,6 +202,62 @@ const sectionMetas: DocSectionMeta[] = [
 		file: 'query-workbench.md'
 	},
 	{
+		id: 'pipeline-quick-start',
+		title: 'Ontology Pipeline: Quick Start',
+		category: 'Panels & Views',
+		order: 120,
+		file: 'pipeline-quick-start.md'
+	},
+	{
+		id: 'pipeline-guide',
+		title: 'Ontology Pipeline Guide',
+		category: 'Panels & Views',
+		order: 121,
+		file: 'pipeline-guide.md'
+	},
+	{
+		id: 'vocabulary',
+		title: 'Vocabulary',
+		category: 'Panels & Views',
+		order: 123,
+		file: 'vocabulary.md'
+	},
+	{
+		id: 'competency-questions',
+		title: 'Competency Questions',
+		category: 'Panels & Views',
+		order: 125,
+		file: 'competency-questions.md'
+	},
+	{
+		id: 'gate-report',
+		title: 'Gate Report',
+		category: 'Panels & Views',
+		order: 126,
+		file: 'gate-report.md'
+	},
+	{
+		id: 'pipeline-view',
+		title: 'Pipeline View',
+		category: 'Panels & Views',
+		order: 127,
+		file: 'pipeline-view.md'
+	},
+	{
+		id: 'terms-and-classes',
+		title: 'Terms, Classes and Deprecation',
+		category: 'Panels & Views',
+		order: 128,
+		file: 'terms-and-classes.md'
+	},
+	{
+		id: 'changes-and-releases',
+		title: 'Changes, Requests and Releases',
+		category: 'Panels & Views',
+		order: 129,
+		file: 'changes-and-releases.md'
+	},
+	{
 		id: 'spl-unsupported',
 		title: 'SPL in the Workbench',
 		category: 'Panels & Views',

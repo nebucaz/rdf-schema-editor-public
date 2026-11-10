@@ -18,6 +18,7 @@ import (
 
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/annotations"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/backstage"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/changelog"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/config"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/handler"
@@ -61,7 +62,9 @@ func main() {
 	sharedQueryHandler := handler.NewSharedQueryHandler(gdbClient, cfg.DefaultNamespaceBaseIRI())
 	annotationHandler := handler.NewAnnotationHandler(annotations.New(gdbClient, cfg.DefaultNamespaceBaseIRI()))
 
-	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler)
+	changeLogHandler := handler.NewChangeLogHandler(changelog.New(gdbClient, cfg.DefaultNamespaceBaseIRI()))
+
+	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler, changeLogHandler)
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -100,7 +103,7 @@ func main() {
 // healthcheck can't attach a header, and the route discloses nothing sensitive), every other route except
 // the session routes below requires a validly-signed, unexpired bearer JWT (STORY-002) verified against cfg.AuthJWTSecret.
 // Extracted from main() so it's testable without starting a real listener.
-func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler) chi.Router {
+func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler, changeLogHandler *handler.ChangeLogHandler) chi.Router {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
@@ -142,6 +145,8 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 			r.Get("/shared-queries/{id}", sharedQueryHandler.Get)
 			r.Post("/annotations", annotationHandler.Create)
 			r.Delete("/annotations", annotationHandler.Delete)
+			r.Post("/changelog", changeLogHandler.Create)
+			r.Get("/changelog", changeLogHandler.List)
 		})
 	})
 

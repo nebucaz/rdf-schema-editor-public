@@ -1,5 +1,9 @@
 <script lang="ts">
 	import ColorSwatchPicker from './ColorSwatchPicker.svelte';
+	import ConceptPicker from './ConceptPicker.svelte';
+	import RationaleField from './RationaleField.svelte';
+	import type { GateFinding } from '#lib/services/gates/types.js';
+	import type { Concept } from '#lib/services/skos-concept.js';
 	import type { FetchedNamespace, NameableEntity } from '#lib/services/sparql-connector.js';
 	import type { CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
 	import type { XsdDatatype } from '#lib/utils/iri.js';
@@ -54,6 +58,13 @@
 		 *  that already exists in the graph can be placed on the canvas instead of creating a
 		 *  duplicate. Omit (or leave empty) to disable the lookup. */
 		existingOptions?: NameableEntity[];
+		/** The core vocabulary's concepts (ontology-pipeline STORY-325). When there are any, the form lets the
+		 *  class be linked to the concept that defines it, and suggests matching concepts while naming it. */
+		concepts?: Concept[];
+		/** IRI of the concept the class is already linked to, or empty. */
+		initialConceptIri?: string;
+		/** Gate findings about this class (STORY-327), shown read-only; they never block saving. */
+		gateFindings?: GateFinding[];
 		submitLabel: string;
 		onSubmit: (
 			name: string,
@@ -62,13 +73,17 @@
 			namespaceBaseIri: string | undefined,
 			backstageKind: string,
 			conceptNamespace: string,
-			subclassAttributeValues: Record<string, string>
+			subclassAttributeValues: Record<string, string>,
+			/** The defining concept's IRI, empty for none. */
+			definedByConcept: string
 		) => Promise<void>;
 		/** Create mode only, paired with `existingOptions`: called instead of `onSubmit` when the typed
 		 *  name exactly matches an existing class/individual — adds that existing element to the
 		 *  workspace rather than minting a new one. */
 		onSelectExisting?: (entity: NameableEntity) => Promise<void>;
 		onCancel: () => void;
+		/** Why the change is made; the page writes it to the change log. */
+		rationale?: string;
 	}
 
 	let {
@@ -86,10 +101,14 @@
 		namespaceOptions = [],
 		initialNamespaceBaseIri = '',
 		existingOptions = [],
+		concepts = [],
+		initialConceptIri = '',
+		gateFindings = [],
 		submitLabel,
 		onSubmit,
 		onSelectExisting,
-		onCancel
+		onCancel,
+		rationale = $bindable('')
 	}: Props = $props();
 
 	const existingKindLabels: Record<string, string> = { class: 'Class', individual: 'Individual' };
@@ -100,6 +119,7 @@
 	let backstageKind = $state(initialBackstageKind);
 	let conceptNamespace = $state(initialConceptNamespace);
 	let namespaceBaseIri = $state(initialNamespaceBaseIri);
+	let definedByConcept = $state(initialConceptIri);
 	let subclassAttrValues = $state<Record<string, string>>({ ...subclassAttributeValues });
 	let error = $state<string | null>(null);
 	let submitting = $state(false);
@@ -231,7 +251,8 @@
 					conceptNamespace.trim(),
 					Object.fromEntries(
 						subclassRequiredAttributes.map((attr) => [attr.iri, (subclassAttrValues[attr.iri] ?? '').trim()])
-					)
+					),
+					definedByConcept
 				);
 			}
 		} catch (err) {
@@ -303,6 +324,21 @@
 			disabled={fieldsLocked}
 		></textarea>
 	</label>
+	{#if concepts.length > 0 || initialConceptIri}
+		<ConceptPicker
+			{concepts}
+			value={definedByConcept}
+			suggestFor={mode === 'create' ? name : ''}
+			onChange={(iri) => (definedByConcept = iri)}
+		/>
+	{/if}
+	{#if gateFindings.length > 0}
+		<ul class="gate-findings" aria-label="Gate findings">
+			{#each gateFindings as f (f.gateId)}
+				<li class:info={f.severity === 'info'}>{f.message}</li>
+			{/each}
+		</ul>
+	{/if}
 	<label>
 		Color
 		<ColorSwatchPicker {color} onChange={(c) => (color = c)} disabled={fieldsLocked} />
@@ -365,6 +401,7 @@
 	{#if error}
 		<p class="error">{error}</p>
 	{/if}
+	<RationaleField bind:value={rationale} />
 	<div class="actions">
 		<button type="button" class="secondary" onclick={onCancel} disabled={submitting}>Cancel</button>
 		{#if canAddNew}
@@ -442,6 +479,17 @@
 	select:disabled {
 		opacity: 0.6;
 		cursor: not-allowed;
+	}
+
+	.gate-findings {
+		margin: 0;
+		padding-left: 1.1rem;
+		font-size: 0.82rem;
+		color: var(--color-error);
+	}
+
+	.gate-findings .info {
+		color: var(--color-text-muted);
 	}
 
 	.error {

@@ -274,19 +274,29 @@
 	 *  this modal (loaded lazily once) — mirrors `routes/+page.svelte`'s `ensureAssertionOptionsLoaded`. */
 	let assertionPredicateOptions = $state<{ iri: string; label: string }[]>([]);
 	let assertionObjectOptions = $state<NameableEntity[]>([]);
-	let assertionOptionsLoaded = false;
+	let assertionOptionsStatus = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
 
-	async function ensureAssertionOptionsLoaded() {
-		if (assertionOptionsLoaded) return;
-		assertionOptionsLoaded = true;
-		// One shared full load (cached in the store) for both lists instead of one each (STORY-297).
-		const schema = await schemaStore.ensureLoaded('full');
-		const [predicateOptions, objectOptions] = await Promise.all([
-			sparqlConnector.fetchRelationPredicateOptions(schema),
-			sparqlConnector.fetchNameableEntities(schema)
-		]);
-		assertionPredicateOptions = predicateOptions;
-		assertionObjectOptions = objectOptions;
+	/** Starts the options load without being awaited: the Edit form must not wait for the 'full' schema
+	 *  (12 requests) that only feeds the Assertions typeahead (loop-issues STORY-315). A failure leaves
+	 *  the form usable and is retried on the next open. */
+	function ensureAssertionOptionsLoaded() {
+		if (assertionOptionsStatus === 'loading' || assertionOptionsStatus === 'ready') return;
+		assertionOptionsStatus = 'loading';
+		void (async () => {
+			try {
+				// One shared full load (cached in the store) for both lists instead of one each (STORY-297).
+				const schema = await schemaStore.ensureLoaded('full');
+				const [predicateOptions, objectOptions] = await Promise.all([
+					sparqlConnector.fetchRelationPredicateOptions(schema),
+					sparqlConnector.fetchNameableEntities(schema)
+				]);
+				assertionPredicateOptions = predicateOptions;
+				assertionObjectOptions = objectOptions;
+				assertionOptionsStatus = 'ready';
+			} catch {
+				assertionOptionsStatus = 'error';
+			}
+		})();
 	}
 
 	/** Mirrors `routes/+page.svelte`'s own `loadRelationTargetOptions` — scoped to this component
@@ -320,7 +330,6 @@
 		editOpen = true;
 		const spec = resolveEditFormSpec(entityNodeByClassIri, editGoverningClassIri);
 		await Promise.all([
-			ensureAssertionOptionsLoaded(),
 			reloadEditAssertions(),
 			(async () => {
 				editAttributeValues =
@@ -334,6 +343,9 @@
 			})()
 		]);
 		editReady = true;
+		// After the form's own reads: the connector runs 6 requests at a time, first come first served, so
+		// starting the 12-request schema load earlier queued the assertions query behind it.
+		ensureAssertionOptionsLoaded();
 	}
 
 	function closeEditModal() {
@@ -650,6 +662,7 @@
 				assertions={editAssertions}
 				predicateOptions={assertionPredicateOptions}
 				objectOptions={assertionObjectOptions}
+				optionsStatus={assertionOptionsStatus === 'idle' ? 'loading' : assertionOptionsStatus}
 				attributes={editFormSpec.attributes}
 				attributeValues={editAttributeValues}
 				labelRequired={editFormSpec.labelRequired}

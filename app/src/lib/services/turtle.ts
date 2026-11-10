@@ -74,6 +74,8 @@ export const DCT = {
 	identifier: `${DCT_NS}identifier`,
 	publisher: `${DCT_NS}publisher`,
 	license: `${DCT_NS}license`,
+	created: `${DCT_NS}created`,
+	modified: `${DCT_NS}modified`,
 	conformsTo: `${DCT_NS}conformsTo`,
 	format: `${DCT_NS}format`,
 	/** Links a split dataset back to its parent entity's default dataset (data-catalog Story 020) —

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '#lib/services/sparql-connector.js';
+	import { warnDuplicateKeys } from '#lib/utils/duplicate-keys.js';
 	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '#lib/services/canvas-model.js';
 	import { isValidIdentifierLocalName, type XsdDatatype } from '#lib/utils/iri.js';
 	import {
@@ -52,6 +53,8 @@
 		assertions?: FetchedAssertion[];
 		predicateOptions?: PredicateOption[];
 		objectOptions?: NameableEntity[];
+		/** Whether `predicateOptions`/`objectOptions` are still being loaded in the background, or failed. */
+		optionsStatus?: 'loading' | 'ready' | 'error';
 		onAddAssertion?: (predicateLabel: string, objectIri: string) => Promise<void>;
 		onDeleteAssertion?: (predicateIri: string, objectIri: string) => Promise<void>;
 		/** The individual's class's own+inherited attribute list (STORY-111, STORY-109's merge
@@ -99,6 +102,7 @@
 		assertions = [],
 		predicateOptions = [],
 		objectOptions = [],
+		optionsStatus = 'ready',
 		onAddAssertion,
 		onDeleteAssertion,
 		attributes = [],
@@ -130,6 +134,14 @@
 	const originalAttributeValues: AttributeFormValues = mergeAttributeFormValues(attributes, attributeValues);
 	let formValues = $state<AttributeFormValues>(structuredClone(originalAttributeValues));
 	let missingRequiredAttributes = $state<Set<string>>(new Set());
+
+	// Dev-only: name the list behind an `each_key_duplicate` (spec/loop-issues STORY-312).
+	$effect(() => {
+		warnDuplicateKeys('MemberForm assertions', assertions, (a) => a.predicateIri + a.objectIri);
+		for (const [predicateIri, options] of Object.entries(relationTargetOptions)) {
+			warnDuplicateKeys(`MemberForm relation targets ${predicateIri}`, options, (o) => o.iri);
+		}
+	});
 
 	// -- Relation fields (STORY-114) ---------------------------------------------------------------
 	// Schema-declared owl:ObjectProperty relations, rendered as typeahead fields alongside Attributes
@@ -568,6 +580,11 @@
 
 		{#if showAddAssertion}
 			<div class="add-assertion">
+				{#if optionsStatus === 'loading'}
+					<p class="hint" role="status">Loading suggestions…</p>
+				{:else if optionsStatus === 'error'}
+					<p class="error" role="alert">Suggestions could not be loaded; you can still type a predicate and object.</p>
+				{/if}
 				<label>
 					Predicate
 					<input
@@ -783,6 +800,12 @@
 	button:disabled {
 		opacity: 0.6;
 		cursor: default;
+	}
+
+	.hint {
+		margin: 0 0 0.5rem;
+		font-size: 0.8rem;
+		opacity: 0.7;
 	}
 
 	.assertions {

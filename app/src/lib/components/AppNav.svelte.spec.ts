@@ -7,7 +7,8 @@ const LINKS = [
 	['Identities', '/identities', '/identities'],
 	['Schema', '/', '/'],
 	['Report', '/workbench', '/workbench'],
-	['Validation', '/validation', '/validation']
+	['Validation', '/validation', '/validation'],
+	['Pipeline', '/pipeline', '/pipeline']
 ] as const;
 
 function renderAt(pathname: string) {
@@ -22,7 +23,7 @@ function currentLabels() {
 }
 
 describe('AppNav', () => {
-	it('renders a Main nav with the four links in order', () => {
+	it('renders a Main nav with the five links in order', () => {
 		renderAt('/');
 		expect(screen.getByRole('navigation', { name: 'Main' })).toBeTruthy();
 		const links = screen.getAllByRole('link');
@@ -96,7 +97,8 @@ describe('AppNav', () => {
 			expect(items).toEqual([
 				['Identities', '/identities'],
 				['Schema', '/'],
-				['Validation', '/validation']
+				['Validation', '/validation'],
+				['Pipeline', '/pipeline']
 			]);
 		});
 
@@ -105,7 +107,7 @@ describe('AppNav', () => {
 			renderAt('/reports/abc');
 			expect(screen.queryAllByRole('link')).toHaveLength(0);
 			await fireEvent.click(screen.getByRole('button', { name: 'Navigation' }));
-			expect(screen.getAllByRole('menuitem')).toHaveLength(4);
+			expect(screen.getAllByRole('menuitem')).toHaveLength(5);
 		});
 	});
 });

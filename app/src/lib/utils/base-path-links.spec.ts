@@ -19,6 +19,12 @@ describe('route views under a base path', () => {
 		expect(resolveRouteView('/path/workbench').isWorkbenchView).toBe(true);
 		expect(resolveRouteView('/path/identities').isIdentitiesView).toBe(true);
 		expect(resolveRouteView('/path/validation').isValidationView).toBe(true);
+		expect(resolveRouteView('/path/questions').isQuestionsView).toBe(true);
+		expect(resolveRouteView('/path/questions').isCanvasView).toBe(false);
+		expect(resolveRouteView('/path/pipeline').isPipelineView).toBe(true);
+		expect(resolveRouteView('/path/pipeline').isCanvasView).toBe(false);
+		expect(resolveRouteView('/path/vocabulary').isVocabularyView).toBe(true);
+		expect(resolveRouteView('/path/vocabulary').isCanvasView).toBe(false);
 		const report = resolveRouteView('/path/reports/Abc');
 		expect(report.isReportView).toBe(true);
 		expect(report.isCanvasView).toBe(false);

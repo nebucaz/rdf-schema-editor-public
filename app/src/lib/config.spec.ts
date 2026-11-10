@@ -29,6 +29,18 @@ describe('namespaceGraphs (STORY-025)', () => {
 		});
 	});
 
+	it('adds the vocab graph only when the namespace is the marked core one (STORY-321)', () => {
+		expect(namespaceGraphs('http://example.org/core/', { vocab: true })).toEqual({
+			instances: 'http://example.org/core',
+			schema: 'http://example.org/core/schema',
+			shapes: 'http://example.org/core/shapes',
+			catalog: 'http://example.org/core/catalog',
+			vocab: 'http://example.org/core/vocab'
+		});
+		expect(namespaceGraphs('http://example.org/gov', { vocab: false })).not.toHaveProperty('vocab');
+		expect(namespaceGraphs('http://example.org/gov')).not.toHaveProperty('vocab');
+	});
+
 	it('reproduces the default namespace\'s existing schema/shapes namespace IRIs unchanged', () => {
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		expect(`${graphs.schema}#`).toBe(SCHEMA_NAMESPACE);

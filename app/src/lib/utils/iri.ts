@@ -203,6 +203,27 @@ export const NAMESPACE_DEFAULT_HIDDEN_PREDICATE_IRI = `${SCHEMA_NAMESPACE}defaul
 export const NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI = `${SCHEMA_NAMESPACE}listedInFilter`;
 
 /**
+ * Predicate marking the one core namespace that owns a fourth `<base>/vocab` graph for SKOS
+ * concepts (ontology-pipeline STORY-321) — an `xsd:boolean` literal on the namespace's own base-IRI
+ * subject, same shape as `NAMESPACE_LOCKED_PREDICATE_IRI`. At most one namespace carries it. Not
+ * mirrored in Go: the backend never reads the vocab graph.
+ */
+export const NAMESPACE_VOCABULARY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}vocabularyNamespace`;
+
+/**
+ * Predicate marking a namespace as taking part in the ontology pipeline — an `xsd:boolean` literal on the
+ * namespace's own base-IRI subject, same shape as `NAMESPACE_LOCKED_PREDICATE_IRI`. Absent means `false`: the
+ * Pipeline page lists only the namespaces that carry it. Any number of namespaces may. Not mirrored in Go.
+ */
+export const NAMESPACE_PIPELINE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}ontologyPipeline`;
+
+/** Governance of the core namespace (ontology-pipeline STORY-331): named people, a maturity tag and `owl:versionInfo`. */
+export const NAMESPACE_STEWARD_PREDICATE_IRI = `${SCHEMA_NAMESPACE}steward`;
+export const NAMESPACE_AUTHORITY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}authority`;
+export const NAMESPACE_MATURITY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}maturity`;
+export const OWL_VERSION_INFO_IRI = 'http://www.w3.org/2002/07/owl#versionInfo';
+
+/**
  * Workspace-management vocabulary (STORY-071, `spec/views/plan.md`): a named container a schema
  * author places elements onto so only that container's members render on the canvas at once.
  * Always stored in the default namespace's own `/schema` graph regardless of a Workspace's own
@@ -255,6 +276,112 @@ export const SAVED_QUERY_CLASS_IRI = `${SCHEMA_NAMESPACE}SavedQuery`;
 /** The saved query's raw SPARQL text, stored as a plain string literal (escaped via the same
  *  `escapeString()` convention every other literal-bearing insert/update already uses). */
 export const SAVED_QUERY_TEXT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}sparqlText`;
+
+/**
+ * Competency questions (ontology-pipeline STORY-317): one node per question, kept in the default
+ * namespace's `/schema` graph like `SavedQuery`. `rdfs:label` is the question itself.
+ */
+export const COMPETENCY_QUESTION_CLASS_IRI = `${SCHEMA_NAMESPACE}CompetencyQuestion`;
+/** Stored expectation, see `formatExpectedResult` in `competency-question.ts`. */
+export const CQ_EXPECTED_RESULT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}expectedResult`;
+/** The question's own SPARQL text; alternative to `CQ_SAVED_QUERY_PREDICATE_IRI`. */
+export const CQ_QUERY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}cqQuery`;
+/** IRI of a `SavedQuery` the question runs. */
+export const CQ_SAVED_QUERY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}cqSavedQuery`;
+/** A class or property the question needs (repeatable). */
+export const CQ_LINKED_ELEMENT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}linkedElement`;
+export const CQ_OWNER_PREDICATE_IRI = `${SCHEMA_NAMESPACE}owner`;
+export const CQ_LAST_REVIEWED_PREDICATE_IRI = `${SCHEMA_NAMESPACE}lastReviewed`;
+
+/** One execution of a competency question (STORY-318), stored beside the question. */
+export const CQ_RUN_CLASS_IRI = `${SCHEMA_NAMESPACE}CompetencyQuestionRun`;
+export const CQ_RUN_OF_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runOf`;
+export const CQ_RUN_AT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runAt`;
+export const CQ_RUN_OUTCOME_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runOutcome`;
+export const CQ_RUN_ACTUAL_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runActual`;
+export const CQ_RUN_ROW_COUNT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runRowCount`;
+export const CQ_RUN_DURATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runDurationMs`;
+export const CQ_RUN_MESSAGE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}runMessage`;
+
+/**
+ * Change requests (ontology-pipeline STORY-332): one node per request in the default namespace's `/schema` graph.
+ * `rdfs:label` is the title. The baseline and the last impact assessment are JSON text.
+ */
+export const CHANGE_REQUEST_CLASS_IRI = `${SCHEMA_NAMESPACE}ChangeRequest`;
+export const CR_REQUESTOR_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crRequestor`;
+export const CR_TERM_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crProposedTerm`;
+export const CR_DEFINITION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crProposedDefinition`;
+export const CR_RELATIONS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crProposedRelations`;
+export const CR_RATIONALE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crRationale`;
+export const CR_QUESTION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crQuestion`;
+export const CR_CHANGE_KIND_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crChangeKind`;
+export const CR_STATUS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crStatus`;
+export const CR_OUTCOME_RATIONALE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crOutcomeRationale`;
+export const CR_DECIDED_BY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crDecidedBy`;
+export const CR_DECIDED_AT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crDecidedAt`;
+export const CR_CREATED_AT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crCreatedAt`;
+export const CR_BASELINE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crBaseline`;
+export const CR_IMPACT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}crImpact`;
+
+/** e.g. "Which apps hold PII?" -> `<schema>#WhichAppsHoldPiiCompetencyQuestion`; minted once, never rewritten on edit. */
+export function competencyQuestionIri(
+	question: string,
+	namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
+): string {
+	return `${namespaceGraphs(namespaceBaseIri).schema}#${pascalCase(question)}CompetencyQuestion`;
+}
+
+/**
+ * SKOS concept vocabulary (ontology-pipeline STORY-322): concepts and schemes live in the core
+ * namespace's `/vocab` graph. The `rse:` predicates carry what SKOS has no term for.
+ */
+export const SKOS_NS = 'http://www.w3.org/2004/02/skos/core#';
+export const SKOS = {
+	Concept: `${SKOS_NS}Concept`,
+	ConceptScheme: `${SKOS_NS}ConceptScheme`,
+	prefLabel: `${SKOS_NS}prefLabel`,
+	altLabel: `${SKOS_NS}altLabel`,
+	hiddenLabel: `${SKOS_NS}hiddenLabel`,
+	definition: `${SKOS_NS}definition`,
+	scopeNote: `${SKOS_NS}scopeNote`,
+	inScheme: `${SKOS_NS}inScheme`,
+	topConceptOf: `${SKOS_NS}topConceptOf`,
+	hasTopConcept: `${SKOS_NS}hasTopConcept`,
+	broader: `${SKOS_NS}broader`,
+	narrower: `${SKOS_NS}narrower`,
+	related: `${SKOS_NS}related`,
+	exactMatch: `${SKOS_NS}exactMatch`,
+	closeMatch: `${SKOS_NS}closeMatch`,
+	relatedMatch: `${SKOS_NS}relatedMatch`,
+	broadMatch: `${SKOS_NS}broadMatch`,
+	narrowMatch: `${SKOS_NS}narrowMatch`
+} as const;
+export const CONCEPT_DISAMBIGUATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}disambiguation`;
+export const CONCEPT_STATUS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}status`;
+export const CONCEPT_SOURCE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}source`;
+export const CONCEPT_AUTHORITY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}authority`;
+export const CONCEPT_REPLACED_BY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}replacedBy`;
+export const CONCEPT_DEPRECATION_REASON_PREDICATE_IRI = `${SCHEMA_NAMESPACE}deprecationReason`;
+export const CONCEPT_DEPRECATED_ON_PREDICATE_IRI = `${SCHEMA_NAMESPACE}deprecatedOn`;
+/** Scope record of a concept scheme (STORY-323, book p. 22). */
+export const SCHEME_PURPOSE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}purpose`;
+export const SCHEME_DECISIONS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}decisionsSupported`;
+export const SCHEME_OUT_OF_SCOPE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}outOfScope`;
+export const SCHEME_STAKEHOLDERS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}stakeholders`;
+/** Class to its defining concept (STORY-325), in the class's own schema graph. */
+export const CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}definedByConcept`;
+
+/** e.g. "Bank" + "finance" -> `<core>/vocab#BankFinance`; minted once from the preferred label, never rewritten. */
+export function conceptIri(label: string, disambiguation: string, coreBaseIri: string): string {
+	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
+	return `${vocab}#${pascalCase(`${label} ${disambiguation}`)}`;
+}
+
+/** e.g. "Business glossary" -> `<core>/vocab#BusinessGlossaryScheme`. */
+export function conceptSchemeIri(name: string, coreBaseIri: string): string {
+	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
+	return `${vocab}#${pascalCase(name)}Scheme`;
+}
 
 /** Short share links (object-browser STORY-261): one node per stored model, kept apart from `SavedQuery`
  *  so it never shows in the saved-query list. Reuses the saved-query model/createdBy/createdAt predicates. */

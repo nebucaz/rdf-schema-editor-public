@@ -16,7 +16,9 @@
 		{ href: appUrl('/identities'), label: 'Identities', title: 'Identities', active: routeView.isIdentitiesView },
 		{ href: appUrl('/'), label: 'Schema', title: 'Schema Editor', active: routeView.isCanvasView },
 		{ href: appUrl('/workbench'), label: 'Report', title: 'Query Workbench', active: routeView.isWorkbenchView },
-		{ href: appUrl('/validation'), label: 'Validation', title: 'Validation Report', active: routeView.isValidationView }
+		{ href: appUrl('/validation'), label: 'Validation', title: 'Validation Report', active: routeView.isValidationView },
+		// One entry for the whole area; `PipelineSubNav` switches between its pages.
+		{ href: appUrl('/pipeline'), label: 'Pipeline', title: 'Ontology Pipeline', active: routeView.isPipelineArea }
 	]);
 	const activeLink = $derived(links.find((l) => l.active));
 

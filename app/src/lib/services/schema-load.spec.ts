@@ -27,6 +27,7 @@ function setup(over: Partial<{ namespaces: FetchedNamespace[]; workspaceKnown: b
 		loadNamespaces: net('namespaces', () => namespaces, 5),
 		loadExternalVocabularies: net('vocabs', () => undefined, 5),
 		loadSettings: net('settings', () => undefined, 5),
+		probeMigrations: net('probe', () => undefined, 5),
 		onNamespacesLoaded: () => void events.push('onNamespacesLoaded'),
 		migrateDefaultNamespace: net('migrate', () => undefined),
 		ensureAttributedRelationship: net('attributed', () => undefined),
@@ -59,11 +60,26 @@ function setup(over: Partial<{ namespaces: FetchedNamespace[]; workspaceKnown: b
 	};
 }
 
+describe('loadWorkspaceSchema order', () => {
+	it('starts the schema fetch without waiting for the migration checks when the default namespace is known', async () => {
+		const { deps, events } = setup();
+		await loadWorkspaceSchema(deps, { force: false });
+		expect(events.indexOf('schema:start')).toBeLessThan(events.indexOf('migrate:end'));
+		expect(events.indexOf('schema:start')).toBeGreaterThan(events.indexOf('probe:end'));
+	});
+
+	it('runs the migrations before the schema fetch when the default namespace is missing', async () => {
+		const t = setup({ namespaces: [ns('urn:other')] });
+		await loadWorkspaceSchema(t.deps, { force: false });
+		expect(t.events.indexOf('attributed:end')).toBeLessThan(t.events.indexOf('schema:start'));
+	});
+});
+
 describe('loadWorkspaceSchema', () => {
 	it('sends each shared request once on a normal load', async () => {
 		const { deps, calls } = setup();
 		await loadWorkspaceSchema(deps, { force: false });
-		expect(calls).toMatchObject({ namespaces: 1, vocabs: 1, settings: 1, workspaces: 1, schema: 1, layout: 1, notes: 1 });
+		expect(calls).toMatchObject({ namespaces: 1, vocabs: 1, settings: 1, workspaces: 1, probe: 1, schema: 1, layout: 1, notes: 1 });
 	});
 
 	it('passes the namespace list once fetched to both consumers', async () => {
@@ -85,8 +101,8 @@ describe('loadWorkspaceSchema', () => {
 	it('starts independent steps concurrently', async () => {
 		const { deps, events } = setup();
 		await loadWorkspaceSchema(deps, { force: false });
-		const firstEnd = Math.min(...['namespaces:end', 'vocabs:end', 'settings:end', 'workspaces:end'].map((e) => events.indexOf(e)));
-		for (const e of ['namespaces:start', 'vocabs:start', 'settings:start', 'workspaces:start']) expect(events.indexOf(e)).toBeLessThan(firstEnd);
+		const firstEnd = Math.min(...['namespaces:end', 'vocabs:end', 'settings:end', 'workspaces:end', 'probe:end'].map((e) => events.indexOf(e)));
+		for (const e of ['namespaces:start', 'vocabs:start', 'settings:start', 'workspaces:start', 'probe:start']) expect(events.indexOf(e)).toBeLessThan(firstEnd);
 		// the schema fetch overlaps the workspace chain and the notes fetch
 		expect(events.indexOf('schema:start')).toBeLessThan(events.indexOf('layout:end'));
 		expect(events.indexOf('notes:start')).toBeLessThan(events.indexOf('schema:end'));
@@ -100,7 +116,6 @@ describe('loadWorkspaceSchema', () => {
 		expect(idx.every((i) => i >= 0)).toBe(true);
 		expect([...idx].sort((a, b) => a - b)).toEqual(idx);
 		expect(events.at(-1)).toBe('apply');
-		expect(events.indexOf('migrate:end')).toBeLessThan(events.indexOf('schema:start'));
 	});
 
 	it('applies the fetched schema and notes', async () => {

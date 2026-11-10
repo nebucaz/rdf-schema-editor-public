@@ -73,6 +73,9 @@ export interface NamespaceGraphs {
 	shapes: string;
 	/** Graph generated DCAT/PROV catalog triples live in (data-catalog Story 002). */
 	catalog: string;
+	/** Graph SKOS concepts live in (ontology-pipeline STORY-321). Present only for the core
+	 *  namespace marked `vocabularyNamespace`; every other namespace has no vocab graph. */
+	vocab?: string;
 }
 
 /**
@@ -82,15 +85,17 @@ export interface NamespaceGraphs {
  * for a resource's local name within the namespace, so e.g. a class literally named "catalog" can
  * never mint an IRI textually identical to the catalog graph's own identifier. Normalizes away a
  * trailing slash on `baseIri` so callers can pass either form without producing a `//schema`
- * double-slash.
+ * double-slash. `{ vocab: true }` opts in the fourth `/vocab` graph, which only the one core
+ * namespace carries (STORY-321); callers learn that from the namespace's marker, never guess it.
  */
-export function namespaceGraphs(baseIri: string): NamespaceGraphs {
+export function namespaceGraphs(baseIri: string, options?: { vocab?: boolean }): NamespaceGraphs {
 	const base = baseIri.endsWith('/') ? baseIri.slice(0, -1) : baseIri;
 	return {
 		instances: base,
 		schema: `${base}/schema`,
 		shapes: `${base}/shapes`,
-		catalog: `${base}/catalog`
+		catalog: `${base}/catalog`,
+		...(options?.vocab ? { vocab: `${base}/vocab` } : {})
 	};
 }
 

@@ -165,7 +165,8 @@ describe('SparqlConnector.fetchSchemaBatched (reduce-requests STORY-298)', () =>
 		const legacy = await new SparqlConnector('/api/sparql').fetchFullSchemaForAllNamespaces(namespaces, { includeInstances: false });
 		vi.stubGlobal('fetch', batchedMock());
 		const batched = await new SparqlConnector('/api/sparql').fetchSchemaBatched(namespaces);
-		expect(batched).toEqual(legacy);
+		// The per-namespace path does not read NodeShapes (STORY-319); everything else must match.
+		expect({ ...batched, shapes: undefined }).toEqual(legacy);
 		// Guard against a vacuous pass: the fixture really produced content, including the cross-namespace cases.
 		expect(batched.classes).toHaveLength(3);
 		expect(batched.objectProperties.filter((p) => p.relationKind === 'generic')).toHaveLength(2);
@@ -240,12 +241,65 @@ describe('SparqlConnector.fetchSchemaBatched (reduce-requests STORY-298)', () =>
 		const legacy = await new SparqlConnector('/api/sparql').fetchFullSchemaForAllNamespaces(namespaces);
 		vi.stubGlobal('fetch', mockWith(false));
 		const batched = await new SparqlConnector('/api/sparql').fetchSchemaBatched(namespaces, { includeInstances: true });
-		expect(batched).toEqual(legacy);
+		expect({ ...batched, shapes: undefined }).toEqual(legacy);
 		expect(batched.individuals).toHaveLength(3);
 		expect(batched.untypedTotal).toBe(6);
 		expect((batched.untypedIndividuals ?? []).map((u) => u.iri).filter((i) => i === 'http://example.org/shared#u')).toHaveLength(1);
 		expect(batched.individualClassRelations).toHaveLength(3);
 		expect(batched.individualIndividualRelations).toHaveLength(3);
+	});
+
+	it('leaves out only the individual relation query with individualRelations: false', async () => {
+		const fetchMock = vi.fn(async () => json([]));
+		vi.stubGlobal('fetch', fetchMock);
+		await new SparqlConnector('/api/sparql').fetchSchemaBatched(namespaces, { includeInstances: true, individualRelations: false });
+		expect(fetchMock).toHaveBeenCalledTimes(11);
+		const queries = (fetchMock.mock.calls as unknown as [string, { body: string }][]).map(([, o]) => JSON.parse(o.body).query as string);
+		expect(queries.some((q) => /SELECT DISTINCT \?g \?s \?p \?plabel \?o/.test(q))).toBe(false);
+	});
+
+	it('fetchIndividualRelationsBatched sends one request and tags each relation with its namespace', async () => {
+		const fetchMock = vi.fn(async () =>
+			json([
+				{ g: uri(BASES[0]), s: uri(`${BASES[0]}#x1`), p: uri(`${BASES[0]}#knows`), plabel: lit('knows'), o: uri(`${BASES[1]}#y1`) },
+				{ g: uri(BASES[1]), s: uri(`${BASES[1]}#y1`), p: uri(`${BASES[1]}#worksWith`), o: uri(`${BASES[0]}#x1`) },
+				{ g: uri('http://example.org/unknown'), s: uri('http://example.org/unknown#z'), p: uri('http://example.org/unknown#p'), o: uri(`${BASES[0]}#x1`) }
+			])
+		);
+		vi.stubGlobal('fetch', fetchMock);
+		const relations = await new SparqlConnector('/api/sparql').fetchIndividualRelationsBatched(namespaces);
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(relations).toEqual([
+			{ individualIri: `${BASES[0]}#x1`, predicateIri: `${BASES[0]}#knows`, name: 'knows', targetIndividualIri: `${BASES[1]}#y1`, namespaceBaseIri: BASES[0] },
+			{ individualIri: `${BASES[1]}#y1`, predicateIri: `${BASES[1]}#worksWith`, name: 'worksWith', targetIndividualIri: `${BASES[0]}#x1`, namespaceBaseIri: BASES[1] }
+		]);
+	});
+
+	it('fetchIndividualRelationsBatched binds ?s to the given subjects', async () => {
+		const fetchMock = vi.fn(async () => json([]));
+		vi.stubGlobal('fetch', fetchMock);
+		const subjects = [`${BASES[0]}#x1`, `${BASES[1]}#y1`];
+		await new SparqlConnector('/api/sparql').fetchIndividualRelationsBatched(namespaces, { subjects });
+		const q: string = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, { body: string }])[1].body).query;
+		expect(q).toContain(`VALUES ?s { <${subjects[0]}> <${subjects[1]}> }`);
+		expect(q.indexOf('VALUES ?s')).toBeLessThan(q.indexOf('GRAPH ?g { ?s ?p ?o }'));
+	});
+
+	it('fetchIndividualRelationsBatched sends nothing for an empty subject list and refuses an unsafe subject', async () => {
+		const fetchMock = vi.fn(async () => json([]));
+		vi.stubGlobal('fetch', fetchMock);
+		const connector = new SparqlConnector('/api/sparql');
+		expect(await connector.fetchIndividualRelationsBatched(namespaces, { subjects: [] })).toEqual([]);
+		expect(fetchMock).not.toHaveBeenCalled();
+		await expect(connector.fetchIndividualRelationsBatched(namespaces, { subjects: ['http://x/> } DROP'] })).rejects.toThrow();
+		expect(fetchMock).not.toHaveBeenCalled();
+	});
+
+	it('fetchIndividualRelationsBatched sends nothing for an empty namespace list', async () => {
+		const fetchMock = vi.fn();
+		vi.stubGlobal('fetch', fetchMock);
+		expect(await new SparqlConnector('/api/sparql').fetchIndividualRelationsBatched([])).toEqual([]);
+		expect(fetchMock).not.toHaveBeenCalled();
 	});
 
 	it('returns an empty schema without any request for an empty namespace list', async () => {
@@ -271,6 +325,40 @@ describe('SparqlConnector.fetchSchemaBatched (reduce-requests STORY-298)', () =>
 				expect(q.includes(`<${schemaGraph(b)}>`) || q.includes(`<${shapesGraph(b)}>`)).toBe(true);
 			}
 		}
+	});
+
+	it('never reads the vocab graph of a namespace marked as the vocabulary namespace (ontology-pipeline STORY-321)', async () => {
+		const fetchMock = batchedMock();
+		vi.stubGlobal('fetch', fetchMock);
+		const marked = namespaces.map((n, i) => ({ ...n, vocabulary: i === 0 })) as FetchedNamespace[];
+		await new SparqlConnector('/api/sparql').fetchSchemaBatched(marked, { includeInstances: true });
+		for (const [, opts] of fetchMock.mock.calls) {
+			expect((JSON.parse((opts as { body: string }).body).query as string)).not.toContain('/vocab');
+		}
+	});
+
+	it('reads the concept a class is defined by in the classes query, without an extra request (ontology-pipeline STORY-325)', async () => {
+		const fetchMock = vi.fn(async (_url: string, opts: { body: string }) => {
+			const q: string = JSON.parse(opts.body).query;
+			if (q.includes('SELECT ?g ?c ?label ?comment')) {
+				return json([
+					{ g: uri(schemaGraph(BASES[0])), c: uri('http://example.org/a#Person'), label: lit('Person'), concept: uri('http://example.org/core/vocab#Customer') },
+					{ g: uri(schemaGraph(BASES[0])), c: uri('http://example.org/a#Team'), label: lit('Team') }
+				]);
+			}
+			return json([]);
+		});
+		vi.stubGlobal('fetch', fetchMock);
+		const schema = await new SparqlConnector('/api/sparql').fetchSchemaBatched(namespaces);
+		expect(schema.classes.map((c) => [c.iri, c.definedByConcept])).toEqual([
+			['http://example.org/a#Person', 'http://example.org/core/vocab#Customer'],
+			['http://example.org/a#Team', undefined]
+		]);
+		expect(fetchMock).toHaveBeenCalledTimes(7);
+		const classQuery = fetchMock.mock.calls
+			.map(([, opts]) => JSON.parse((opts as { body: string }).body).query as string)
+			.find((q) => q.includes('SELECT ?g ?c ?label ?comment'))!;
+		expect(classQuery).toContain('OPTIONAL { ?c <http://ld.pageagent.com/rdf-schema-editor/schema#definedByConcept> ?concept }');
 	});
 
 	it('refuses a namespace whose base IRI is unsafe to interpolate', async () => {

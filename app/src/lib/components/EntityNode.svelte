@@ -62,6 +62,8 @@
 		/** Whether this class carries the `AuthoritativeEntity` marker (data-catalog Story 003) —
 		 *  opts it into DCAT catalog generation; gates the "View catalog" menu entry (Story 014). */
 		isAuthoritativeEntity: boolean;
+		/** IRI of the vocabulary concept that defines this class (STORY-325), when linked. */
+		definedByConcept?: string;
 		onEdit: () => void;
 		onDelete: () => void;
 		onAddAttribute: () => void;
@@ -89,6 +91,9 @@
 	import { Handle, Position, type NodeProps } from '@xyflow/svelte';
 	import NodeMenu, { type NodeMenuEntry } from './NodeMenu.svelte';
 	import { descriptionVisibilityStore } from '#lib/stores/description-visibility-store.svelte.js';
+	import { showNoConceptBadge } from '#lib/services/concept-badge.js';
+	import { conceptBadgeVisibilityStore } from '#lib/stores/concept-badge-visibility-store.svelte.js';
+	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { inheritedAttributesVisibilityStore } from '#lib/stores/inherited-attributes-visibility-store.svelte.js';
 	import { contrastTextColor } from '#lib/utils/contrast.js';
 
@@ -101,6 +106,13 @@
 
 	const showDescriptions = $derived(descriptionVisibilityStore.getShowDescriptions());
 	const showInheritedAttributes = $derived(inheritedAttributesVisibilityStore.getShowInheritedAttributes());
+	const noConceptBadge = $derived(
+		showNoConceptBadge({
+			enabled: conceptBadgeVisibilityStore.getShowConceptBadge(),
+			vocabularyExists: namespaceStore.namespaces.some((n) => n.vocabulary),
+			definedByConcept: data.definedByConcept
+		})
+	);
 	const ownAttributes = $derived(data.attributes.filter((a) => !a.inheritedFrom));
 	const inheritedAttributes = $derived(data.attributes.filter((a) => a.inheritedFrom));
 
@@ -179,6 +191,9 @@
 	<Handle type="source" position={Position.Left} id="left-source" />
 	<div class="header">
 		<span class="name" title={data.classIri}>{data.name}</span>
+		{#if noConceptBadge}
+			<span class="no-concept" title="No vocabulary concept defines this class. Link one in Edit.">no concept</span>
+		{/if}
 		<div class="header-actions">
 			<NodeMenu entries={menuEntries} />
 		</div>
@@ -278,6 +293,16 @@
 		color: var(--node-header-fg, #fff);
 		font-weight: 600;
 		padding: 6px 8px;
+	}
+
+	.no-concept {
+		flex: 0 0 auto;
+		font-size: 0.65rem;
+		line-height: 1;
+		padding: 0.1rem 0.35rem;
+		border-radius: 999px;
+		border: 1px solid currentColor;
+		opacity: 0.85;
 	}
 
 	.name {

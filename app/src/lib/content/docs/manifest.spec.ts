@@ -230,3 +230,45 @@ describe('loading-spinner STORY-277: bulk add and loading sections', () => {
 		}
 	});
 });
+
+describe('ontology-pipeline STORY-336: pipeline guide sections', () => {
+	const guide = ['pipeline-guide', 'terms-and-classes', 'changes-and-releases'];
+
+	it('registers the three guide sections under Panels & Views', () => {
+		for (const id of guide) {
+			const section = docSections.find((s) => s.id === id);
+			expect(section, `missing section "${id}"`).toBeDefined();
+			expect(section?.category).toBe('Panels & Views');
+			expect(section?.content.trim().length).toBeGreaterThan(200);
+		}
+	});
+
+	it('covers stages, gates, the class and concept link, homonyms, deprecation and release', () => {
+		const text = guide.map((id) => docSections.find((s) => s.id === id)!.content.toLowerCase()).join('\n');
+		for (const topic of ['stage', 'gate', 'definedbyconcept', 'disambiguation', 'deprecat', 'release', 'semantic version']) {
+			expect(text, topic).toContain(topic);
+		}
+	});
+
+	it('presents the method as a recommended order, not a rule', () => {
+		expect(docSections.find((s) => s.id === 'pipeline-guide')!.content).toMatch(/recommended order/i);
+	});
+
+	it('only links to sections that exist', () => {
+		const ids = new Set(docSections.map((s) => s.id));
+		for (const id of guide) {
+			for (const [, target] of docSections.find((s) => s.id === id)!.content.matchAll(/\]\(([a-z-]+)\)/g)) {
+				expect(ids.has(target), `${id} -> ${target}`).toBe(true);
+			}
+		}
+	});
+
+	it('refers to the book by page numbers only, with no long quotation', () => {
+		for (const id of guide) {
+			const content = docSections.find((s) => s.id === id)!.content;
+			expect(content, id).not.toMatch(/^>\s/m);
+			expect(content, id).not.toMatch(/"[^"]{200,}"/);
+			for (const [, ref] of content.matchAll(/\bpp?\.\s*([^\s)]+)/g)) expect(ref, id).toMatch(/^\d/);
+		}
+	});
+});

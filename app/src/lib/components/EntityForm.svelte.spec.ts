@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, within } from '@testing-library/svelte';
 import EntityForm from './EntityForm.svelte';
 import type { FetchedNamespace, NameableEntity } from '#lib/services/sparql-connector.js';
+import type { Concept } from '#lib/services/skos-concept.js';
 
 const CORE = 'http://example.org/core';
 const ARO = 'http://example.org/aro-eac-mvp';
@@ -84,5 +85,82 @@ describe('EntityForm — existing-element picker', () => {
 		await fireEvent.keyDown(nameInput(), { key: 'Enter' });
 		await fireEvent.click(screen.getByRole('button', { name: 'Add Existing' }));
 		expect(props.onSelectExisting).toHaveBeenCalledWith(aroBla);
+	});
+});
+
+describe('EntityForm — defining concept (ontology-pipeline STORY-325)', () => {
+	const concept: Concept = {
+		iri: 'http://e/core/vocab#Customer',
+		prefLabels: [{ text: 'Customer', lang: 'en' }],
+		altLabels: [], hiddenLabels: [], definition: 'A party that buys.', scopeNote: '', disambiguation: '',
+		schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
+		replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: ''
+	};
+
+	it('offers no concept field when the vocabulary has no concepts', () => {
+		setup();
+		expect(screen.queryByLabelText('Defined by concept')).toBeNull();
+	});
+
+	it('suggests a matching concept while the new class is named and submits the chosen one', async () => {
+		const props = setup({ concepts: [concept], existingOptions: [] });
+		await type('Customers');
+		await fireEvent.click(screen.getByRole('button', { name: 'Use Customer' }));
+		expect(screen.getByText('A party that buys.')).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+		const args = (props.onSubmit as ReturnType<typeof vi.fn>).mock.calls[0];
+		expect(args[0]).toBe('Customers');
+		expect(args[7]).toBe(concept.iri);
+	});
+
+	it('submits an empty concept when none is chosen, and keeps the initial one when editing', async () => {
+		const none = setup({ concepts: [concept], existingOptions: [] });
+		await type('Order');
+		await fireEvent.click(screen.getByRole('button', { name: 'Create' }));
+		expect((none.onSubmit as ReturnType<typeof vi.fn>).mock.calls[0][7]).toBe('');
+	});
+});
+
+describe('EntityForm — defining concept when editing (ontology-pipeline STORY-325)', () => {
+	it('shows the linked concept and submits its removal', async () => {
+		const concept: Concept = {
+			iri: 'http://e/core/vocab#Customer',
+			prefLabels: [{ text: 'Customer', lang: 'en' }],
+			altLabels: [], hiddenLabels: [], definition: 'A party that buys.', scopeNote: '', disambiguation: '',
+			schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
+			replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: ''
+		};
+		const onSubmit = vi.fn().mockResolvedValue(undefined);
+		render(EntityForm, {
+			props: { mode: 'edit', iri: `${CORE}#Person`, initialName: 'Person', concepts: [concept], initialConceptIri: concept.iri, submitLabel: 'Save', onSubmit, onCancel: vi.fn() }
+		});
+		expect(screen.getByText('A party that buys.')).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Remove link' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(onSubmit.mock.calls[0][7]).toBe('');
+	});
+});
+
+describe('EntityForm — gate findings of the class (ontology-pipeline STORY-327)', () => {
+	it('lists the findings about the class being edited', () => {
+		render(EntityForm, {
+			props: {
+				mode: 'edit',
+				iri: `${CORE}#Person`,
+				initialName: 'Person',
+				gateFindings: [
+					{ gateId: 'definition-drift', stage: 'ontology', severity: 'warning', elementIri: `${CORE}#Person`, message: 'The description differs from the concept.' }
+				],
+				submitLabel: 'Save',
+				onSubmit: vi.fn(),
+				onCancel: vi.fn()
+			}
+		});
+		expect(screen.getByText('The description differs from the concept.')).toBeTruthy();
+	});
+
+	it('shows nothing without findings', () => {
+		setup();
+		expect(screen.queryByLabelText('Gate findings')).toBeNull();
 	});
 });

@@ -34,6 +34,7 @@
 		color: string | undefined;
 		publisher: string;
 		license: string;
+		pipeline: boolean;
 	}) {
 		await sparqlConnector.insertNamespace(
 			values.prefix,
@@ -43,6 +44,7 @@
 			values.publisher || undefined,
 			values.license || undefined
 		);
+		if (values.pipeline) await sparqlConnector.updateNamespacePipeline(values.baseIri, true);
 		await namespaceStore.refresh();
 		showAddForm = false;
 		// A newly-registered namespace's own classes/individuals (if any already exist under that
@@ -63,8 +65,12 @@
 			locked: boolean;
 			defaultHidden: boolean;
 			listedInFilter: boolean;
+			vocabulary: boolean;
+			pipeline: boolean;
 		}
 	) {
+		// First: it can refuse (a second marked namespace), and then nothing else should be saved.
+		await sparqlConnector.updateNamespaceVocabulary(target.baseIri, values.vocabulary);
 		await sparqlConnector.updateNamespaceDescription(target.baseIri, values.description || null);
 		await sparqlConnector.updateNamespaceColor(target.baseIri, values.color ?? null);
 		await sparqlConnector.updateNamespacePublisher(target.baseIri, values.publisher || null);
@@ -72,6 +78,7 @@
 		await sparqlConnector.updateNamespaceLocked(target.baseIri, values.locked);
 		await sparqlConnector.updateNamespaceDefaultHidden(target.baseIri, values.defaultHidden);
 		await sparqlConnector.updateNamespaceListedInFilter(target.baseIri, values.listedInFilter);
+		await sparqlConnector.updateNamespacePipeline(target.baseIri, values.pipeline);
 		await namespaceStore.refresh();
 		editTarget = null;
 	}
@@ -133,6 +140,8 @@
 		initialLocked={target.locked}
 		initialDefaultHidden={target.defaultHidden}
 		initialListedInFilter={target.listedInFilter}
+		initialVocabulary={target.vocabulary}
+		initialPipeline={target.pipeline}
 		submitLabel="Save"
 		onCancel={() => (editTarget = null)}
 		onSubmit={(values) => handleEditSubmit(target, values)}
