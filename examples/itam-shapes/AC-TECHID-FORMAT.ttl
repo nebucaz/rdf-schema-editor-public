@@ -1,0 +1,15 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+
+arm-s:ApplikationskomponenteTechnicalIdFormatShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-TECHID-FORMAT" ;
+    arm-s:qualityDimension "Validity (Syntactic)" ;
+
+    sh:property [
+          sh:path arm-s:A_TECHNICAL_ID ;
+          sh:pattern "^[0-9]+$" ;
+          sh:message "Technische ID ist nicht numerisch."@de
+      ] .

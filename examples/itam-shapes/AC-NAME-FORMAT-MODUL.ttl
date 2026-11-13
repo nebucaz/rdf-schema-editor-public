@@ -1,0 +1,35 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:  <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+arm-s:ApplikationskomponenteNameFormatModulShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-NAME-FORMAT-MODUL" ;
+    arm-s:qualityDimension "Validity (Syntactic)" ;
+
+    sh:sparql [
+          a sh:SPARQLConstraint ;
+          sh:message "Modulname verletzt die Namens-Konvention (Abkuerzung.Modulname, Modulteil 4-40 Zeichen)."@de ;
+
+          sh:select """
+            SELECT $this ?value
+                   (<https://lida.pnet.ch/arm/schema#NAME> AS ?path)
+            WHERE {
+                # Guard: A_APP_CMP_TYPE equals Applikationsmodul
+                $this
+                    <https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> <https://lida.pnet.ch/enum/Applikationsmodul> ;
+                    <https://lida.pnet.ch/arm/schema#NAME> ?value .
+
+                FILTER (
+                    !isLiteral(?value)
+                    ||
+                    !REGEX(
+                        STR(?value),
+                        "^[A-Z][A-Za-z0-9]{2,15}\\\\.[A-Za-z0-9 &-]{3,39}$"
+                    )
+                )
+            }
+        """
+      ] .

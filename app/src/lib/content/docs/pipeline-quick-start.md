@@ -24,6 +24,10 @@ On the **Schema** canvas draw classes, properties and shapes. Link each class to
 - Work through the **semantic debt** list on the Overview: each item has an Open link to where it is fixed.
 - Record decisions in **Governance**: owners, change requests, the change log and releases. See [Changes, Requests and Releases](changes-and-releases).
 
+## Step-by-step guides
+
+Each stage has a numbered guide that follows one small example: [Vocabulary](guide-vocabulary), [Metadata](guide-metadata), [Taxonomy](guide-taxonomy), [Thesaurus](guide-thesaurus), [Ontology](guide-ontology), and [Validation and knowledge graph](guide-knowledge-graph). The [Governance Sheet](pipeline-governance) says what each stage asks of the people who look after it. On the Pipeline Overview, **Open in guide** in a stage box opens the matching guide.
+
 ## Who does what
 
 See [Roles](pipeline-guide) in the pipeline guide.

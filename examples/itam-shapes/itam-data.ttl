@@ -1,0 +1,203 @@
+# =============================================================================
+# ITAM sample - instance data: itam-data.ttl
+#
+# Namespace prefix: arm
+# Namespace base IRI: https://lida.pnet.ch/arm
+#
+# Import with Import Turtle... while the `arm` namespace is the active namespace, after
+# itam-schema.ttl and the six AC-*.ttl shape files. Individuals live in <base>#.
+#
+# 23 records, 22 of Applikationskomponente and one of Infrastrukturkomponente, with the
+# findings each must produce (22 in total; the exact set is itam-expected.json, rule ids are the
+# arm-s:id of the shapes as written). A record that is not listed fails nothing.
+#
+# R01: clean -> none
+# R02: clean (module, abbreviation 3 characters) -> none
+# R03: clean (SPEC-ACCEPTED applies to Freigegeben only) -> none
+# R04: clean (module, 16-character abbreviation: upper boundary) -> none
+# R10: no A_TECHNICAL_ID -> TECHID-EXIST (minCount)
+# R11: id "" (empty) -> TECHID-EXIST (minLength), TECHID-EXIST (sparql), TECHID-FORMAT (pattern)
+# R12: id "  " (two spaces; minLength 1 passes) -> TECHID-EXIST (sparql), TECHID-FORMAT (pattern)
+# R13: id 1005 typed xsd:integer (lexical form is numeric) -> TECHID-EXIST (datatype)
+# R14: id A-77 -> TECHID-FORMAT (pattern)
+# R15: id 2001, same as R16 -> TECHID-UNIQUE (sparql)
+# R16: id 2001, same as R15 -> TECHID-UNIQUE (sparql)
+# R17: name Doppelt, same as R18 -> NAME-UNIQUE (sparql)
+# R18: name Doppelt, same as R17 -> NAME-UNIQUE (sparql)
+# R19: module, name without a dot -> NAME-FORMAT-MODUL (sparql)
+# R20: module, lower-case start -> NAME-FORMAT-MODUL (sparql)
+# R21: module, 17-character abbreviation (over the boundary) -> NAME-FORMAT-MODUL (sparql)
+# R22: module, module part of 40 characters -> NAME-FORMAT-MODUL (sparql)
+# R23: module, module part of 2 characters -> NAME-FORMAT-MODUL (sparql)
+# R24: Freigegeben, no type -> SPEC-ACCEPTED (sparql)
+# R25: Freigegeben, type Dienst -> SPEC-ACCEPTED (sparql)
+# R26: Freigegeben, type Dienst, id ABC -> SPEC-ACCEPTED (sparql), TECHID-FORMAT (pattern)
+# R28: module whose NAME is an IRI, not a literal -> NAME-FORMAT-MODUL (sparql)
+# R29: clean (Infrastrukturkomponente: same name and id as R01, the uniqueness rules look at Applikationskomponente only) -> none
+#
+# Records that fail nothing are otherwise clean (numeric unique id, unique name, valid type and
+# state). Note: the shape regex needs an abbreviation of 3 to 16 characters, so `KB.Zahlungen`
+# (2 characters) would fail NAME-FORMAT-MODUL; the clean modules use `KBK`. Reported for the shape
+# owner in story 360, not worked around in the shapes.
+# =============================================================================
+
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix arm:   <https://lida.pnet.ch/arm#> .
+@prefix enum:  <https://lida.pnet.ch/enum/> .
+
+arm:R01
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Kernbanking" ;
+    arm-s:A_TECHNICAL_ID "1001" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R02
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "KBK.Zahlungen" ;
+    arm-s:A_TECHNICAL_ID "1002" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R03
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Entwurfsapplikation" ;
+    arm-s:A_TECHNICAL_ID "1003" ;
+    arm-s:A_OBJECT_STATE enum:Entwurf .
+
+arm:R04
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Abcdefghijklmnop.Modul" ;
+    arm-s:A_TECHNICAL_ID "1004" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R10
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Kreditportal" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R11
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Leerid" ;
+    arm-s:A_TECHNICAL_ID "" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R12
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Blankid" ;
+    arm-s:A_TECHNICAL_ID "  " ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R13
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Ganzzahlid" ;
+    arm-s:A_TECHNICAL_ID "1005"^^xsd:integer ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R14
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Formatid" ;
+    arm-s:A_TECHNICAL_ID "A-77" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R15
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Doppelid Eins" ;
+    arm-s:A_TECHNICAL_ID "2001" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R16
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Doppelid Zwei" ;
+    arm-s:A_TECHNICAL_ID "2001" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R17
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Doppelt" ;
+    arm-s:A_TECHNICAL_ID "3001" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R18
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Doppelt" ;
+    arm-s:A_TECHNICAL_ID "3002" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikation ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R19
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Reporting" ;
+    arm-s:A_TECHNICAL_ID "4019" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R20
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "kbk.Zahlungen" ;
+    arm-s:A_TECHNICAL_ID "4020" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R21
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Abcdefghijklmnopq.Modul" ;
+    arm-s:A_TECHNICAL_ID "4021" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R22
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "KBK.AbcdefghijAbcdefghijAbcdefghijAbcdefghij" ;
+    arm-s:A_TECHNICAL_ID "4022" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R23
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "KBK.Zu" ;
+    arm-s:A_TECHNICAL_ID "4023" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R24
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Ohnetyp" ;
+    arm-s:A_TECHNICAL_ID "4024" ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R25
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Dienstfreigabe" ;
+    arm-s:A_TECHNICAL_ID "4025" ;
+    arm-s:A_APP_CMP_TYPE enum:Dienst ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R26
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME "Dienstformat" ;
+    arm-s:A_TECHNICAL_ID "ABC" ;
+    arm-s:A_APP_CMP_TYPE enum:Dienst ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R28
+    a arm-s:Applikationskomponente ;
+    arm-s:NAME <https://lida.pnet.ch/arm#R28Name> ;
+    arm-s:A_TECHNICAL_ID "4028" ;
+    arm-s:A_APP_CMP_TYPE enum:Applikationsmodul ;
+    arm-s:A_OBJECT_STATE enum:Freigegeben .
+
+arm:R29
+    a arm-s:Infrastrukturkomponente ;
+    arm-s:NAME "Kernbanking" ;
+    arm-s:A_TECHNICAL_ID "1001" .

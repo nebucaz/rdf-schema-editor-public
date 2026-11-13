@@ -6,11 +6,25 @@ package validation
 // holding one entry for a plain `sh:class` and 2+ entries for an `sh:or` union of `sh:class`
 // options (STORY-129 treats both shapes identically: "is the value's type-or-ancestor in this
 // list").
+//
+// ShapeIri, RuleId, QualityDimension and Message keep the constraint's origin (spec/shacl-test): the
+// NodeShape it came from, that shape's `arm-s:id` and `arm-s:qualityDimension`, and the property
+// shape's `sh:message`. Constraints are merged per (class, shape, path), so two shapes on one path
+// stay two constraints.
 type PropertyConstraint struct {
-	Path          string
-	MinCount      *int
-	MaxCount      *int
-	Datatype      string
+	ShapeIri         string
+	RuleId           string
+	QualityDimension string
+	Message          string
+	Path             string
+	MinCount         *int
+	MaxCount         *int
+	Datatype         string
+	// Pattern, Flags and MinLength are `sh:pattern`, `sh:flags` and `sh:minLength`, applied to the
+	// lexical form of each value (an IRI's string, a literal's text); a blank node always fails.
+	Pattern       string
+	Flags         string
+	MinLength     *int
 	TargetClasses []string
 }
 
@@ -18,9 +32,10 @@ type PropertyConstraint struct {
 // merged with every ancestor class's own constraints, walking `rdfs:subClassOf` transitively via
 // subClassOf (sub -> its direct superclasses).
 //
-// Shadowing is by `Path`, "nearest wins": classIri's own constraint for a given path always wins
-// over any ancestor's, and among ancestors the nearest one (fewest `rdfs:subClassOf` hops) to
-// declare that path wins over a farther one — the same precedence rule
+// Shadowing is by `Path`, "nearest wins": classIri's own constraints for a given path always win
+// over any ancestor's, and among ancestors the nearest class (fewest `rdfs:subClassOf` hops) to
+// declare that path wins over a farther one. Shadowing is between classes only: every constraint
+// of the winning class for that path survives, so sibling shapes on one path are never dropped — the same precedence rule
 // `app/src/lib/services/canvas-model.ts`'s `mergeAncestorAttributes`/`mergeAncestorRelations` use
 // on the TS side (there shadowing by attribute/relation *name*; here by shape `Path`), reimplemented
 // independently per plan.md's ADR rather than shared.
@@ -40,8 +55,13 @@ func EffectiveShape(classIri string, ownConstraints map[string][]PropertyConstra
 
 	result := append([]PropertyConstraint(nil), own...)
 	for _, ancestor := range orderedAncestors(classIri, subClassOf) {
+		// Paths taken by nearer classes before this ancestor; its own siblings share a path freely.
+		shadowed := make(map[string]bool, len(seen))
+		for path := range seen {
+			shadowed[path] = true
+		}
 		for _, c := range ownConstraints[ancestor] {
-			if seen[c.Path] {
+			if shadowed[c.Path] {
 				continue
 			}
 			seen[c.Path] = true

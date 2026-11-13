@@ -24,9 +24,22 @@ well-formedness and structural sanity, not constraint evaluation.
 
 A separate, on-demand check: real SHACL constraint validation of every individual in the graph
 against the shapes graph, run from the [Validation Report View](validation-report-view). This is
-what actually evaluates `sh:minCount`, `sh:datatype`, `sh:class`, and similar constraints against
-real data, producing a per-individual list of violations. Nothing is cached — each run starts
-fresh.
+what actually evaluates the supported constraints against real data, producing a per-individual list
+of violations, grouped by identity by default, each with the offending value, and exportable as CSV, JSON,
+Markdown or PDF. Nothing is cached — each run starts fresh.
+
+**What is checked.** On a property shape: `sh:minCount`, `sh:maxCount`, `sh:datatype`, `sh:class`
+(including `sh:or` unions of classes), `sh:minLength` and `sh:pattern` (with the flags `i`, `s`, `m`).
+On a node shape: `sh:sparql` constraints with a `sh:select` query, which the backend runs against
+GraphDB for the shape's instances, within limits (one `SELECT`, no `SERVICE`, no updates, a size cap, a
+timeout and a row cap).
+
+**What is not checked, and how you find out.** Anything else, such as `sh:in`, `sh:nodeKind`,
+`sh:maxLength`, `sh:node`, a property path other than a plain predicate, a deactivated or `sh:ask`
+constraint, a pattern that does not compile, or a `sh:select` the safety check rejects, is skipped. The
+report lists every skipped constraint in a banner above the table (rule, construct, reason), so a clean
+report is not mistaken for clean data. With a banner showing, the all-clear text reads "No violations
+found among the checked constraints".
 
 ## Related
 

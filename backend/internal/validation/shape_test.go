@@ -138,3 +138,35 @@ func TestIsClassOrAncestor(t *testing.T) {
 		t.Error("isClassOrAncestor() = true for unrelated class, want false")
 	}
 }
+
+func TestEffectiveShape_SiblingShapesOnOnePathBothSurvive(t *testing.T) {
+	own := map[string][]PropertyConstraint{
+		"App": {
+			{Path: "id", ShapeIri: "shapeExists", RuleId: "EXISTS", MinCount: intPtr(1)},
+			{Path: "id", ShapeIri: "shapeFormat", RuleId: "FORMAT", Datatype: "xsd"},
+		},
+	}
+	got := EffectiveShape("App", own, map[string][]string{})
+	if len(got) != 2 || got[0].RuleId != "EXISTS" || got[1].RuleId != "FORMAT" {
+		t.Errorf("EffectiveShape() = %+v, want both sibling shapes in order", got)
+	}
+}
+
+func TestEffectiveShape_AncestorSiblingsSurviveUntilShadowedByNearerClass(t *testing.T) {
+	own := map[string][]PropertyConstraint{
+		"Sub": {{Path: "name", ShapeIri: "subName"}},
+		"Sup": {
+			{Path: "name", ShapeIri: "supName"},
+			{Path: "id", ShapeIri: "supIdA"},
+			{Path: "id", ShapeIri: "supIdB"},
+		},
+	}
+	got := EffectiveShape("Sub", own, map[string][]string{"Sub": {"Sup"}})
+	var shapes []string
+	for _, c := range got {
+		shapes = append(shapes, c.ShapeIri)
+	}
+	if !reflect.DeepEqual(shapes, []string{"subName", "supIdA", "supIdB"}) {
+		t.Errorf("EffectiveShape() shapes = %v, want [subName supIdA supIdB]", shapes)
+	}
+}

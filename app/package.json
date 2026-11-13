@@ -1,7 +1,7 @@
 {
 	"name": "app",
 	"private": true,
-	"version": "1.1.0",
+	"version": "1.4.0",
 	"type": "module",
 	"engines": {
 		"node": ">=22.17"
@@ -14,7 +14,9 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test:unit": "vitest",
-		"test": "npm run test:unit -- --run"
+		"test": "npm run test:unit -- --run",
+		"docs:guide": "bun scripts/build-practitioner-guide.ts",
+		"shacl:golden": "UPDATE_ITAM_GOLDEN=1 vitest run src/lib/services/itam-golden.spec.ts"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-static": "^4.0.1",

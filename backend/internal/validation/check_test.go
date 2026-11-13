@@ -1,6 +1,10 @@
 package validation
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func countByConstraint(violations []Violation, constraint string) int {
 	n := 0
@@ -210,5 +214,204 @@ func TestIndividualLabel_UsesRdfsLabelWhenPresent(t *testing.T) {
 	got := individualLabel("http://ns#alice", []AssertedValue{{Predicate: rdfsLabel, Value: "Alice Smith"}})
 	if got != "Alice Smith" {
 		t.Errorf("individualLabel() = %q, want Alice Smith", got)
+	}
+}
+
+func TestCheckSnapshot_ViolationCarriesRuleIdDimensionShapeAndMessage(t *testing.T) {
+	snapshot := ValidationSnapshot{
+		OwnConstraints: map[string][]PropertyConstraint{
+			"App": {{
+				Path: "id", MinCount: intPtr(1),
+				ShapeIri: "http://ns#ExistsShape", RuleId: "AC-EXISTS", QualityDimension: "Completeness", Message: "Technische ID fehlt.",
+			}},
+		},
+		IndividualTypes:  map[string][]string{"r1": {"App"}},
+		IndividualValues: map[string][]AssertedValue{},
+	}
+	got := CheckSnapshot(snapshot)
+	if len(got) != 1 {
+		t.Fatalf("CheckSnapshot() = %+v, want 1 violation", got)
+	}
+	v := got[0]
+	if v.RuleId != "AC-EXISTS" || v.QualityDimension != "Completeness" || v.ShapeIri != "http://ns#ExistsShape" {
+		t.Errorf("violation identity = %+v", v)
+	}
+	if v.Message != "Technische ID fehlt." || v.Constraint != "minCount" {
+		t.Errorf("Message/Constraint = %q/%q, want the shape message and minCount", v.Message, v.Constraint)
+	}
+}
+
+func TestCheckSnapshot_WithoutShapeMessageKeepsGeneratedText(t *testing.T) {
+	snapshot := ValidationSnapshot{
+		OwnConstraints:   map[string][]PropertyConstraint{"App": {{Path: "id", MinCount: intPtr(1)}}},
+		IndividualTypes:  map[string][]string{"r1": {"App"}},
+		IndividualValues: map[string][]AssertedValue{},
+	}
+	got := CheckSnapshot(snapshot)
+	if len(got) != 1 || got[0].RuleId != "" || got[0].Message != "expected at least 1 value(s) for id, found 0" {
+		t.Errorf("CheckSnapshot() = %+v, want empty rule id and the generated message", got)
+	}
+}
+
+func TestViolationJSONHasNewFieldsAndKeepsOldOnes(t *testing.T) {
+	b, err := json.Marshal(Violation{IndividualIri: "i", RuleId: "R", QualityDimension: "Q", ShapeIri: "S"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"individualIri", "individualLabel", "typeIri", "path", "constraint", "message", "ruleId", "qualityDimension", "shapeIri"} {
+		if !strings.Contains(string(b), `"`+key+`"`) {
+			t.Errorf("JSON %s lacks %q", b, key)
+		}
+	}
+}
+
+func TestViolationJSON_KeepsAnEmptyValueAndOmitsNone(t *testing.T) {
+	empty, blank := "", "  "
+	for _, c := range []struct {
+		value *string
+		want  string
+	}{{&empty, `"value":""`}, {&blank, `"value":"  "`}} {
+		b, _ := json.Marshal(Violation{Value: c.value})
+		if !strings.Contains(string(b), c.want) {
+			t.Errorf("JSON %s lacks %s", b, c.want)
+		}
+	}
+	b, _ := json.Marshal(Violation{})
+	if strings.Contains(string(b), `"value"`) {
+		t.Errorf("JSON %s must omit value when there is none", b)
+	}
+}
+
+func TestCheckSnapshot_ValueOfEachConstraintKind(t *testing.T) {
+	const xsdInteger = "http://www.w3.org/2001/XMLSchema#integer"
+	id := func(c PropertyConstraint) PropertyConstraint { c.Path = "id"; return c }
+	cases := []struct {
+		name       string
+		constraint PropertyConstraint
+		values     []AssertedValue
+		kind       string
+		want       *string // nil: no value
+	}{
+		{"minCount has none", id(PropertyConstraint{MinCount: intPtr(1)}), nil, "minCount", nil},
+		{"maxCount has none", id(PropertyConstraint{MaxCount: intPtr(1)}), []AssertedValue{lit("id", "a", ""), lit("id", "b", "")}, "maxCount", nil},
+		{"datatype is the found datatype", id(PropertyConstraint{Datatype: "http://www.w3.org/2001/XMLSchema#string"}), []AssertedValue{lit("id", "1005", xsdInteger)}, "datatype", strPtr(xsdInteger)},
+		{"minLength is the empty string", id(PropertyConstraint{MinLength: intPtr(1)}), []AssertedValue{lit("id", "", "")}, "minLength", strPtr("")},
+		{"pattern is the offending text", id(PropertyConstraint{Pattern: "^[0-9]+$"}), []AssertedValue{lit("id", "1", ""), lit("id", "A-77", "")}, "pattern", strPtr("A-77")},
+		{"pattern keeps whitespace", id(PropertyConstraint{Pattern: "^[0-9]+$"}), []AssertedValue{lit("id", "  ", "")}, "pattern", strPtr("  ")},
+		{"class is the offending IRI", id(PropertyConstraint{TargetClasses: []string{"Other"}}), []AssertedValue{{Predicate: "id", IsIRI: true, Value: "http://ex#x"}}, "class", strPtr("http://ex#x")},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got *Violation
+			for _, v := range checkOne(c.constraint, c.values...).Violations {
+				if v.Constraint == c.kind {
+					got = &v
+				}
+			}
+			if got == nil {
+				t.Fatalf("no %s violation", c.kind)
+			}
+			if (got.Value == nil) != (c.want == nil) || (c.want != nil && *got.Value != *c.want) {
+				t.Errorf("Value = %v, want %v", got.Value, c.want)
+			}
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }
+
+func lit(predicate, value, datatype string) AssertedValue {
+	return AssertedValue{Predicate: predicate, Value: value, Datatype: datatype}
+}
+
+func checkOne(constraint PropertyConstraint, values ...AssertedValue) CheckResult {
+	return CheckSnapshotDetailed(ValidationSnapshot{
+		OwnConstraints:   map[string][]PropertyConstraint{"App": {constraint}},
+		IndividualTypes:  map[string][]string{"r1": {"App"}},
+		IndividualValues: map[string][]AssertedValue{"r1": values},
+	})
+}
+
+func TestCheckSnapshot_PatternAndMinLength(t *testing.T) {
+	const xsdInteger = "http://www.w3.org/2001/XMLSchema#integer"
+	digits := PropertyConstraint{Path: "id", Pattern: "^[0-9]+$", RuleId: "FORMAT", Message: "not numeric"}
+	min1 := PropertyConstraint{Path: "id", MinLength: intPtr(1)}
+
+	cases := []struct {
+		name       string
+		constraint PropertyConstraint
+		values     []AssertedValue
+		want       string // "" for no violation, else the constraint kind
+	}{
+		{"pattern match", digits, []AssertedValue{lit("id", "1001", xsdString)}, ""},
+		{"pattern mismatch", digits, []AssertedValue{lit("id", "A-77", xsdString)}, "pattern"},
+		{"pattern empty string", digits, []AssertedValue{lit("id", "", xsdString)}, "pattern"},
+		{"pattern spaces", digits, []AssertedValue{lit("id", "  ", xsdString)}, "pattern"},
+		{"pattern checks lexical form of an integer", digits, []AssertedValue{lit("id", "1005", xsdInteger)}, ""},
+		{"pattern checks the IRI string", digits, []AssertedValue{{Predicate: "id", IsIRI: true, Value: "http://x/123"}}, "pattern"},
+		{"pattern fails a blank node", digits, []AssertedValue{{Predicate: "id", IsBlank: true, Value: "b0"}}, "pattern"},
+		{"pattern without values", digits, nil, ""},
+		{"minLength empty string", min1, []AssertedValue{lit("id", "", xsdString)}, "minLength"},
+		{"minLength spaces count as length", min1, []AssertedValue{lit("id", "  ", xsdString)}, ""},
+		{"minLength integer by lexical form", min1, []AssertedValue{lit("id", "7", xsdInteger)}, ""},
+		{"minLength counts characters not bytes", PropertyConstraint{Path: "id", MinLength: intPtr(2)}, []AssertedValue{lit("id", "ä", xsdString)}, "minLength"},
+		{"minLength blank node", min1, []AssertedValue{{Predicate: "id", IsBlank: true, Value: "b0"}}, "minLength"},
+	}
+	for _, c := range cases {
+		got := checkOne(c.constraint, c.values...)
+		if c.want == "" {
+			if len(got.Violations) != 0 {
+				t.Errorf("%s: violations = %+v, want none", c.name, got.Violations)
+			}
+			continue
+		}
+		if len(got.Violations) != 1 || got.Violations[0].Constraint != c.want {
+			t.Errorf("%s: violations = %+v, want one %s", c.name, got.Violations, c.want)
+		}
+	}
+}
+
+func TestCheckSnapshot_PatternFindingCarriesMessageAndRuleId(t *testing.T) {
+	got := checkOne(PropertyConstraint{Path: "id", Pattern: "^[0-9]+$", RuleId: "FORMAT", Message: "not numeric"}, lit("id", "x", xsdString))
+	if len(got.Violations) != 1 || got.Violations[0].RuleId != "FORMAT" || got.Violations[0].Message != "not numeric" {
+		t.Errorf("violations = %+v", got.Violations)
+	}
+}
+
+func TestCheckSnapshot_OneFindingPerConstraintEvenWithSeveralFailingValues(t *testing.T) {
+	got := checkOne(PropertyConstraint{Path: "id", Pattern: "^[0-9]+$"}, lit("id", "a", xsdString), lit("id", "b", xsdString))
+	if len(got.Violations) != 1 {
+		t.Errorf("violations = %+v, want 1", got.Violations)
+	}
+}
+
+func TestCheckSnapshot_FlagsApplyToPattern(t *testing.T) {
+	got := checkOne(PropertyConstraint{Path: "id", Pattern: "^abc$", Flags: "i"}, lit("id", "ABC", xsdString))
+	if len(got.Violations) != 0 || len(got.NotChecked) != 0 {
+		t.Errorf("result = %+v, want a match with flag i", got)
+	}
+}
+
+func TestCheckSnapshot_UncompilablePatternIsNotCheckedNotAFailure(t *testing.T) {
+	c := PropertyConstraint{Path: "id", ShapeIri: "http://ns#S", RuleId: "R", Pattern: "^(?=x)$"}
+	got := CheckSnapshotDetailed(ValidationSnapshot{
+		OwnConstraints:  map[string][]PropertyConstraint{"App": {c}},
+		IndividualTypes: map[string][]string{"r1": {"App"}, "r2": {"App"}},
+		IndividualValues: map[string][]AssertedValue{
+			"r1": {lit("id", "x", xsdString)}, "r2": {lit("id", "y", xsdString)},
+		},
+	})
+	if len(got.Violations) != 0 {
+		t.Errorf("violations = %+v, want none", got.Violations)
+	}
+	if len(got.NotChecked) != 1 || got.NotChecked[0].Construct != "pattern" || got.NotChecked[0].ShapeIri != "http://ns#S" || got.NotChecked[0].RuleId != "R" {
+		t.Errorf("notChecked = %+v, want one pattern entry for the shape (deduplicated across individuals)", got.NotChecked)
+	}
+}
+
+func TestCheckSnapshot_ConstraintsWithoutNewKeysBehaveAsBefore(t *testing.T) {
+	got := checkOne(PropertyConstraint{Path: "id", MinCount: intPtr(1)}, lit("id", "", xsdString))
+	if len(got.Violations) != 0 || len(got.NotChecked) != 0 {
+		t.Errorf("result = %+v, want clean", got)
 	}
 }

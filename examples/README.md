@@ -6,6 +6,7 @@ never touches your existing schema.
 | Folder | What it is | Start here |
 |---|---|---|
 | [`soc/`](soc/) | A security-operations sample: servers, logfiles, authentication events and alerts, for the Query Workbench, including backwards hops, OR groups and relative time. | [`soc/RUNBOOK.md`](soc/RUNBOOK.md) |
+| [`itam-shapes/`](itam-shapes/) | Six ITAM data quality shapes (SHACL, incl. `sh:sparql`) with a minimal schema and 23 test records that must produce exactly 22 findings, for the Validation report. | [`itam-shapes/RUNBOOK.md`](itam-shapes/RUNBOOK.md) |
 
 ## Importing a sample
 

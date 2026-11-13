@@ -61,7 +61,7 @@ in progress (dry runs are exempt), `502` if the upstream source is unreachable. 
 | `GET /me` | – | – | `{user}` or `{user: null}` |
 | `POST /auth/dev-login`, `POST /auth/logout` | – | – | only when `DEV_LOGIN_ENABLED=true` |
 | `POST /sparql`, `POST /sparql/update` | ✔ | ✔ | GraphDB passthrough |
-| `GET /validation/report` | ✔ | ✔ | |
+| `GET /validation/report` | ✔ | ✔ | `{violations, notChecked}`; `notChecked` lists constraints the run skipped; a violation carries `value` (the offending value) when the rule has one, omitted otherwise (an empty string is kept) |
 | `POST /shared-queries`, `GET /shared-queries/{id}` | ✔ | ✔ | short share links |
 | `POST /annotations`, `DELETE /annotations` | ✔ | ✔ | server-side stamping |
 | `GET /sources/{source}/discover`, `GET …/raw/{kind}`, `POST …/sync` | ✔ | – | sync worker and `importctl` have no user |

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { render, screen, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, within } from '@testing-library/svelte';
+import { vi } from 'vitest';
 import StageStrip from './StageStrip.svelte';
 import type { NamespaceSummary } from '#lib/services/pipeline-summary.js';
 
@@ -77,3 +78,36 @@ describe('StageStrip pending stages', () => {
 		expect(screen.getAllByText('Not started')).toHaveLength(5);
 	});
 });
+
+describe('StageStrip: Open in guide (process-description STORY-346)', () => {
+	it('shows no guide links when the page gives no handler (the read-only review page)', () => {
+		render(StageStrip, { props: { summary } });
+		expect(screen.queryByRole('button', { name: /guide/i })).toBeNull();
+	});
+
+	it('shows an Open in guide button in every stage and calls the handler with the stage guide', async () => {
+		const onOpenGuide = vi.fn();
+		render(StageStrip, { props: { summary, onOpenGuide } });
+		expect(screen.getAllByRole('button', { name: /^Open in guide/ })).toHaveLength(6);
+		await fireEvent.click(within(stageEl('Ontology')).getByRole('button', { name: 'Open in guide: Ontology' }));
+		expect(onOpenGuide).toHaveBeenCalledWith('guide-ontology');
+		await fireEvent.click(within(stageEl('Application')).getByRole('button', { name: 'Open in guide: Application' }));
+		expect(onOpenGuide).toHaveBeenLastCalledWith('guide-knowledge-graph');
+	});
+
+	it('adds the metadata guide to the vocabulary box only', async () => {
+		const onOpenGuide = vi.fn();
+		render(StageStrip, { props: { summary, onOpenGuide } });
+		const buttons = screen.getAllByRole('button', { name: 'Metadata guide' });
+		expect(buttons).toHaveLength(1);
+		expect(stageEl('Vocabulary').contains(buttons[0])).toBe(true);
+		await fireEvent.click(buttons[0]);
+		expect(onOpenGuide).toHaveBeenCalledWith('guide-metadata');
+	});
+
+	it('keeps the guide button available while a stage is still loading', () => {
+		render(StageStrip, { props: { summary, onOpenGuide: vi.fn(), pending: ['ontology'] } });
+		expect(within(stageEl('Ontology')).getByRole('button', { name: 'Open in guide: Ontology' })).toBeTruthy();
+	});
+});
+

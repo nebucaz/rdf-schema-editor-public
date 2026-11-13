@@ -1,0 +1,55 @@
+# =============================================================================
+# ITAM sample — schema (TBox): itam-schema.ttl
+#
+# Namespace prefix: arm
+# Namespace base IRI: https://lida.pnet.ch/arm
+#
+# The minimum the six shapes in this folder touch (spec/shacl-test). Import with Import Turtle...
+# while the `arm` namespace is the active namespace (create it first in Namespaces: prefix `arm`,
+# base IRI as above), in this order: itam-schema.ttl, the six AC-*.ttl shape files, itam-data.ttl.
+# Terms live in <base>/schema#. The upper-case property names are written here because the UI
+# would mint different local names.
+#
+# The enum values the shapes compare against (https://lida.pnet.ch/enum/Applikation,
+# Applikationsmodul, Dienst, Freigegeben, Entwurf) are plain IRIs used as values of A_APP_CMP_TYPE
+# and A_OBJECT_STATE; the shapes never ask for their type, so they are not declared here.
+# =============================================================================
+
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+
+# -- Classes ------------------------------------------------------------------
+
+arm-s:Applikationskomponente
+    a owl:Class ;
+    rdfs:label "Applikationskomponente" ;
+    rdfs:comment "An application component; the target class of the six data quality shapes." .
+
+arm-s:Infrastrukturkomponente
+    a owl:Class ;
+    rdfs:label "Infrastrukturkomponente" ;
+    rdfs:comment "An infrastructure component; only used to show that the uniqueness rules ignore other classes." .
+
+# -- Datatype properties --------------------------------------------------------
+
+arm-s:NAME a owl:DatatypeProperty ;
+    rdfs:label "NAME" ;
+    rdfs:comment "Name of the component; modules are named Abbreviation.Module." ;
+    rdfs:domain arm-s:Applikationskomponente ; rdfs:range xsd:string .
+
+arm-s:A_TECHNICAL_ID a owl:DatatypeProperty ;
+    rdfs:label "A_TECHNICAL_ID" ;
+    rdfs:comment "Technical id; present, numeric and unique across application components." ;
+    rdfs:domain arm-s:Applikationskomponente ; rdfs:range xsd:string .
+
+arm-s:A_APP_CMP_TYPE a owl:DatatypeProperty ;
+    rdfs:label "A_APP_CMP_TYPE" ;
+    rdfs:comment "Specialisation of the component; value is an IRI under https://lida.pnet.ch/enum/ (Applikation, Applikationsmodul, Dienst)." ;
+    rdfs:domain arm-s:Applikationskomponente .
+
+arm-s:A_OBJECT_STATE a owl:DatatypeProperty ;
+    rdfs:label "A_OBJECT_STATE" ;
+    rdfs:comment "Lifecycle state; value is an IRI under https://lida.pnet.ch/enum/ (Freigegeben, Entwurf)." ;
+    rdfs:domain arm-s:Applikationskomponente .

@@ -269,6 +269,13 @@ tag. The Docker build has no `.git`, so pass the value in:
 `APP_GIT_DESCRIBE=$(git describe --tags --always --dirty --match 'v*') docker compose up --build`
 (unset = version only).
 
+## Practitioner guide
+
+`docs/ontology-pipeline-practitioner-guide.md` is the governance sheet and the six stage guides of the ontology
+pipeline in one file, with a printable checklist at the end. It is generated from the in-app documentation
+(Documentation panel, "Ontology Pipeline"): after editing one of those sections, run `bun run docs:guide` in `app/`
+and commit the result. `bun run test` fails while the file is out of date.
+
 ## Syncing from Backstage
 
 The backend can pull entities from a [Backstage](https://backstage.io) software catalog and mint them

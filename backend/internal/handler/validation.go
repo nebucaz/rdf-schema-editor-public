@@ -21,10 +21,17 @@ func NewValidationHandler(gdb *graphdb.Client) *ValidationHandler {
 	return &ValidationHandler{gdb: gdb}
 }
 
+// validationReport is the response body of GET /validation/report.
+type validationReport struct {
+	Violations []validation.Violation  `json:"violations"`
+	NotChecked []validation.NotChecked `json:"notChecked"`
+}
+
 // Report handles GET /validation/report: loads a fresh validation.ValidationSnapshot, checks it,
-// and returns the resulting violation list as a JSON array — `[]` (never `null`) when there are
-// zero violations, per Decision 4's "transient only, recomputed every run" ADR (nothing is written
-// back to GraphDB, nothing cached).
+// and returns the envelope `{violations, notChecked}` — both `[]` (never `null`) when empty, per
+// Decision 4's "transient only, recomputed every run" ADR (nothing is written back to GraphDB,
+// nothing cached). `notChecked` lists the constraints the run skipped, so a clean report is not
+// mistaken for clean data.
 func (h *ValidationHandler) Report(w http.ResponseWriter, r *http.Request) {
 	snapshot, err := validation.LoadValidationSnapshot(r.Context(), h.gdb)
 	if err != nil {
@@ -33,13 +40,17 @@ func (h *ValidationHandler) Report(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	violations := validation.CheckSnapshot(snapshot)
-	if violations == nil {
-		violations = []validation.Violation{}
+	result := validation.CheckAll(r.Context(), h.gdb, snapshot)
+	report := validationReport{Violations: result.Violations, NotChecked: result.NotChecked}
+	if report.Violations == nil {
+		report.Violations = []validation.Violation{}
+	}
+	if report.NotChecked == nil {
+		report.NotChecked = []validation.NotChecked{}
 	}
 
 	auditLog(r, "", http.StatusOK, "")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(violations)
+	_ = json.NewEncoder(w).Encode(report)
 }

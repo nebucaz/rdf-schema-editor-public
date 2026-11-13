@@ -268,3 +268,189 @@ func TestLoadValidationSnapshot_AssemblesAllFour(t *testing.T) {
 		t.Errorf("IndividualValues[alice] = %v, want 1", snapshot.IndividualValues["http://ns#alice"])
 	}
 }
+
+func TestFetchOwnConstraints_KeepsShapeIdentityAnnotationsAndGermanMessage(t *testing.T) {
+	server, _ := newCapturingServer(t, func(query string) string {
+		if strings.Contains(query, "rdf-syntax-ns#rest") {
+			return `{"results":{"bindings":[]}}`
+		}
+		return `{"results":{"bindings":[
+			{"class":{"type":"uri","value":"http://ns#App"},"shape":{"type":"uri","value":"http://ns#ExistsShape"},"path":{"type":"uri","value":"http://ns#id"},"minCount":{"type":"literal","value":"1"},
+			 "ruleId":{"type":"literal","value":"AC-EXISTS"},"dimension":{"type":"literal","value":"Completeness"},"message":{"type":"literal","value":"ID is missing.","xml:lang":"en"}},
+			{"class":{"type":"uri","value":"http://ns#App"},"shape":{"type":"uri","value":"http://ns#ExistsShape"},"path":{"type":"uri","value":"http://ns#id"},"minCount":{"type":"literal","value":"1"},
+			 "ruleId":{"type":"literal","value":"AC-EXISTS"},"dimension":{"type":"literal","value":"Completeness"},"message":{"type":"literal","value":"ID fehlt.","xml:lang":"de"}},
+			{"class":{"type":"uri","value":"http://ns#App"},"shape":{"type":"uri","value":"http://ns#FormatShape"},"path":{"type":"uri","value":"http://ns#id"}}
+		]}}`
+	})
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	own, err := fetchOwnConstraints(context.Background(), gdb)
+	if err != nil {
+		t.Fatalf("fetchOwnConstraints() error = %v", err)
+	}
+	constraints := own["http://ns#App"]
+	if len(constraints) != 2 {
+		t.Fatalf("own[App] = %+v, want 2 constraints (one per shape)", constraints)
+	}
+	exists, format := constraints[0], constraints[1]
+	if exists.ShapeIri != "http://ns#ExistsShape" || exists.RuleId != "AC-EXISTS" || exists.QualityDimension != "Completeness" {
+		t.Errorf("exists = %+v", exists)
+	}
+	if exists.Message != "ID fehlt." {
+		t.Errorf("exists.Message = %q, want the @de message", exists.Message)
+	}
+	if exists.MinCount == nil || *exists.MinCount != 1 {
+		t.Errorf("exists.MinCount = %v, want 1", exists.MinCount)
+	}
+	if format.ShapeIri != "http://ns#FormatShape" || format.RuleId != "" || format.QualityDimension != "" || format.Message != "" {
+		t.Errorf("format = %+v, want empty annotations, not errors", format)
+	}
+}
+
+func TestPickMessage_PrefersGermanThenUntaggedThenAny(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []langString
+		want string
+	}{
+		{"de wins", []langString{{"en", "e"}, {"de", "d"}, {"", "u"}}, "d"},
+		{"untagged next", []langString{{"en", "e"}, {"", "u"}}, "u"},
+		{"any last", []langString{{"fr", "f"}}, "f"},
+		{"none", nil, ""},
+	}
+	for _, c := range cases {
+		if got := pickMessage(c.in); got != c.want {
+			t.Errorf("%s: pickMessage() = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
+func TestFetchOwnConstraints_PatternFlagsAndMinLength(t *testing.T) {
+	server, _ := newCapturingServer(t, func(query string) string {
+		if strings.Contains(query, "rdf-syntax-ns#rest") {
+			return `{"results":{"bindings":[]}}`
+		}
+		return `{"results":{"bindings":[
+			{"class":{"type":"uri","value":"http://ns#App"},"shape":{"type":"uri","value":"http://ns#S"},"path":{"type":"uri","value":"http://ns#id"},
+			 "pattern":{"type":"literal","value":"^[0-9]+$"},"flags":{"type":"literal","value":"i"},"minLength":{"type":"literal","value":"1"}}
+		]}}`
+	})
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	own, err := fetchOwnConstraints(context.Background(), gdb)
+	if err != nil {
+		t.Fatalf("fetchOwnConstraints() error = %v", err)
+	}
+	c := own["http://ns#App"][0]
+	if c.Pattern != "^[0-9]+$" || c.Flags != "i" || c.MinLength == nil || *c.MinLength != 1 {
+		t.Errorf("constraint = %+v", c)
+	}
+}
+
+func TestFetchIndividualValues_BlankNodeIsMarked(t *testing.T) {
+	server, _ := newCapturingServer(t, func(query string) string {
+		return `{"results":{"bindings":[
+			{"individual":{"type":"uri","value":"http://ns#a"},"p":{"type":"uri","value":"http://ns#id"},"o":{"type":"bnode","value":"b0"}}
+		]}}`
+	})
+	defer server.Close()
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	values, err := fetchIndividualValues(context.Background(), gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v := values["http://ns#a"][0]; !v.IsBlank || v.IsIRI {
+		t.Errorf("value = %+v, want IsBlank", v)
+	}
+}
+
+func TestFetchSparqlConstraints_LoadsSelectMessageAndRuleId(t *testing.T) {
+	server, lastQuery := newCapturingServer(t, func(query string) string {
+		var rows []string
+		for i := 0; i < 5; i++ {
+			rows = append(rows, fmt.Sprintf(`{"shape":{"type":"uri","value":"http://ns#Shape%d"},"class":{"type":"uri","value":"http://ns#App"},
+				"sc":{"type":"bnode","value":"b%d"},"select":{"type":"literal","value":"SELECT $this WHERE { $this ?p ?o }"},
+				"message":{"type":"literal","value":"Meldung %d.","xml:lang":"de"},"ruleId":{"type":"literal","value":"AC-%d"},"dimension":{"type":"literal","value":"Uniqueness"}}`, i, i, i, i))
+		}
+		return `{"results":{"bindings":[` + strings.Join(rows, ",") + `]}}`
+	})
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	constraints, notChecked, err := fetchSparqlConstraints(context.Background(), gdb)
+	if err != nil {
+		t.Fatalf("fetchSparqlConstraints() error = %v", err)
+	}
+	assertUnscoped(t, *lastQuery)
+	if len(constraints) != 5 || len(notChecked) != 0 {
+		t.Fatalf("constraints = %d, notChecked = %+v, want 5 and none", len(constraints), notChecked)
+	}
+	c := constraints[2]
+	want := SparqlConstraint{ShapeIri: "http://ns#Shape2", TargetClass: "http://ns#App", Select: "SELECT $this WHERE { $this ?p ?o }",
+		Message: "Meldung 2.", RuleId: "AC-2", QualityDimension: "Uniqueness"}
+	if c != want {
+		t.Errorf("constraint = %+v, want %+v", c, want)
+	}
+}
+
+func TestFetchSparqlConstraints_NotCheckedReasons(t *testing.T) {
+	server, _ := newCapturingServer(t, func(query string) string {
+		return `{"results":{"bindings":[
+			{"shape":{"type":"uri","value":"http://ns#Off"},"class":{"type":"uri","value":"http://ns#App"},"sc":{"type":"bnode","value":"b0"},
+			 "select":{"type":"literal","value":"SELECT $this WHERE {}"},"deactivated":{"type":"literal","value":"true"},"ruleId":{"type":"literal","value":"R-OFF"}},
+			{"shape":{"type":"uri","value":"http://ns#Ask"},"class":{"type":"uri","value":"http://ns#App"},"sc":{"type":"bnode","value":"b1"},
+			 "ask":{"type":"literal","value":"ASK {}"},"ruleId":{"type":"literal","value":"R-ASK"}},
+			{"shape":{"type":"uri","value":"http://ns#Pre"},"class":{"type":"uri","value":"http://ns#App"},"sc":{"type":"bnode","value":"b2"},
+			 "select":{"type":"literal","value":"SELECT $this WHERE {}"},"prefixes":{"type":"uri","value":"http://ns#decl"},"ruleId":{"type":"literal","value":"R-PRE"}},
+			{"shape":{"type":"uri","value":"http://ns#None"},"class":{"type":"uri","value":"http://ns#App"},"sc":{"type":"bnode","value":"b3"}}
+		]}}`
+	})
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	constraints, notChecked, err := fetchSparqlConstraints(context.Background(), gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(constraints) != 0 {
+		t.Errorf("constraints = %+v, want none loaded", constraints)
+	}
+	if len(notChecked) != 4 {
+		t.Fatalf("notChecked = %+v, want 4", notChecked)
+	}
+	for i, wantWord := range []string{"deactivated", "sh:ask", "sh:prefixes", "sh:select"} {
+		n := notChecked[i]
+		if n.Construct != "sh:sparql" || !strings.Contains(n.Reason, wantWord) {
+			t.Errorf("notChecked[%d] = %+v, want reason mentioning %q", i, n, wantWord)
+		}
+	}
+	if notChecked[0].RuleId != "R-OFF" || notChecked[0].ShapeIri != "http://ns#Off" {
+		t.Errorf("notChecked[0] = %+v, want shape and rule id", notChecked[0])
+	}
+}
+
+func TestFetchIgnoredPropertyKeys_OncePerShapeAndKey(t *testing.T) {
+	server, lastQuery := newCapturingServer(t, func(query string) string {
+		return `{"results":{"bindings":[
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#path"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#minLength"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#message"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#in"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#in"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#nodeKind"}}
+		]}}`
+	})
+	defer server.Close()
+
+	gdb := graphdb.NewClient(config.Config{GraphDBEndpointURL: server.URL})
+	got, err := fetchIgnoredPropertyKeys(context.Background(), gdb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertUnscoped(t, *lastQuery)
+	if len(got) != 2 || got[0].Construct != "sh:in" || got[1].Construct != "sh:nodeKind" || got[0].RuleId != "R" || got[0].ShapeIri != "http://ns#S" {
+		t.Errorf("got = %+v, want sh:in and sh:nodeKind once each", got)
+	}
+}

@@ -5,7 +5,13 @@
  * to `sectionMetas` below pointing at its filename.
  */
 
-export type DocCategory = 'Canvas Nodes' | 'Canvas Edges' | 'Forms' | 'Panels & Views' | 'Toggles & Concepts';
+export type DocCategory =
+	| 'Canvas Nodes'
+	| 'Canvas Edges'
+	| 'Forms'
+	| 'Panels & Views'
+	| 'Ontology Pipeline'
+	| 'Toggles & Concepts';
 
 export interface DocSectionMeta {
 	/** Stable slug — used as the TOC/search anchor and cross-section link target. Never reused. */
@@ -201,60 +207,119 @@ const sectionMetas: DocSectionMeta[] = [
 		order: 120,
 		file: 'query-workbench.md'
 	},
+	// Ontology Pipeline. Reading order by `order`: 10 quick start, 20 pipeline guide, 30 governance sheet, 40 worked
+	// example, 50-100 the six stage guides (vocabulary, metadata, taxonomy, thesaurus, ontology, knowledge graph),
+	// then the reference pages from 110. Section ids never change, so cross-links keep working.
 	{
 		id: 'pipeline-quick-start',
 		title: 'Ontology Pipeline: Quick Start',
-		category: 'Panels & Views',
-		order: 120,
+		category: 'Ontology Pipeline',
+		order: 10,
 		file: 'pipeline-quick-start.md'
 	},
 	{
 		id: 'pipeline-guide',
 		title: 'Ontology Pipeline Guide',
-		category: 'Panels & Views',
-		order: 121,
+		category: 'Ontology Pipeline',
+		order: 20,
 		file: 'pipeline-guide.md'
+	},
+	{
+		id: 'pipeline-governance',
+		title: 'Governance Sheet',
+		category: 'Ontology Pipeline',
+		order: 30,
+		file: 'pipeline-governance.md'
+	},
+	{
+		id: 'pipeline-example',
+		title: 'Worked Example: IT Landscape',
+		category: 'Ontology Pipeline',
+		order: 40,
+		file: 'pipeline-example.md'
+	},
+	{
+		id: 'guide-vocabulary',
+		title: 'Stage Guide: Vocabulary',
+		category: 'Ontology Pipeline',
+		order: 50,
+		file: 'guide-vocabulary.md'
+	},
+	{
+		id: 'guide-metadata',
+		title: 'Stage Guide: Metadata',
+		category: 'Ontology Pipeline',
+		order: 60,
+		file: 'guide-metadata.md'
+	},
+	{
+		id: 'guide-taxonomy',
+		title: 'Stage Guide: Taxonomy',
+		category: 'Ontology Pipeline',
+		order: 70,
+		file: 'guide-taxonomy.md'
+	},
+	{
+		id: 'guide-thesaurus',
+		title: 'Stage Guide: Thesaurus',
+		category: 'Ontology Pipeline',
+		order: 80,
+		file: 'guide-thesaurus.md'
+	},
+	{
+		id: 'guide-ontology',
+		title: 'Stage Guide: Ontology',
+		category: 'Ontology Pipeline',
+		order: 90,
+		file: 'guide-ontology.md'
+	},
+	{
+		id: 'guide-knowledge-graph',
+		title: 'Stage Guide: Validation and Knowledge Graph',
+		category: 'Ontology Pipeline',
+		order: 100,
+		file: 'guide-knowledge-graph.md'
 	},
 	{
 		id: 'vocabulary',
 		title: 'Vocabulary',
-		category: 'Panels & Views',
-		order: 123,
+		category: 'Ontology Pipeline',
+		order: 110,
 		file: 'vocabulary.md'
 	},
 	{
 		id: 'competency-questions',
 		title: 'Competency Questions',
-		category: 'Panels & Views',
-		order: 125,
+		category: 'Ontology Pipeline',
+		order: 120,
 		file: 'competency-questions.md'
 	},
 	{
 		id: 'gate-report',
 		title: 'Gate Report',
-		category: 'Panels & Views',
-		order: 126,
+		category: 'Ontology Pipeline',
+		order: 130,
 		file: 'gate-report.md'
 	},
 	{
 		id: 'pipeline-view',
 		title: 'Pipeline View',
-		category: 'Panels & Views',
-		order: 127,
+		category: 'Ontology Pipeline',
+		order: 140,
 		file: 'pipeline-view.md'
 	},
 	{
 		id: 'terms-and-classes',
 		title: 'Terms, Classes and Deprecation',
-		category: 'Panels & Views',
-		order: 128,
+		category: 'Ontology Pipeline',
+		order: 150,
 		file: 'terms-and-classes.md'
 	},
 	{
 		id: 'changes-and-releases',
 		title: 'Changes, Requests and Releases',
-		category: 'Panels & Views',
-		order: 129,
+		category: 'Ontology Pipeline',
+		order: 160,
 		file: 'changes-and-releases.md'
 	},
 	{

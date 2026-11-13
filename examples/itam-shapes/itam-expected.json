@@ -1,0 +1,179 @@
+{
+  "namespace": "https://lida.pnet.ch/arm",
+  "findings": [
+    {
+      "individual": "https://lida.pnet.ch/arm#R10",
+      "ruleId": "AC-TECHID-EXIST",
+      "constraint": "minCount",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R11",
+      "ruleId": "AC-TECHID-EXIST",
+      "constraint": "minLength",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": ""
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R11",
+      "ruleId": "AC-TECHID-EXIST",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "sparql",
+      "value": ""
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R11",
+      "ruleId": "AC-TECHID-FORMAT",
+      "constraint": "pattern",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": ""
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R12",
+      "ruleId": "AC-TECHID-EXIST",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "sparql",
+      "value": "  "
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R12",
+      "ruleId": "AC-TECHID-FORMAT",
+      "constraint": "pattern",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": "  "
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R13",
+      "ruleId": "AC-TECHID-EXIST",
+      "constraint": "datatype",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": "http://www.w3.org/2001/XMLSchema#integer"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R14",
+      "ruleId": "AC-TECHID-FORMAT",
+      "constraint": "pattern",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": "A-77"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R15",
+      "ruleId": "AC-TECHID-UNIQUE",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "sparql",
+      "value": "2001"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R16",
+      "ruleId": "AC-TECHID-UNIQUE",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "sparql",
+      "value": "2001"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R17",
+      "ruleId": "AC-NAME-UNIQUE",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "Doppelt"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R18",
+      "ruleId": "AC-NAME-UNIQUE",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "Doppelt"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R19",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "Reporting"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R20",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "kbk.Zahlungen"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R21",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "Abcdefghijklmnopq.Modul"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R22",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "KBK.AbcdefghijAbcdefghijAbcdefghijAbcdefghij"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R23",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "KBK.Zu"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R24",
+      "ruleId": "AC-SPEC-ACCEPTED",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+      "engine": "sparql"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R25",
+      "ruleId": "AC-SPEC-ACCEPTED",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+      "engine": "sparql",
+      "value": "https://lida.pnet.ch/enum/Dienst"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R26",
+      "ruleId": "AC-SPEC-ACCEPTED",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+      "engine": "sparql",
+      "value": "https://lida.pnet.ch/enum/Dienst"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R26",
+      "ruleId": "AC-TECHID-FORMAT",
+      "constraint": "pattern",
+      "path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+      "engine": "inMemory",
+      "value": "ABC"
+    },
+    {
+      "individual": "https://lida.pnet.ch/arm#R28",
+      "ruleId": "AC-NAME-FORMAT-MODUL",
+      "constraint": "sparql",
+      "path": "https://lida.pnet.ch/arm/schema#NAME",
+      "engine": "sparql",
+      "value": "https://lida.pnet.ch/arm#R28Name"
+    }
+  ]
+}

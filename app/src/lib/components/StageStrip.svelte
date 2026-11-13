@@ -1,14 +1,17 @@
 <script lang="ts">
 	/** One namespace's six pipeline stages with counts, findings and links (ontology-pipeline STORY-320). */
 	import { STAGE_IDS, type NamespaceSummary, type StageId } from '#lib/services/pipeline-summary.js';
+	import { STAGE_GUIDES } from '#lib/services/pipeline-guides.js';
 
 	interface Props {
 		summary: NamespaceSummary;
 		/** Stages whose data is still loading: shown as "Loading…" instead of counts or "Not started". */
 		pending?: StageId[];
+		/** Opens the documentation on a guide. Left out on the read-only review page, which then shows no guide links. */
+		onOpenGuide?: (sectionId: string) => void;
 	}
 
-	let { summary, pending = [] }: Props = $props();
+	let { summary, pending = [], onOpenGuide }: Props = $props();
 
 	const LABEL: Record<StageId, string> = {
 		vocabulary: 'Vocabulary',
@@ -38,6 +41,20 @@
 		{#each stages as s (s.stage)}
 			<li class:started={s.status === 'in-progress'}>
 				<h4>{LABEL[s.stage]}</h4>
+				{#if onOpenGuide}
+					<div class="guides">
+						{#each STAGE_GUIDES[s.stage] as guide, i (guide.sectionId)}
+							<button
+								type="button"
+								class="guide-link"
+								aria-label={i === 0 ? `${guide.label}: ${LABEL[s.stage]}` : guide.label}
+								onclick={() => onOpenGuide(guide.sectionId)}
+							>
+								{guide.label}
+							</button>
+						{/each}
+					</div>
+				{/if}
 				{#if pending.includes(s.stage)}
 					<span class="not-started" data-testid="stage-loading">Loading…</span>
 				{:else if s.status === 'not-started'}
@@ -95,6 +112,23 @@
 	}
 	.not-started {
 		color: var(--color-text-muted);
+	}
+	.guides {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.1rem 0.6rem;
+		margin-bottom: 0.25rem;
+	}
+	.guide-link {
+		padding: 0;
+		border: none;
+		background: none;
+		color: var(--color-accent);
+		font-size: 0.8rem;
+		cursor: pointer;
+	}
+	.guide-link:hover {
+		text-decoration: underline;
 	}
 	.findings {
 		color: var(--color-error);

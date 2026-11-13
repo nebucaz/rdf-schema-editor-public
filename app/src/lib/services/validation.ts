@@ -187,6 +187,7 @@ export function checkStructural(
 		OWL.ObjectProperty,
 		OWL.AnnotationProperty,
 		SH.NodeShape,
+		SH.SPARQLConstraint,
 		RDF.Statement
 	]);
 	for (const q of quads) {

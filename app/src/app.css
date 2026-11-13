@@ -22,6 +22,8 @@
 	--color-error-bg: rgba(211, 47, 47, 0.1);
 	--color-success: #2e7d32;
 	--color-success-bg: rgba(46, 125, 50, 0.1);
+	--color-warning: #b26a00;
+	--color-warning-bg: rgba(237, 142, 0, 0.12);
 	--nav-height: 60px;
 	--transition: 0.2s ease;
 
@@ -78,6 +80,8 @@
 	--color-error-bg: rgba(244, 67, 54, 0.15);
 	--color-success: #4caf50;
 	--color-success-bg: rgba(76, 175, 80, 0.15);
+	--color-warning: #ffb74d;
+	--color-warning-bg: rgba(255, 183, 77, 0.15);
 
 	/* Turtle syntax highlighting (TriplesPanel) */
 	--ttl-comment: #8b949e;

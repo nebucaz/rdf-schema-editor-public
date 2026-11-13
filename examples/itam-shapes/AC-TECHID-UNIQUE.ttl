@@ -1,0 +1,30 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+
+arm-s:ApplikationskomponenteTechnicalIdUniqueShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-TECHID-UNIQUE" ;
+    arm-s:qualityDimension "Uniqueness" ;
+
+    sh:sparql [
+          a sh:SPARQLConstraint ;
+          sh:message "Technische ID ist nicht eindeutig ueber alle Application Components."@de ;
+          sh:select """
+            SELECT DISTINCT
+                $this
+                ?value
+                (<https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> AS ?path)
+            WHERE {
+                $this
+                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .
+
+                ?other
+                    a <https://lida.pnet.ch/arm/schema#Applikationskomponente> ;
+                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .
+
+                FILTER (?other != $this)
+            }
+        """
+      ] .

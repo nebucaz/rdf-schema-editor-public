@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 )
@@ -15,6 +16,7 @@ import (
 type AssertedValue struct {
 	Predicate string
 	IsIRI     bool
+	IsBlank   bool
 	Value     string
 	Datatype  string
 }
@@ -33,6 +35,21 @@ type ValidationSnapshot struct {
 	IndividualTypes map[string][]string
 	// IndividualValues maps an individual to every one of its asserted (non-`rdf:type`) triples.
 	IndividualValues map[string][]AssertedValue
+	// SparqlConstraints are the runnable `sh:sparql` constraints of the shapes (story 354).
+	SparqlConstraints []SparqlConstraint
+	// NotChecked lists shape constructs the engine knows it does not run, found while loading.
+	NotChecked []NotChecked
+}
+
+// SparqlConstraint is one `sh:sparql` blank node of a NodeShape with its `sh:select` text, the
+// target class whose instances are its focus nodes, and the shape's rule id and dimension.
+type SparqlConstraint struct {
+	ShapeIri         string
+	TargetClass      string
+	Select           string
+	Message          string
+	RuleId           string
+	QualityDimension string
 }
 
 // LoadValidationSnapshot runs the small, fixed set of bulk SPARQL SELECT queries needed to check
@@ -62,11 +79,22 @@ func LoadValidationSnapshot(ctx context.Context, gdb *graphdb.Client) (Validatio
 		return ValidationSnapshot{}, fmt.Errorf("fetch individual asserted triples: %w", err)
 	}
 
+	sparqlConstraints, notChecked, err := fetchSparqlConstraints(ctx, gdb)
+	if err != nil {
+		return ValidationSnapshot{}, fmt.Errorf("fetch sh:sparql constraints: %w", err)
+	}
+	ignoredKeys, err := fetchIgnoredPropertyKeys(ctx, gdb)
+	if err != nil {
+		return ValidationSnapshot{}, fmt.Errorf("fetch ignored property shape keys: %w", err)
+	}
+
 	return ValidationSnapshot{
-		SubClassOf:       subClassOf,
-		OwnConstraints:   ownConstraints,
-		IndividualTypes:  individualTypes,
-		IndividualValues: individualValues,
+		SubClassOf:        subClassOf,
+		OwnConstraints:    ownConstraints,
+		IndividualTypes:   individualTypes,
+		IndividualValues:  individualValues,
+		SparqlConstraints: sparqlConstraints,
+		NotChecked:        append(notChecked, ignoredKeys...),
 	}, nil
 }
 
@@ -94,13 +122,17 @@ func fetchSubClassOf(ctx context.Context, gdb *graphdb.Client) (map[string][]str
 }
 
 // fetchOwnConstraints loads every class's own `sh:property` constraints — query responsibility 2.
-// Two queries: one for the common fields (path/minCount/maxCount/datatype/a plain sh:class), one
-// for `sh:or` unions (`sh:or/rdf:rest*/rdf:first/sh:class`, unwound to one row per union member via
-// GraphDB's native RDF-list property path rather than reconstructing the list in Go). Results are
-// merged per (class, path).
+// Two queries: one for the common fields (shape/path/minCount/maxCount/datatype/a plain sh:class and
+// the shape's rule id, quality dimension and the property shape's sh:message), one for `sh:or`
+// unions (`sh:or/rdf:rest*/rdf:first/sh:class`, unwound to one row per union member via GraphDB's
+// native RDF-list property path rather than reconstructing the list in Go). Results are merged per
+// (class, shape, path), so two shapes on one class and path stay two constraints.
+//
+// The rule id and dimension are read from any graph (`GRAPH ?g2`): a shape imported before the
+// annotations were kept with the shape may have them in the schema graph.
 func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][]PropertyConstraint, error) {
 	generalQuery := fmt.Sprintf(`
-		SELECT ?class ?path ?minCount ?maxCount ?datatype ?targetClass WHERE {
+		SELECT ?class ?shape ?path ?minCount ?maxCount ?datatype ?targetClass ?ruleId ?dimension ?message ?pattern ?flags ?minLength WHERE {
 			GRAPH ?g {
 				?shape a <%s> ; <%s> ?class ; <%s> ?ps .
 				?ps <%s> ?path .
@@ -108,9 +140,17 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 				OPTIONAL { ?ps <%s> ?maxCount }
 				OPTIONAL { ?ps <%s> ?datatype }
 				OPTIONAL { ?ps <%s> ?targetClass }
+				OPTIONAL { ?ps <%s> ?message }
+				OPTIONAL { ?ps <%s> ?pattern }
+				OPTIONAL { ?ps <%s> ?flags }
+				OPTIONAL { ?ps <%s> ?minLength }
 			}
+			OPTIONAL { GRAPH ?g2 { ?shape <%s> ?ruleId } }
+			OPTIONAL { GRAPH ?g3 { ?shape <%s> ?dimension } }
 		}`,
-		shNodeShape, shTargetClass, shProperty, shPath, shMinCount, shMaxCount, shDatatype, shClass,
+		shNodeShape, shTargetClass, shProperty, shPath, shMinCount, shMaxCount, shDatatype, shClass, shMessage,
+		shPattern, shFlags, shMinLength,
+		armID, armQualityDimension,
 	)
 	generalResult, err := gdb.Select(ctx, generalQuery)
 	if err != nil {
@@ -118,7 +158,7 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 	}
 
 	orQuery := fmt.Sprintf(`
-		SELECT ?class ?path ?targetClass WHERE {
+		SELECT ?class ?shape ?path ?targetClass WHERE {
 			GRAPH ?g {
 				?shape a <%s> ; <%s> ?class ; <%s> ?ps .
 				?ps <%s> ?path ; <%s>/<%s>*/<%s>/<%s> ?targetClass .
@@ -131,19 +171,20 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 		return nil, err
 	}
 
-	type key struct{ class, path string }
+	type key struct{ class, shape, path string }
 	constraints := make(map[key]*PropertyConstraint)
-	order := make(map[string][]string) // class -> paths, in first-seen order
+	messages := make(map[key][]langString)
+	order := make(map[string][]key) // class -> keys, in first-seen order
 
-	get := func(classIri, path string) *PropertyConstraint {
-		k := key{classIri, path}
+	get := func(classIri, shape, path string) (*PropertyConstraint, key) {
+		k := key{classIri, shape, path}
 		c, ok := constraints[k]
 		if !ok {
-			c = &PropertyConstraint{Path: path}
+			c = &PropertyConstraint{ShapeIri: shape, Path: path}
 			constraints[k] = c
-			order[classIri] = append(order[classIri], path)
+			order[classIri] = append(order[classIri], k)
 		}
-		return c
+		return c, k
 	}
 
 	for _, binding := range generalResult.Results.Bindings {
@@ -152,7 +193,16 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 		if !hasClass || !hasPath {
 			continue
 		}
-		c := get(classIri.Value, path.Value)
+		c, k := get(classIri.Value, binding["shape"].Value, path.Value)
+		if ruleId, ok := binding["ruleId"]; ok && c.RuleId == "" {
+			c.RuleId = ruleId.Value
+		}
+		if dimension, ok := binding["dimension"]; ok && c.QualityDimension == "" {
+			c.QualityDimension = dimension.Value
+		}
+		if message, ok := binding["message"]; ok {
+			messages[k] = appendLangString(messages[k], langString{message.Lang, message.Value})
+		}
 		if minCount, ok := binding["minCount"]; ok {
 			n := parseIntBinding(minCount.Value)
 			c.MinCount = &n
@@ -163,6 +213,16 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 		}
 		if datatype, ok := binding["datatype"]; ok {
 			c.Datatype = datatype.Value
+		}
+		if pattern, ok := binding["pattern"]; ok {
+			c.Pattern = pattern.Value
+		}
+		if flags, ok := binding["flags"]; ok {
+			c.Flags = flags.Value
+		}
+		if minLength, ok := binding["minLength"]; ok {
+			n := parseIntBinding(minLength.Value)
+			c.MinLength = &n
 		}
 		if targetClass, ok := binding["targetClass"]; ok {
 			c.TargetClasses = appendUnique(c.TargetClasses, targetClass.Value)
@@ -176,19 +236,50 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 		if !hasClass || !hasPath || !hasTarget {
 			continue
 		}
-		c := get(classIri.Value, path.Value)
+		c, _ := get(classIri.Value, binding["shape"].Value, path.Value)
 		c.TargetClasses = appendUnique(c.TargetClasses, targetClass.Value)
 	}
 
 	own := make(map[string][]PropertyConstraint, len(order))
-	for classIri, paths := range order {
-		list := make([]PropertyConstraint, 0, len(paths))
-		for _, path := range paths {
-			list = append(list, *constraints[key{classIri, path}])
+	for classIri, keys := range order {
+		list := make([]PropertyConstraint, 0, len(keys))
+		for _, k := range keys {
+			c := *constraints[k]
+			c.Message = pickMessage(messages[k])
+			list = append(list, c)
 		}
 		own[classIri] = list
 	}
 	return own, nil
+}
+
+// langString is one `sh:message` value with its language tag ("" when untagged).
+type langString struct{ Lang, Value string }
+
+func appendLangString(list []langString, v langString) []langString {
+	for _, e := range list {
+		if e == v {
+			return list
+		}
+	}
+	return append(list, v)
+}
+
+// pickMessage prefers a German message (the ITAM shapes' language), then an untagged one, then the
+// first of any other language; "" when there is none.
+func pickMessage(messages []langString) string {
+	for _, want := range []func(langString) bool{
+		func(m langString) bool { return strings.EqualFold(m.Lang, "de") },
+		func(m langString) bool { return m.Lang == "" },
+		func(m langString) bool { return true },
+	} {
+		for _, m := range messages {
+			if want(m) {
+				return m.Value
+			}
+		}
+	}
+	return ""
 }
 
 // fetchIndividualTypes loads every individual's every `rdf:type` triple — query responsibility 3.
@@ -251,7 +342,7 @@ func fetchIndividualValues(ctx context.Context, gdb *graphdb.Client) (map[string
 			continue
 		}
 
-		value := AssertedValue{Predicate: predicate.Value, IsIRI: object.Type == "uri", Value: object.Value}
+		value := AssertedValue{Predicate: predicate.Value, IsIRI: object.Type == "uri", IsBlank: object.Type == "bnode", Value: object.Value}
 		if !value.IsIRI {
 			value.Datatype = object.Datatype
 			if value.Datatype == "" {
@@ -283,4 +374,143 @@ func parseIntBinding(s string) int {
 		return 0
 	}
 	return n
+}
+
+// fetchSparqlConstraints loads every `sh:sparql` blank node of every NodeShape with a target class.
+// A constraint the engine does not run (deactivated, `sh:ask`, `sh:prefixes`, no `sh:select`) is
+// returned as NotChecked with the reason instead.
+func fetchSparqlConstraints(ctx context.Context, gdb *graphdb.Client) ([]SparqlConstraint, []NotChecked, error) {
+	query := fmt.Sprintf(`
+		SELECT ?shape ?class ?sc ?select ?ask ?message ?deactivated ?prefixes ?ruleId ?dimension WHERE {
+			GRAPH ?g {
+				?shape a <%s> ; <%s> ?class ; <%s> ?sc .
+				OPTIONAL { ?sc <%s> ?select }
+				OPTIONAL { ?sc <%s> ?ask }
+				OPTIONAL { ?sc <%s> ?message }
+				OPTIONAL { ?sc <%s> ?deactivated }
+				OPTIONAL { ?sc <%s> ?prefixes }
+			}
+			OPTIONAL { GRAPH ?g2 { ?shape <%s> ?ruleId } }
+			OPTIONAL { GRAPH ?g3 { ?shape <%s> ?dimension } }
+		}`,
+		shNodeShape, shTargetClass, shSparql, shSelect, shAsk, shMessage, shDeactivated, shPrefixes, armID, armQualityDimension,
+	)
+	result, err := gdb.Select(ctx, query)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	type key struct{ shape, class, sc string }
+	var order []key
+	rows := map[key]*SparqlConstraint{}
+	extra := map[key]*struct {
+		ask, deactivated, prefixes bool
+		messages                   []langString
+	}{}
+	for _, b := range result.Results.Bindings {
+		shape, hasShape := b["shape"]
+		class, hasClass := b["class"]
+		sc, hasSc := b["sc"]
+		if !hasShape || !hasClass || !hasSc {
+			continue
+		}
+		k := key{shape.Value, class.Value, sc.Value}
+		c, ok := rows[k]
+		if !ok {
+			c = &SparqlConstraint{ShapeIri: shape.Value, TargetClass: class.Value}
+			rows[k] = c
+			extra[k] = &struct {
+				ask, deactivated, prefixes bool
+				messages                   []langString
+			}{}
+			order = append(order, k)
+		}
+		if v, ok := b["select"]; ok {
+			c.Select = v.Value
+		}
+		if v, ok := b["ruleId"]; ok && c.RuleId == "" {
+			c.RuleId = v.Value
+		}
+		if v, ok := b["dimension"]; ok && c.QualityDimension == "" {
+			c.QualityDimension = v.Value
+		}
+		e := extra[k]
+		if v, ok := b["message"]; ok {
+			e.messages = appendLangString(e.messages, langString{v.Lang, v.Value})
+		}
+		if _, ok := b["ask"]; ok {
+			e.ask = true
+		}
+		if v, ok := b["deactivated"]; ok && strings.EqualFold(v.Value, "true") {
+			e.deactivated = true
+		}
+		if _, ok := b["prefixes"]; ok {
+			e.prefixes = true
+		}
+	}
+
+	var constraints []SparqlConstraint
+	var notChecked []NotChecked
+	for _, k := range order {
+		c, e := rows[k], extra[k]
+		c.Message = pickMessage(e.messages)
+		skip := func(reason string) {
+			notChecked = append(notChecked, NotChecked{ShapeIri: c.ShapeIri, RuleId: c.RuleId, Construct: "sh:sparql", Reason: reason})
+		}
+		switch {
+		case e.deactivated:
+			skip("sh:deactivated true")
+		case e.ask:
+			skip("sh:ask constraints are not supported, only sh:select")
+		case e.prefixes:
+			skip("sh:prefixes is not supported; write the select with full IRIs")
+		case c.Select == "":
+			skip("no sh:select")
+		default:
+			constraints = append(constraints, *c)
+		}
+	}
+	return constraints, notChecked, nil
+}
+
+// ignoredPropertyKeys are the predicates of a `sh:property` node the engine evaluates or that only
+// annotate (names, grouping); any other key is reported as not checked.
+var ignoredPropertyKeys = map[string]bool{
+	rdfType: true, rdfsLabel: true, rdfsComment: true,
+	shPath: true, shMinCount: true, shMaxCount: true, shDatatype: true, shClass: true, shOr: true,
+	shPattern: true, shFlags: true, shMinLength: true, shMessage: true,
+	shNS + "name": true, shNS + "description": true, shNS + "order": true, shNS + "group": true, shNS + "severity": true,
+}
+
+// fetchIgnoredPropertyKeys lists, once per shape and key, the property-shape keys the engine does
+// not evaluate (for example `sh:in`), so the report can say they were not checked.
+func fetchIgnoredPropertyKeys(ctx context.Context, gdb *graphdb.Client) ([]NotChecked, error) {
+	query := fmt.Sprintf(`
+		SELECT DISTINCT ?shape ?key ?ruleId WHERE {
+			GRAPH ?g { ?shape a <%s> ; <%s> ?ps . ?ps ?key ?value }
+			OPTIONAL { GRAPH ?g2 { ?shape <%s> ?ruleId } }
+		}`,
+		shNodeShape, shProperty, armID,
+	)
+	result, err := gdb.Select(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+
+	seen := map[[2]string]bool{}
+	var out []NotChecked
+	for _, b := range result.Results.Bindings {
+		shape, hasShape := b["shape"]
+		key, hasKey := b["key"]
+		if !hasShape || !hasKey || ignoredPropertyKeys[key.Value] || seen[[2]string{shape.Value, key.Value}] {
+			continue
+		}
+		seen[[2]string{shape.Value, key.Value}] = true
+		construct := key.Value
+		if strings.HasPrefix(construct, shNS) {
+			construct = "sh:" + strings.TrimPrefix(construct, shNS)
+		}
+		out = append(out, NotChecked{ShapeIri: shape.Value, RuleId: b["ruleId"].Value, Construct: construct, Reason: "not evaluated by the validation engine"})
+	}
+	return out, nil
 }

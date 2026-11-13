@@ -13,6 +13,7 @@
 	import AppNav from '#lib/components/AppNav.svelte';
 	import PipelineSubNav from '#lib/components/PipelineSubNav.svelte';
 	import { documentationStore } from '#lib/stores/documentation-store.js';
+	import { provideOpenDocumentation } from '#lib/utils/documentation-context.js';
 	import UserMenu from '#lib/components/UserMenu.svelte';
 	import ProfileView from '#lib/components/ProfileView.svelte';
 	import DropdownMenu from '#lib/components/DropdownMenu.svelte';
@@ -60,6 +61,16 @@
 	let showMissingConcepts = $state(false);
 	let showSettings = $state(false);
 	let showDocumentation = $state(false);
+	/** Bumped to remount the panel, so it opens on a new section even when it is already open. */
+	let documentationKey = $state(0);
+
+	/** Opens the Documentation panel on a section; pages ask for this through context (`useOpenDocumentation`). */
+	function openDocumentation(sectionId: string) {
+		documentationStore.setLastSectionId(sectionId);
+		showDocumentation = true;
+		documentationKey += 1;
+	}
+	provideOpenDocumentation(openDocumentation);
 	let exportingQuads = $state(false);
 
 	let showImportDialog = $state(false);
@@ -410,10 +421,7 @@
 	{#if page.data.user && routeView.isPipelineArea}
 		<PipelineSubNav
 			{routeView}
-			onOpenGuide={() => {
-				documentationStore.setLastSectionId('pipeline-quick-start');
-				showDocumentation = true;
-			}}
+			onOpenGuide={() => openDocumentation('pipeline-quick-start')}
 		/>
 	{/if}
 	<main class="app-main">
@@ -428,7 +436,9 @@
 <ActivityIndicator busy={requestActivity.busy} suppressed={workbenchActions.loading} />
 
 {#if showDocumentation}
-	<DocumentationPanel onClose={() => (showDocumentation = false)} />
+	{#key documentationKey}
+		<DocumentationPanel onClose={() => (showDocumentation = false)} />
+	{/key}
 {/if}
 
 <Modal

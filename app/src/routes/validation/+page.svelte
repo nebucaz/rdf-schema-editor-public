@@ -2,6 +2,7 @@
 	/** STORY-132: dedicated `/validation` route — thin wrapper around `ValidationReportView`,
 	 *  mirroring `/identities/+page.svelte`'s route-file-is-the-page structure. */
 	import GateReportView from '#lib/components/GateReportView.svelte';
+	import ValidationAbout from '#lib/components/ValidationAbout.svelte';
 	import ValidationReportView from '#lib/components/ValidationReportView.svelte';
 	import { page } from '$app/state';
 	import { appUrl } from '#lib/utils/urls.js';
@@ -15,12 +16,12 @@
 </svelte:head>
 
 <div class="validation-page">
-	<h1>Validation Report</h1>
-	<p class="see-also">
+	<h1 class="no-print">Validation Report</h1>
+	<p class="see-also no-print">
 		<a href={appUrl('/questions#results')} data-testid="cq-results-link">Competency question results</a>
 		show whether the model still answers the agreed questions.
 	</p>
-	<div class="tabs" role="tablist" aria-label="Validation reports">
+	<div class="tabs no-print" role="tablist" aria-label="Validation reports">
 		<button type="button" role="tab" aria-selected={tab === 'shacl'} class:active={tab === 'shacl'} onclick={() => (tab = 'shacl')}>
 			SHACL validation
 		</button>
@@ -28,6 +29,7 @@
 			Gate report
 		</button>
 	</div>
+	<ValidationAbout {tab} />
 	{#if tab === 'shacl'}
 		<ValidationReportView />
 	{:else}
@@ -75,5 +77,23 @@
 	h1 {
 		margin: 0;
 		font-size: 1.25rem;
+	}
+
+	@media print {
+		.no-print {
+			display: none !important;
+		}
+		.validation-page {
+			height: auto;
+			padding: 0;
+			overflow: visible;
+		}
+		:global(body:has(.validation-page) .app-header) {
+			display: none;
+		}
+		:global(body:has(.validation-page) .app-main) {
+			overflow: visible;
+			height: auto;
+		}
 	}
 </style>

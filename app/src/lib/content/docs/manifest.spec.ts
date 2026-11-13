@@ -234,11 +234,11 @@ describe('loading-spinner STORY-277: bulk add and loading sections', () => {
 describe('ontology-pipeline STORY-336: pipeline guide sections', () => {
 	const guide = ['pipeline-guide', 'terms-and-classes', 'changes-and-releases'];
 
-	it('registers the three guide sections under Panels & Views', () => {
+	it('registers the three guide sections under Ontology Pipeline', () => {
 		for (const id of guide) {
 			const section = docSections.find((s) => s.id === id);
 			expect(section, `missing section "${id}"`).toBeDefined();
-			expect(section?.category).toBe('Panels & Views');
+			expect(section?.category).toBe('Ontology Pipeline');
 			expect(section?.content.trim().length).toBeGreaterThan(200);
 		}
 	});
@@ -270,5 +270,132 @@ describe('ontology-pipeline STORY-336: pipeline guide sections', () => {
 			expect(content, id).not.toMatch(/"[^"]{200,}"/);
 			for (const [, ref] of content.matchAll(/\bpp?\.\s*([^\s)]+)/g)) expect(ref, id).toMatch(/^\d/);
 		}
+	});
+});
+
+describe('process-description STORY-337: Ontology Pipeline category', () => {
+	const pipelineIds = [
+		'pipeline-quick-start',
+		'pipeline-guide',
+		'vocabulary',
+		'competency-questions',
+		'gate-report',
+		'pipeline-view',
+		'terms-and-classes',
+		'changes-and-releases'
+	];
+
+	it('holds the eight existing pipeline sections under their unchanged ids', () => {
+		for (const id of pipelineIds) {
+			const section = docSections.find((s) => s.id === id);
+			expect(section, `missing section "${id}"`).toBeDefined();
+			expect(section?.category).toBe('Ontology Pipeline');
+		}
+	});
+
+	it('keeps the sections in reading order: quick start, then guide, then the reference pages', () => {
+		const ordered = docSections.filter((s) => s.category === 'Ontology Pipeline').sort((a, b) => a.order - b.order);
+		expect(ordered[0].id).toBe('pipeline-quick-start');
+		expect(ordered[1].id).toBe('pipeline-guide');
+	});
+
+	it('uses a distinct order for every section of the category', () => {
+		const orders = docSections.filter((s) => s.category === 'Ontology Pipeline').map((s) => s.order);
+		expect(new Set(orders).size).toBe(orders.length);
+	});
+});
+
+describe('process-description STORY-337: internal links', () => {
+	it('every bare-id link in every section points at a section that exists', () => {
+		const ids = new Set(docSections.map((s) => s.id));
+		for (const section of docSections) {
+			for (const [, target] of section.content.matchAll(/\]\(([a-z0-9-]+)\)/g)) {
+				expect(ids.has(target), `${section.id} -> ${target}`).toBe(true);
+			}
+		}
+	});
+});
+
+describe('process-description STORY-338: governance sheet', () => {
+	const section = docSections.find((s) => s.id === 'pipeline-governance');
+	const text = section?.content ?? '';
+
+	it('is registered in the Ontology Pipeline category after the pipeline guide', () => {
+		expect(section).toBeDefined();
+		expect(section?.category).toBe('Ontology Pipeline');
+		const guide = docSections.find((s) => s.id === 'pipeline-guide')!;
+		expect(section!.order).toBeGreaterThan(guide.order);
+	});
+
+	it('has a per-stage table covering all six stages with book page references', () => {
+		for (const stage of ['Vocabulary', 'Metadata', 'Taxonomy', 'Thesaurus', 'Ontology', 'Knowledge graph']) {
+			expect(text, stage).toMatch(new RegExp(`\\|\\s*\\*\\*${stage}\\*\\*`));
+		}
+		expect(text).toMatch(/pp?\.\s?\d+/);
+	});
+
+	it('has a roles and cadence table with the four roles and the key actions', () => {
+		for (const role of ['Steward', 'Authority', 'Domain expert', 'Modeller']) expect(text, role).toContain(role);
+		for (const action of ['Request a change', 'Assess impact', 'Approve', 'Release', 'Review the competency questions']) {
+			expect(text, action).toContain(action);
+		}
+		expect(text).toMatch(/one person may hold both/i);
+	});
+
+	it('names the smallest set of governance to start with', () => {
+		expect(text).toMatch(/minimum/i);
+		for (const item of ['steward', 'authority', 'change log', 'version', 'quarterly']) expect(text.toLowerCase(), item).toContain(item);
+	});
+
+	it('separates model changes from data changes', () => {
+		expect(text).toMatch(/model change/i);
+		expect(text).toMatch(/data change/i);
+	});
+
+	it('lists what the app does not do', () => {
+		expect(text).toMatch(/does not do/i);
+		for (const gap of ['committee', 'decision matrix', 'acceptance evidence', 'approval scope', 'reasoner', 'history of instance data']) {
+			expect(text.toLowerCase(), gap).toContain(gap);
+		}
+	});
+
+	it('ends with a steward checklist as a task list and points to the standalone file for printing', () => {
+		expect(text).toMatch(/^- \[ \] /m);
+		expect(text).toMatch(/standalone/i);
+	});
+
+	it('presents the method as a recommended practice that the app records but does not enforce', () => {
+		expect(text).toMatch(/recommended/i);
+		expect(text).toMatch(/not enforce|does not enforce|never enforced/i);
+	});
+
+	it('links to the reference pages instead of repeating them', () => {
+		for (const id of ['changes-and-releases', 'competency-questions', 'gate-report']) expect(text).toContain(`](${id})`);
+	});
+});
+
+describe('process-description STORY-348: older pipeline pages point at the new guides', () => {
+	const GUIDE_IDS = ['guide-vocabulary', 'guide-metadata', 'guide-taxonomy', 'guide-thesaurus', 'guide-ontology', 'guide-knowledge-graph'];
+	const quickStart = docSections.find((s) => s.id === 'pipeline-quick-start')!.content;
+	const guide = docSections.find((s) => s.id === 'pipeline-guide')!.content;
+
+	it('the quick start links to the governance sheet and every stage guide', () => {
+		for (const id of ['pipeline-governance', ...GUIDE_IDS]) expect(quickStart, id).toContain(`](${id})`);
+	});
+
+	it('the pipeline guide links to the governance sheet, the example and every stage guide', () => {
+		for (const id of ['pipeline-governance', 'pipeline-example', ...GUIDE_IDS]) expect(guide, id).toContain(`](${id})`);
+	});
+
+	it('the pipeline guide says how the Pipeline page groups the six stages of the book', () => {
+		expect(guide).toMatch(/no metadata (box|stage)/i);
+		expect(guide).toMatch(/validation and application/i);
+	});
+
+	it('the governance sheet and the pipeline guide each own their rules: roles table once, governance checklist once', () => {
+		const governance = docSections.find((s) => s.id === 'pipeline-governance')!.content;
+		expect(guide.match(/\| Role \| What they do \|/g)?.length ?? 0).toBe(1);
+		expect(governance).toContain('](pipeline-guide)');
+		expect(governance.match(/\| Role \| What they do \|/g)?.length ?? 0).toBe(0);
 	});
 });

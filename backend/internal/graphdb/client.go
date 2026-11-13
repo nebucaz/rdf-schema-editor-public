@@ -45,6 +45,7 @@ type Binding struct {
 	Type     string `json:"type"`
 	Value    string `json:"value"`
 	Datatype string `json:"datatype"`
+	Lang     string `json:"xml:lang"`
 }
 
 // SelectResult is a parsed sparql-results+json SELECT response.

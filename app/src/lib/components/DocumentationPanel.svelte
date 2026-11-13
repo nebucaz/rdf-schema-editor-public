@@ -12,7 +12,14 @@
 
 	/** Fixed display order for the table of contents (STORY-140) — matches STORY-134's five
 	 *  category names, in the same order `research.md`'s inventory and `plan.md` list them. */
-	const CATEGORY_ORDER: DocCategory[] = ['Canvas Nodes', 'Canvas Edges', 'Forms', 'Panels & Views', 'Toggles & Concepts'];
+	const CATEGORY_ORDER: DocCategory[] = [
+		'Canvas Nodes',
+		'Canvas Edges',
+		'Forms',
+		'Panels & Views',
+		'Ontology Pipeline',
+		'Toggles & Concepts'
+	];
 
 	const DEFAULT_WIDTH = 560;
 	const MIN_WIDTH = 320;

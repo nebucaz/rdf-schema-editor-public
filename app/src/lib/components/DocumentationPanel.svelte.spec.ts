@@ -12,3 +12,19 @@ describe('DocumentationPanel cross-section links', () => {
 		expect(await screen.findByRole('heading', { level: 1, name: 'Competency Questions' })).toBeTruthy();
 	});
 });
+
+describe('DocumentationPanel categories', () => {
+	it('lists the Ontology Pipeline category with its quick start', async () => {
+		render(DocumentationPanel, { props: { onClose: () => {} } });
+		expect(await screen.findByText('Ontology Pipeline')).toBeTruthy();
+		expect(screen.getAllByRole('button', { name: /Ontology Pipeline: Quick Start/ }).length).toBeGreaterThan(0);
+	});
+});
+
+describe('DocumentationPanel opened on a guide (process-description STORY-346)', () => {
+	it('opens on the section the Pipeline page asked for', async () => {
+		documentationStore.setLastSectionId('guide-ontology');
+		render(DocumentationPanel, { props: { onClose: () => {} } });
+		expect(await screen.findByRole('heading', { level: 1, name: 'Stage Guide: Ontology' })).toBeTruthy();
+	});
+});

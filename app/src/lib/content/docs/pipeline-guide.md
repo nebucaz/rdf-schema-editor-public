@@ -18,6 +18,22 @@ The stages below are a **recommended order**. Whether your team adopts the metho
 | 6. Knowledge graph | Load individuals and check them | **Identities** and **Validation** |
 | Throughout | Questions, owners, change control, releases | [Competency Questions](competency-questions), **Governance**, see [Changes, Requests and Releases](changes-and-releases) |
 
+The book's six stages and the Pipeline page do not line up one to one. The page has no metadata box (metadata is recorded on the terms and on the Governance page, so its guide is linked from the vocabulary box), and it splits the last stage into validation and application, which the knowledge-graph guide covers together.
+
+## Step-by-step guides
+
+| Stage | Guide |
+|---|---|
+| 1. Vocabulary | [Stage Guide: Vocabulary](guide-vocabulary) |
+| 2. Metadata | [Stage Guide: Metadata](guide-metadata) |
+| 3. Taxonomy | [Stage Guide: Taxonomy](guide-taxonomy) |
+| 4. Thesaurus | [Stage Guide: Thesaurus](guide-thesaurus) |
+| 5. Ontology | [Stage Guide: Ontology](guide-ontology) |
+| 6. Knowledge graph | [Stage Guide: Validation and Knowledge Graph](guide-knowledge-graph) |
+| Throughout | [Governance Sheet](pipeline-governance), and the [Worked Example](pipeline-example) the guides share |
+
+The same guides, with a printable checklist, are in `docs/ontology-pipeline-practitioner-guide.md` in the repository.
+
 ## Competency questions: the ontology's contract and test harness
 
 The book teaches competency questions in the ontology stage, as its first design discipline (pp. 192-193): write down what the model must answer **before the first modelling decision**, and agree the list with a domain expert. In the app they belong to the **Ontology** stage: each question is linked to the classes and properties it needs, and the question statistics (linked, passing, regressions) appear in the ontology box of each namespace on the Overview. A line under the namespaces counts the questions that are not linked to anything yet.

@@ -18,6 +18,9 @@
 	import { sparqlConnector } from '#lib/services/sparql-connector.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
+	import { useOpenDocumentation } from '#lib/utils/documentation-context.js';
+
+	const openDocumentation = useOpenDocumentation();
 
 	let summaries = $state<NamespaceSummary[]>([]);
 	let questionCount = $state(0);
@@ -124,7 +127,7 @@
 		</p>
 		{/if}
 		{#each summaries as summary (summary.namespaceBaseIri)}
-			<StageStrip {summary} pending={detailsLoaded ? [] : PENDING_STAGES} />
+			<StageStrip {summary} pending={detailsLoaded ? [] : PENDING_STAGES} onOpenGuide={openDocumentation} />
 		{/each}
 		<section id="debt" aria-label="Semantic debt">
 			<h2>Semantic debt {#if detailsLoaded}<span class="debt-count" data-testid="debt-count">{countDebt(debt)}</span>{/if}</h2>

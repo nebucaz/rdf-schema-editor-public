@@ -1,0 +1,32 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:  <http://www.w3.org/ns/shacl#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+arm-s:ApplikationskomponenteNameUniqueShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-NAME-UNIQUE" ;
+    arm-s:qualityDimension "Uniqueness" ;
+
+    sh:sparql [
+          a sh:SPARQLConstraint ;
+          sh:message "Name ist nicht eindeutig ueber alle Application Components."@de ;
+
+          sh:select """
+            SELECT DISTINCT
+                $this
+                ?value
+                (<https://lida.pnet.ch/arm/schema#NAME> AS ?path)
+            WHERE {
+                $this
+                    <https://lida.pnet.ch/arm/schema#NAME> ?value .
+
+                ?other
+                    a <https://lida.pnet.ch/arm/schema#Applikationskomponente> ;
+                    <https://lida.pnet.ch/arm/schema#NAME> ?value .
+
+                FILTER (?other != $this)
+            }
+        """
+      ] .

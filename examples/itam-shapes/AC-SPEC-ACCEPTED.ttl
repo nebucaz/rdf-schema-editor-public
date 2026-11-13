@@ -1,0 +1,38 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+
+arm-s:ApplikationskomponenteSpecAcceptedShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-SPEC-ACCEPTED" ;
+    arm-s:qualityDimension "Validity (Domain)" ;
+
+    sh:sparql [
+          a sh:SPARQLConstraint ;
+          sh:message "Freigegebene Application Component muss Spezialisierung Applikation oder Applikationsmodul haben."@de ;
+          sh:select """
+            SELECT
+                $this
+                ?value
+                (<https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> AS ?path)
+            WHERE {
+                $this
+                    <https://lida.pnet.ch/arm/schema#A_OBJECT_STATE> <https://lida.pnet.ch/enum/Freigegeben> .
+
+                OPTIONAL {
+                    $this
+                        <https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> ?value .
+                }
+
+                FILTER (
+                    !BOUND(?value)
+                    ||
+                    ?value NOT IN (
+                        <https://lida.pnet.ch/enum/Applikation>,
+                        <https://lida.pnet.ch/enum/Applikationsmodul>
+                    )
+                )
+            }
+        """
+      ] .

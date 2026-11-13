@@ -43,7 +43,8 @@ export const SH = {
 	NodeShape: `${SH_NS}NodeShape`,
 	property: `${SH_NS}property`,
 	path: `${SH_NS}path`,
-	targetClass: `${SH_NS}targetClass`
+	targetClass: `${SH_NS}targetClass`,
+	SPARQLConstraint: `${SH_NS}SPARQLConstraint`
 };
 
 /** DCAT/DCT/PROV vocabulary (data-catalog Story 001) — app-authored predicates the catalog
@@ -267,6 +268,8 @@ export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[];
 	const schema: Quad[] = [];
 	const shapes: Quad[] = [];
 	const instances: Quad[] = [];
+	// A NodeShape's own annotations (e.g. `arm-s:id`, `arm-s:qualityDimension`) stay with the shape.
+	const nodeShapeSubjects = new Set(quads.filter((q) => isRdfType(q, SH.NodeShape)).map((q) => q.subject.value));
 	for (const q of quads) {
 		const isReifiedStatement =
 			q.predicate.value === RDF.subject ||
@@ -280,7 +283,7 @@ export function partitionQuads(quads: Quad[]): { schema: Quad[]; shapes: Quad[];
 		const isShapesBucket =
 			q.predicate.value.startsWith(SH_NS) ||
 			q.subject.termType === 'BlankNode' ||
-			isRdfType(q, SH.NodeShape);
+			nodeShapeSubjects.has(q.subject.value);
 		(isShapesBucket ? shapes : schema).push(q);
 	}
 	return { schema, shapes, instances };

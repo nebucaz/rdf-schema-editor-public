@@ -1,0 +1,41 @@
+@prefix arm-s: <https://lida.pnet.ch/arm/schema#> .
+@prefix sh:    <http://www.w3.org/ns/shacl#> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+
+arm-s:ApplikationskomponenteTechnicalIdExistsShape
+    a sh:NodeShape ;
+    sh:targetClass arm-s:Applikationskomponente ;
+
+    arm-s:id "AC-TECHID-EXIST" ;
+    arm-s:qualityDimension "Completeness (Attribute)" ;
+
+    sh:property [
+          sh:path arm-s:A_TECHNICAL_ID ;
+          sh:minCount 1 ;
+          sh:datatype xsd:string ;
+          sh:minLength 1 ;
+          sh:message "Technische ID fehlt."@de
+      ] ;
+
+    sh:sparql [
+          a sh:SPARQLConstraint ;
+          sh:message "Technische ID fehlt."@de ;
+          sh:select """
+            SELECT
+                $this
+                ?value
+                (<https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> AS ?path)
+            WHERE {
+                $this
+                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .
+
+                FILTER (
+                    isLiteral(?value)
+                    &&
+                    STRLEN(
+                        REPLACE(STR(?value), "^\\\\s+|\\\\s+$", "")
+                    ) = 0
+                )
+            }
+        """
+      ] .

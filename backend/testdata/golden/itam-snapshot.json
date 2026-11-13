@@ -1,0 +1,795 @@
+{
+	"subClassOf": {},
+	"ownConstraints": {
+		"https://lida.pnet.ch/arm/schema#Applikationskomponente": [
+			{
+				"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteTechnicalIdExistsShape",
+				"ruleId": "AC-TECHID-EXIST",
+				"qualityDimension": "Completeness (Attribute)",
+				"message": "Technische ID fehlt.",
+				"path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"minCount": 1,
+				"datatype": "http://www.w3.org/2001/XMLSchema#string",
+				"minLength": 1
+			},
+			{
+				"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteTechnicalIdFormatShape",
+				"ruleId": "AC-TECHID-FORMAT",
+				"qualityDimension": "Validity (Syntactic)",
+				"message": "Technische ID ist nicht numerisch.",
+				"path": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"pattern": "^[0-9]+$"
+			}
+		]
+	},
+	"individualTypes": {
+		"https://lida.pnet.ch/arm#R01": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R02": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R03": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R04": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R10": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R11": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R12": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R13": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R14": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R15": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R16": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R17": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R18": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R19": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R20": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R21": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R22": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R23": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R24": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R25": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R26": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R28": [
+			"https://lida.pnet.ch/arm/schema#Applikationskomponente"
+		],
+		"https://lida.pnet.ch/arm#R29": [
+			"https://lida.pnet.ch/arm/schema#Infrastrukturkomponente"
+		]
+	},
+	"individualValues": {
+		"https://lida.pnet.ch/arm#R01": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1001",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Kernbanking",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R02": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1002",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "KBK.Zahlungen",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R03": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Entwurf",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1003",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Entwurfsapplikation",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R04": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1004",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Abcdefghijklmnop.Modul",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R10": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Kreditportal",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R11": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Leerid",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R12": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "  ",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Blankid",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R13": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1005",
+				"datatype": "http://www.w3.org/2001/XMLSchema#integer"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Ganzzahlid",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R14": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "A-77",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Formatid",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R15": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "2001",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Doppelid Eins",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R16": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "2001",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Doppelid Zwei",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R17": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "3001",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Doppelt",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R18": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikation",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "3002",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Doppelt",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R19": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4019",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Reporting",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R20": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4020",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "kbk.Zahlungen",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R21": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4021",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Abcdefghijklmnopq.Modul",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R22": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4022",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "KBK.AbcdefghijAbcdefghijAbcdefghijAbcdefghij",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R23": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4023",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "KBK.Zu",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R24": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4024",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Ohnetyp",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R25": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Dienst",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4025",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Dienstfreigabe",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R26": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Dienst",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "ABC",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Dienstformat",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		],
+		"https://lida.pnet.ch/arm#R28": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Applikationsmodul",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_OBJECT_STATE",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/enum/Freigegeben",
+				"datatype": ""
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "4028",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": true,
+				"isBlank": false,
+				"value": "https://lida.pnet.ch/arm#R28Name",
+				"datatype": ""
+			}
+		],
+		"https://lida.pnet.ch/arm#R29": [
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID",
+				"isIri": false,
+				"isBlank": false,
+				"value": "1001",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			},
+			{
+				"predicate": "https://lida.pnet.ch/arm/schema#NAME",
+				"isIri": false,
+				"isBlank": false,
+				"value": "Kernbanking",
+				"datatype": "http://www.w3.org/2001/XMLSchema#string"
+			}
+		]
+	},
+	"sparqlConstraints": [
+		{
+			"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteNameFormatModulShape",
+			"targetClass": "https://lida.pnet.ch/arm/schema#Applikationskomponente",
+			"select": "\n            SELECT $this ?value\n                   (<https://lida.pnet.ch/arm/schema#NAME> AS ?path)\n            WHERE {\n                # Guard: A_APP_CMP_TYPE equals Applikationsmodul\n                $this\n                    <https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> <https://lida.pnet.ch/enum/Applikationsmodul> ;\n                    <https://lida.pnet.ch/arm/schema#NAME> ?value .\n\n                FILTER (\n                    !isLiteral(?value)\n                    ||\n                    !REGEX(\n                        STR(?value),\n                        \"^[A-Z][A-Za-z0-9]{2,15}\\\\.[A-Za-z0-9 &-]{3,39}$\"\n                    )\n                )\n            }\n        ",
+			"message": "Modulname verletzt die Namens-Konvention (Abkuerzung.Modulname, Modulteil 4-40 Zeichen).",
+			"ruleId": "AC-NAME-FORMAT-MODUL",
+			"qualityDimension": "Validity (Syntactic)"
+		},
+		{
+			"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteNameUniqueShape",
+			"targetClass": "https://lida.pnet.ch/arm/schema#Applikationskomponente",
+			"select": "\n            SELECT DISTINCT\n                $this\n                ?value\n                (<https://lida.pnet.ch/arm/schema#NAME> AS ?path)\n            WHERE {\n                $this\n                    <https://lida.pnet.ch/arm/schema#NAME> ?value .\n\n                ?other\n                    a <https://lida.pnet.ch/arm/schema#Applikationskomponente> ;\n                    <https://lida.pnet.ch/arm/schema#NAME> ?value .\n\n                FILTER (?other != $this)\n            }\n        ",
+			"message": "Name ist nicht eindeutig ueber alle Application Components.",
+			"ruleId": "AC-NAME-UNIQUE",
+			"qualityDimension": "Uniqueness"
+		},
+		{
+			"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteSpecAcceptedShape",
+			"targetClass": "https://lida.pnet.ch/arm/schema#Applikationskomponente",
+			"select": "\n            SELECT\n                $this\n                ?value\n                (<https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> AS ?path)\n            WHERE {\n                $this\n                    <https://lida.pnet.ch/arm/schema#A_OBJECT_STATE> <https://lida.pnet.ch/enum/Freigegeben> .\n\n                OPTIONAL {\n                    $this\n                        <https://lida.pnet.ch/arm/schema#A_APP_CMP_TYPE> ?value .\n                }\n\n                FILTER (\n                    !BOUND(?value)\n                    ||\n                    ?value NOT IN (\n                        <https://lida.pnet.ch/enum/Applikation>,\n                        <https://lida.pnet.ch/enum/Applikationsmodul>\n                    )\n                )\n            }\n        ",
+			"message": "Freigegebene Application Component muss Spezialisierung Applikation oder Applikationsmodul haben.",
+			"ruleId": "AC-SPEC-ACCEPTED",
+			"qualityDimension": "Validity (Domain)"
+		},
+		{
+			"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteTechnicalIdExistsShape",
+			"targetClass": "https://lida.pnet.ch/arm/schema#Applikationskomponente",
+			"select": "\n            SELECT\n                $this\n                ?value\n                (<https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> AS ?path)\n            WHERE {\n                $this\n                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .\n\n                FILTER (\n                    isLiteral(?value)\n                    &&\n                    STRLEN(\n                        REPLACE(STR(?value), \"^\\\\s+|\\\\s+$\", \"\")\n                    ) = 0\n                )\n            }\n        ",
+			"message": "Technische ID fehlt.",
+			"ruleId": "AC-TECHID-EXIST",
+			"qualityDimension": "Completeness (Attribute)"
+		},
+		{
+			"shapeIri": "https://lida.pnet.ch/arm/schema#ApplikationskomponenteTechnicalIdUniqueShape",
+			"targetClass": "https://lida.pnet.ch/arm/schema#Applikationskomponente",
+			"select": "\n            SELECT DISTINCT\n                $this\n                ?value\n                (<https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> AS ?path)\n            WHERE {\n                $this\n                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .\n\n                ?other\n                    a <https://lida.pnet.ch/arm/schema#Applikationskomponente> ;\n                    <https://lida.pnet.ch/arm/schema#A_TECHNICAL_ID> ?value .\n\n                FILTER (?other != $this)\n            }\n        ",
+			"message": "Technische ID ist nicht eindeutig ueber alle Application Components.",
+			"ruleId": "AC-TECHID-UNIQUE",
+			"qualityDimension": "Uniqueness"
+		}
+	]
+}
