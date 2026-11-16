@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/issues"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/userjwt"
 )
 
@@ -146,5 +149,55 @@ func TestRequireUser(t *testing.T) {
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusNoContent {
 		t.Errorf("valid cookie: %d, want the request to pass through", w.Code)
+	}
+}
+
+type fakeDirectory struct {
+	seen []issues.KnownUser
+	err  error
+}
+
+func (f *fakeDirectory) Remember(_ context.Context, u issues.KnownUser) error {
+	f.seen = append(f.seen, u)
+	return f.err
+}
+
+func callMeWith(t *testing.T, dir UserDirectory, cookie string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := UserIdentity(userSecret)(http.HandlerFunc(MeHandler{Users: dir}.Get))
+	req := httptest.NewRequest(http.MethodGet, "/me", nil)
+	if cookie != "" {
+		req.AddCookie(&http.Cookie{Name: userjwt.CookieName, Value: cookie})
+	}
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	return w
+}
+
+func TestMe_RemembersTheVerifiedUserOnly(t *testing.T) {
+	dir := &fakeDirectory{}
+	tok := userToken(t, jwt.MapClaims{"sub": "u1", "name": "Alice Example", "email": "a@x.example"}, userSecret)
+	if w := callMeWith(t, dir, tok); w.Code != 200 {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if len(dir.seen) != 1 || dir.seen[0] != (issues.KnownUser{Sub: "u1", DisplayName: "Alice Example", Email: "a@x.example"}) {
+		t.Errorf("seen = %+v", dir.seen)
+	}
+	callMeWith(t, dir, "")
+	callMeWith(t, dir, userToken(t, jwt.MapClaims{"sub": "u"}, "other"))
+	if len(dir.seen) != 1 {
+		t.Errorf("an anonymous or unverified call was remembered: %+v", dir.seen)
+	}
+}
+
+func TestMe_StillAnswersWhenTheDirectoryFails(t *testing.T) {
+	dir := &fakeDirectory{err: errors.New("graphdb down")}
+	tok := userToken(t, jwt.MapClaims{"sub": "u1", "name": "Alice Example"}, userSecret)
+	w := callMeWith(t, dir, tok)
+	var body struct {
+		User struct{ Sub string } `json:"user"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil || w.Code != 200 || body.User.Sub != "u1" {
+		t.Errorf("status = %d body = %s", w.Code, w.Body)
 	}
 }

@@ -91,3 +91,14 @@ func printSync(w io.Writer, source string, resp syncResponse) {
 		}
 	}
 }
+
+// printServiceNowSync renders one ServiceNow sync pass.
+func printServiceNowSync(w io.Writer, r serviceNowSyncResponse) {
+	if r.DryRun {
+		fmt.Fprintln(w, "DRY RUN — nothing was written. Pass --apply to run the sync.")
+	}
+	fmt.Fprintf(w, "ServiceNow ticket sync\n  pulled: %d\n  pushed: %d\n  skipped: %d\n  deferred: %d\n  errors: %d\n", r.Pulled, r.Pushed, r.Skipped, r.Deferred, r.Errors)
+	if r.Message != "" {
+		fmt.Fprintf(w, "  first error: %s\n", r.Message)
+	}
+}

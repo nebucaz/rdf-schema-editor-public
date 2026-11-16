@@ -252,6 +252,18 @@ bun run check     # type-check with svelte-check
 bun run test      # run unit tests (vitest)
 ```
 
+## Enabling ServiceNow tickets
+
+Validation issues can get a real ServiceNow ticket (an `incident`), created by hand or in bulk after a dry run, and
+kept in step by a background sync and *Sync now* on the Issues page. It is **off** unless the backend has
+`SERVICENOW_BASE_URL` (https); a set but incomplete configuration refuses startup. Configure it in `backend/.env`
+(every variable is commented in `backend/.env.example`) plus an optional JSON file, `SERVICENOW_CONFIG_FILE`, for the
+state map, close code and routing. Recommended activation order: deploy with the URL empty, point it at a test
+instance, create single tickets, try a bulk dry run, then let the worker run; `SERVICENOW_SYNC_ENABLED=false`
+pauses the worker and automatic pushes. The browser never sees the instance URL or credentials. Details:
+`backend/README.md` ("Enabling ServiceNow") and the in-app "Validation Issues" page. The live check against a real
+instance is a human runbook (`spec/service-now-ticket/`, STORY-405).
+
 ## App version
 
 The version shown at the bottom of the Settings menu is `version` in `app/package.json`, followed by

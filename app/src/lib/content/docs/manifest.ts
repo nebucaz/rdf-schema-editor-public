@@ -192,6 +192,13 @@ const sectionMetas: DocSectionMeta[] = [
 		file: 'validation-report-view.md'
 	},
 	{
+		id: 'validation-issues',
+		title: 'Validation Issues',
+		category: 'Panels & Views',
+		order: 105,
+		file: 'validation-issues.md'
+	},
+	{
 		id: 'identities-area',
 		title: 'The /identities Area',
 		category: 'Panels & Views',

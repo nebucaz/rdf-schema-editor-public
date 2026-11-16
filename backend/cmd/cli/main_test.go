@@ -411,3 +411,50 @@ func TestRun_MintToken_MissingSecret(t *testing.T) {
 		t.Errorf("stderr = %q, want it to mention AUTH_JWT_SECRET", stderr.String())
 	}
 }
+
+func TestRun_ServiceNowSync_DefaultsToDryRunAndApplyFlagApplies(t *testing.T) {
+	var gotQuery, gotMethod, gotPath, gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery, gotMethod, gotPath, gotAuth = r.URL.RawQuery, r.Method, r.URL.Path, r.Header.Get("Authorization")
+		fmt.Fprintf(w, `{"dryRun":%v,"pulled":2,"pushed":3,"skipped":1,"deferred":0,"errors":0}`, r.URL.RawQuery == "dryRun=true")
+	}))
+	defer server.Close()
+
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"servicenow", "sync", "--backend-url", server.URL, "--token", "tok"}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if gotQuery != "dryRun=true" || gotMethod != "POST" || gotPath != "/issues/tickets/sync" || gotAuth != "Bearer tok" {
+		t.Errorf("request = %s %s ?%s auth %q", gotMethod, gotPath, gotQuery, gotAuth)
+	}
+	if out := stdout.String(); !strings.Contains(out, "DRY RUN") || !strings.Contains(out, "pulled: 2") || !strings.Contains(out, "pushed: 3") {
+		t.Errorf("stdout = %s", out)
+	}
+
+	stdout.Reset()
+	if code := run([]string{"servicenow", "sync", "--apply", "--backend-url", server.URL}, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d: %s", code, stderr.String())
+	}
+	if gotQuery != "dryRun=false" || strings.Contains(stdout.String(), "DRY RUN") {
+		t.Errorf("apply: query %q stdout %s", gotQuery, stdout.String())
+	}
+}
+
+func TestRun_ServiceNowSync_UsageAndBackendErrors(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"servicenow"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "usage: importctl servicenow sync") {
+		t.Errorf("bare servicenow = %d %q", code, stderr.String())
+	}
+	stderr.Reset()
+	if code := run([]string{"servicenow", "sync", "extra"}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "usage") {
+		t.Errorf("extra arg = %d %q", code, stderr.String())
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"A ticket sync is already running"}`, http.StatusConflict)
+	}))
+	defer server.Close()
+	stderr.Reset()
+	if code := run([]string{"servicenow", "sync", "--backend-url", server.URL}, &stdout, &stderr); code != 1 || !strings.Contains(stderr.String(), "409") {
+		t.Errorf("409 = %d %q", code, stderr.String())
+	}
+}

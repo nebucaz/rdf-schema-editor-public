@@ -1,6 +1,7 @@
 # Description / Inherited Attributes / Reverse Relations Toggles
 
-Three independent eye-icon buttons in the top bar that declutter an [Entity Node](entity-node) by
+Three independent icon buttons at the right-hand end of the **canvas toolbar** (the row with
+**+ Add Entity** and **+ Add Note**, below the app header) that declutter an [Entity Node](entity-node) by
 hiding parts of it you don't need right now. Each is a simple on/off switch, each remembers its own
 state per-browser (`localStorage`), and none of them changes what's actually stored in GraphDB —
 they only change what's drawn.
@@ -15,6 +16,10 @@ they only change what's drawn.
   drawn A → B, this optionally also draws the implied B → A edge. Hidden by default (unlike the
   other two toggles, which default to shown) so the canvas doesn't double every relation as a
   second edge until you ask for it.
+
+A fourth button in the same group, shown only when a vocabulary namespace exists, toggles the
+"no concept" marker: a small crossed-out book icon and a dashed underline on the header of every
+class that has no vocabulary concept.
 
 ## Why toggle these off
 

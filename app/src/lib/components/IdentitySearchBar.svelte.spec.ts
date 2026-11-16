@@ -25,8 +25,9 @@ describe('IdentitySearchBar live search for Unclassified', () => {
 	it('searches as the user types (debounced) when Unclassified is selected', async () => {
 		const onSearch = setup({ ...base, classIri: UNCLASSIFIED_FACET });
 		await fireEvent.input(input(), { target: { value: 'Bulk 3' } });
+		await vi.advanceTimersByTimeAsync(500);
 		expect(onSearch).not.toHaveBeenCalled();
-		await vi.advanceTimersByTimeAsync(400);
+		await vi.advanceTimersByTimeAsync(150);
 		expect(onSearch).toHaveBeenCalledTimes(1);
 		expect(onSearch.mock.calls[0][0]).toMatchObject({ query: 'Bulk 3', classIri: UNCLASSIFIED_FACET });
 	});
@@ -34,7 +35,7 @@ describe('IdentitySearchBar live search for Unclassified', () => {
 	it('runs one search for a burst of keystrokes', async () => {
 		const onSearch = setup({ ...base, classIri: UNCLASSIFIED_FACET });
 		for (const v of ['B', 'Bu', 'Bul']) await fireEvent.input(input(), { target: { value: v } });
-		await vi.advanceTimersByTimeAsync(400);
+		await vi.advanceTimersByTimeAsync(700);
 		expect(onSearch).toHaveBeenCalledTimes(1);
 		expect(onSearch.mock.calls[0][0].query).toBe('Bul');
 	});
@@ -42,7 +43,7 @@ describe('IdentitySearchBar live search for Unclassified', () => {
 	it('does not search as you type for other class filters', async () => {
 		const onSearch = setup();
 		await fireEvent.input(input(), { target: { value: 'abc' } });
-		await vi.advanceTimersByTimeAsync(400);
+		await vi.advanceTimersByTimeAsync(700);
 		expect(onSearch).not.toHaveBeenCalled();
 	});
 

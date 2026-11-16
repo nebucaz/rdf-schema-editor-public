@@ -1,7 +1,12 @@
 # App Header
 
-One row: the title, the **navigation strip** that switches between the main areas, then the canvas
-selectors and toggles (on the Schema Editor), the **Settings menu** (cog) and the **user menu**.
+One row: the title, the **navigation strip** that switches between the main areas, the **Settings menu**
+(cog) and the **user menu**. On the Validation Report the namespace filter sits here too.
+
+On the Schema Editor the controls for the diagram are not in the header but in the **canvas toolbar**
+below it: the Namespace and Workspace selectors, the Schema | Instances switch, the namespace filter and
+the display toggles (descriptions, inherited attributes, reverse relations, "no concept" marker), see
+[Visibility Toggles](visibility-toggles).
 
 ## Navigation strip
 

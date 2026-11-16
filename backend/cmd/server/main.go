@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -22,6 +23,8 @@ import (
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/config"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/handler"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/issues"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/servicenow"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/sync"
 )
 
@@ -33,6 +36,16 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
+	}
+
+	// A set but invalid ServiceNow configuration refuses startup; an empty SERVICENOW_BASE_URL leaves the
+	// integration off (spec/service-now-ticket Q14). The ticket routes and the worker that use it follow in later stories.
+	snSettings, err := servicenow.LoadSettings(os.Getenv, os.ReadFile)
+	if err != nil {
+		log.Fatalf("config: %v", err)
+	}
+	if snSettings.Enabled() {
+		log.Printf("ServiceNow integration configured (%s, sync enabled: %t)", snSettings.Table, snSettings.SyncEnabled)
 	}
 
 	healthHandler := &handler.HealthHandler{}
@@ -64,7 +77,23 @@ func main() {
 
 	changeLogHandler := handler.NewChangeLogHandler(changelog.New(gdbClient, cfg.DefaultNamespaceBaseIRI()))
 
-	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler, changeLogHandler)
+	var snRunner *servicenow.Runner
+	issueStore := issues.NewStore(gdbClient, cfg.DefaultNamespaceBaseIRI())
+	issuesService := issues.NewService(issueStore, cfg.DefaultNamespaceBaseIRI(), cfg.IssueTrackerURLTemplate)
+	if snSettings.Enabled() {
+		snClient := servicenow.NewClient(snSettings, nil)
+		snCreator := servicenow.NewCreator(snClient, servicenow.NewRouter(snSettings.File.Routing, gdbClient), snSettings)
+		issuesService.EnableTickets(snCreator, issues.TicketOptions{AppURL: snSettings.AppURL, BulkCap: snSettings.BulkCap, NoAutoPush: !snSettings.SyncEnabled})
+		issuesService.EnablePush(servicenow.NewPusher(snClient, snSettings))
+		snRunner = servicenow.NewRunner(servicenow.NewSyncer(snClient, issueStore, snSettings), issuesService)
+	}
+	issuesHandler := handler.NewIssuesHandler(issuesService, handler.NewCheckRunner(gdbClient))
+	if snRunner != nil {
+		issuesHandler.EnableSync(snRunner)
+	}
+	meHandler := handler.MeHandler{Users: issues.NewDirectory(issueStore)}
+
+	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler, changeLogHandler, issuesHandler, meHandler, handler.ServiceNowPublic{Enabled: snSettings.Enabled(), Name: "ServiceNow", BulkCap: snSettings.BulkCap, SyncEnabled: snSettings.Enabled() && snSettings.SyncEnabled})
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -75,6 +104,10 @@ func main() {
 		Interval: cfg.BackstageSyncInterval,
 	}
 	go syncWorker.Run(rootCtx)
+	if snRunner != nil && snSettings.SyncEnabled {
+		snWorker := &servicenow.SyncWorker{Runner: snRunner, Interval: snSettings.SyncInterval}
+		go snWorker.Run(rootCtx)
+	}
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
@@ -103,7 +136,7 @@ func main() {
 // healthcheck can't attach a header, and the route discloses nothing sensitive), every other route except
 // the session routes below requires a validly-signed, unexpired bearer JWT (STORY-002) verified against cfg.AuthJWTSecret.
 // Extracted from main() so it's testable without starting a real listener.
-func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler, changeLogHandler *handler.ChangeLogHandler) chi.Router {
+func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler, changeLogHandler *handler.ChangeLogHandler, issuesHandler *handler.IssuesHandler, meHandler handler.MeHandler, serviceNow handler.ServiceNowPublic) chi.Router {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
@@ -117,8 +150,8 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 	r.Group(func(r chi.Router) {
 		r.Use(handler.CSRFGuard(cfg.AllowedOrigins))
 		r.Use(handler.UserIdentity(cfg.UserJWTSecret))
-		r.Get("/me", handler.MeHandler{}.Get)
-		r.Get("/config", handler.NewConfigHandler(cfg).Get)
+		r.Get("/me", meHandler.Get)
+		r.Get("/config", handler.NewConfigHandler(cfg).WithServiceNow(serviceNow).Get)
 		if cfg.DevLoginEnabled {
 			devLogin := handler.NewDevLoginHandler(cfg.UserJWTSecret, cfg.CookieSecure)
 			r.Post("/auth/dev-login", devLogin.Login)
@@ -134,6 +167,7 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 		r.Get("/sources/{source}/discover", sourceHandler.Discover)
 		r.Get("/sources/{source}/raw/{kind}", sourceHandler.Raw)
 		r.Post("/sources/{source}/sync", sourceHandler.Sync)
+		r.Post("/issues/tickets/sync", issuesHandler.SyncTickets)
 
 		// Everything the app itself reads or writes needs a signed-in user as well.
 		r.Group(func(r chi.Router) {
@@ -147,6 +181,14 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 			r.Delete("/annotations", annotationHandler.Delete)
 			r.Post("/changelog", changeLogHandler.Create)
 			r.Get("/changelog", changeLogHandler.List)
+			r.Post("/issues/reconcile", issuesHandler.Reconcile)
+			r.Get("/issues/report", issuesHandler.Report)
+			r.Get("/issues", issuesHandler.List)
+			r.Get("/issues/assignees", issuesHandler.Assignees)
+			r.Patch("/issues/{id}", issuesHandler.Patch)
+			r.Post("/issues/{id}/ticket", issuesHandler.CreateTicket)
+			r.Post("/issues/tickets/dry-run", issuesHandler.PlanTickets)
+			r.Post("/issues/tickets", issuesHandler.CreateTickets)
 		})
 	})
 

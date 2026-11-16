@@ -6,6 +6,8 @@
 
 /** One finding of `GET /validation/report` (`backend/internal/validation/check.go`'s `Violation`). */
 export interface ValidationFinding {
+	/** Stable finding id derived by the backend (`validation.FindingID`); never recomputed here. */
+	id: string;
 	individualIri: string;
 	individualLabel: string;
 	typeIri: string;

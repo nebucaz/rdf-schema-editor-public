@@ -14,6 +14,8 @@ import (
 // no dedup across types" ADR: a multi-typed identity failing the same path under two of its types
 // produces two separate Violation rows here, not one).
 type Violation struct {
+	// ID is the stable finding id (FindingID), set by CheckSnapshotDetailed and CheckAll.
+	ID              string `json:"id"`
 	IndividualIri   string `json:"individualIri"`
 	IndividualLabel string `json:"individualLabel"`
 	TypeIri         string `json:"typeIri"`
@@ -128,6 +130,7 @@ func CheckSnapshotDetailed(snapshot ValidationSnapshot) CheckResult {
 			}
 		}
 	}
+	assignFindingIDs(violations)
 	return CheckResult{Violations: violations, NotChecked: run.notChecked}
 }
 
@@ -250,6 +253,7 @@ func CheckAll(ctx context.Context, runner SelectRunner, snapshot ValidationSnaps
 	result := CheckSnapshotDetailed(snapshot)
 	violations, notChecked := CheckSparql(ctx, runner, snapshot)
 	if len(violations) > 0 {
+		assignFindingIDs(violations)
 		result.Violations = append(result.Violations, violations...)
 		sort.SliceStable(result.Violations, func(i, j int) bool {
 			a, b := result.Violations[i], result.Violations[j]

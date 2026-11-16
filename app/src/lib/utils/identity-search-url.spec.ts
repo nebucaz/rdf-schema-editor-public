@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildIdentitySearchUrl, parseIdentitySearchParams } from './identity-search-url';
+import {
+	buildIdentitySearchUrl,
+	createSearchSequence,
+	parseIdentitySearchParams,
+	PushedSearches
+} from './identity-search-url';
 
 describe('parseIdentitySearchParams', () => {
 	it('defaults every field to empty/null on a bare/empty search string', () => {
@@ -57,5 +62,52 @@ describe('buildIdentitySearchUrl', () => {
 		const url = buildIdentitySearchUrl(params);
 		const [, search] = url.split('?');
 		expect(parseIdentitySearchParams(search)).toEqual(params);
+	});
+});
+
+describe('createSearchSequence', () => {
+	it('only the newest ticket is current', () => {
+		const seq = createSearchSequence();
+		const a = seq.next();
+		expect(seq.isCurrent(a)).toBe(true);
+		const b = seq.next();
+		expect(seq.isCurrent(a)).toBe(false);
+		expect(seq.isCurrent(b)).toBe(true);
+	});
+});
+
+describe('PushedSearches', () => {
+	it('skips the URL the page pushed itself, once', () => {
+		const pushed = new PushedSearches();
+		pushed.add(buildIdentitySearchUrl({ query: 'ab' }));
+		expect(pushed.consume('?q=ab')).toBe(true);
+		expect(pushed.consume('?q=ab')).toBe(false);
+	});
+
+	it('late URL of an older term is still recognised as ours after a newer push', () => {
+		const pushed = new PushedSearches();
+		pushed.add(buildIdentitySearchUrl({ query: 'ab' }));
+		pushed.add(buildIdentitySearchUrl({ query: 'abc' }));
+		expect(pushed.consume('?q=ab')).toBe(true);
+		expect(pushed.consume('?q=abc')).toBe(true);
+	});
+
+	it('does not skip an external URL (deep link, Back/Forward)', () => {
+		const pushed = new PushedSearches();
+		pushed.add(buildIdentitySearchUrl({ query: 'ab' }));
+		expect(pushed.consume('?q=zzz')).toBe(false);
+	});
+
+	it('ignores a push of the URL that is already current', () => {
+		const pushed = new PushedSearches();
+		pushed.add(buildIdentitySearchUrl({ query: 'ab' }), '?q=ab');
+		expect(pushed.consume('?q=ab')).toBe(false);
+	});
+
+	it('forgets old pushes beyond its cap', () => {
+		const pushed = new PushedSearches(2);
+		for (const q of ['a', 'b', 'c']) pushed.add(buildIdentitySearchUrl({ query: q }));
+		expect(pushed.consume('?q=a')).toBe(false);
+		expect(pushed.consume('?q=c')).toBe(true);
 	});
 });

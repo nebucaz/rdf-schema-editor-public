@@ -21,8 +21,28 @@ export function defaultNamespaceBaseIriFrom(raw: string): string {
 		: withoutFragment;
 }
 
+/** The external issue tracker the backend links to (`ISSUE_TRACKER_*`); the URL template stays server-side. */
+export interface IssueTrackerConfig {
+	name: string;
+	enabled: boolean;
+}
+
+const NO_ISSUE_TRACKER: IssueTrackerConfig = { name: '', enabled: false };
+
+/** The ServiceNow ticket integration (`serviceNow` in `/config`); with `enabled` false no ticket control renders. */
+export interface ServiceNowConfig {
+	enabled: boolean;
+	name: string;
+	/** The most tickets one bulk run creates; the rest is deferred. */
+	bulkCap: number;
+	/** False when automatic sync is paused (`SERVICENOW_SYNC_ENABLED=false`); manual creation still works. */
+	syncEnabled: boolean;
+}
+
+const NO_SERVICE_NOW: ServiceNowConfig = { enabled: false, name: '', bulkCap: 0, syncEnabled: false };
+
 export type RuntimeConfigResult =
-	| { ok: true; defaultNamespaceBaseIri: string; devLoginEnabled: boolean }
+	| { ok: true; defaultNamespaceBaseIri: string; devLoginEnabled: boolean; issueTracker: IssueTrackerConfig; serviceNow: ServiceNowConfig }
 	| { ok: false; message: string };
 
 /** Fetches and validates `/api/config`; never throws — a failure comes back as `{ ok: false }`. */
@@ -31,14 +51,29 @@ export async function loadRuntimeConfig(fetchFn: typeof fetch): Promise<RuntimeC
 		const url = apiUrl('/config');
 		const response = await fetchFn(url);
 		if (!response.ok) return { ok: false, message: `GET ${url} returned ${response.status}` };
-		const body = (await response.json()) as { defaultNamespaceBaseIri?: unknown; devLoginEnabled?: unknown };
+		const body = (await response.json()) as {
+			defaultNamespaceBaseIri?: unknown;
+			devLoginEnabled?: unknown;
+			issueTracker?: { name?: unknown; enabled?: unknown } | null;
+			serviceNow?: { enabled?: unknown; name?: unknown; bulkCap?: unknown; syncEnabled?: unknown } | null;
+		};
 		if (typeof body.defaultNamespaceBaseIri !== 'string' || !body.defaultNamespaceBaseIri) {
 			return { ok: false, message: `GET ${url} returned no defaultNamespaceBaseIri` };
 		}
 		return {
 			ok: true,
 			defaultNamespaceBaseIri: defaultNamespaceBaseIriFrom(body.defaultNamespaceBaseIri),
-			devLoginEnabled: body.devLoginEnabled === true
+			devLoginEnabled: body.devLoginEnabled === true,
+			issueTracker: {
+				name: typeof body.issueTracker?.name === 'string' ? body.issueTracker.name : '',
+				enabled: body.issueTracker?.enabled === true
+			},
+			serviceNow: {
+				enabled: body.serviceNow?.enabled === true,
+				name: typeof body.serviceNow?.name === 'string' ? body.serviceNow.name : '',
+				bulkCap: typeof body.serviceNow?.bulkCap === 'number' ? body.serviceNow.bulkCap : 0,
+				syncEnabled: body.serviceNow?.syncEnabled === true
+			}
 		};
 	} catch (e) {
 		return { ok: false, message: e instanceof Error ? e.message : String(e) };
@@ -53,6 +88,12 @@ export const runtimeConfigError: string | null = loaded && !loaded.ok ? loaded.m
 
 /** Whether the backend offers the dev login (`POST /api/auth/dev-login`); false until loaded. */
 export const DEV_LOGIN_ENABLED: boolean = loaded?.ok ? loaded.devLoginEnabled : false;
+
+/** The external issue tracker issues link to; disabled until loaded and in tests and builds. */
+export const ISSUE_TRACKER: IssueTrackerConfig = loaded?.ok ? loaded.issueTracker : NO_ISSUE_TRACKER;
+
+/** The ServiceNow ticket integration; off until loaded and in tests and builds. */
+export const SERVICE_NOW: ServiceNowConfig = loaded?.ok ? loaded.serviceNow : NO_SERVICE_NOW;
 
 /**
  * The default (pre-existing, backend-configured) namespace's base IRI — the single seed value every

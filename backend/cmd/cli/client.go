@@ -130,3 +130,28 @@ func (c *apiClient) doJSON(req *http.Request, out any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
+
+// serviceNowSyncResponse mirrors issues.SyncReport's JSON.
+type serviceNowSyncResponse struct {
+	DryRun   bool   `json:"dryRun"`
+	Pulled   int    `json:"pulled"`
+	Pushed   int    `json:"pushed"`
+	Skipped  int    `json:"skipped"`
+	Deferred int    `json:"deferred"`
+	Errors   int    `json:"errors"`
+	Message  string `json:"message"`
+}
+
+// serviceNowSync calls POST /issues/tickets/sync?dryRun=<dryRun>, always with the parameter explicit.
+func (c *apiClient) serviceNowSync(ctx context.Context, dryRun bool) (serviceNowSyncResponse, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("%s/issues/tickets/sync?dryRun=%v", c.baseURL, dryRun), nil)
+	if err != nil {
+		return serviceNowSyncResponse{}, err
+	}
+	c.setAuth(req)
+	var out serviceNowSyncResponse
+	if err := c.doJSON(req, &out); err != nil {
+		return serviceNowSyncResponse{}, err
+	}
+	return out, nil
+}

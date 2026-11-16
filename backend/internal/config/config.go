@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -55,6 +56,30 @@ type Config struct {
 	// CookieSecure sets the `Secure` attribute on the cookie the dev login issues (COOKIE_SECURE);
 	// leave off for plain-HTTP development.
 	CookieSecure bool
+	// IssueTrackerURLTemplate turns an issue's external id into a link (ISSUE_TRACKER_URL_TEMPLATE): an https
+	// URL containing `{id}`. Empty disables links. Never sent to the browser. IssueTrackerName is the display
+	// label (ISSUE_TRACKER_NAME).
+	IssueTrackerURLTemplate string
+	IssueTrackerName        string
+}
+
+// ValidateIssueTrackerTemplate checks ISSUE_TRACKER_URL_TEMPLATE: empty is fine (no links), anything else
+// must be an https URL with a host that contains the `{id}` placeholder.
+func ValidateIssueTrackerTemplate(tpl string) error {
+	if tpl == "" {
+		return nil
+	}
+	if !strings.Contains(tpl, "{id}") {
+		return fmt.Errorf("ISSUE_TRACKER_URL_TEMPLATE must contain the placeholder {id}")
+	}
+	u, err := url.Parse(strings.ReplaceAll(tpl, "{id}", "x"))
+	if err != nil {
+		return fmt.Errorf("ISSUE_TRACKER_URL_TEMPLATE is not a valid URL: %w", err)
+	}
+	if u.Scheme != "https" || u.Host == "" {
+		return fmt.Errorf("ISSUE_TRACKER_URL_TEMPLATE must be an https URL (got %q)", tpl)
+	}
+	return nil
 }
 
 // BackstageKindPredicateIRI is the `backstageKind` annotation-property IRI (Story 003), derived
@@ -203,6 +228,11 @@ func Load() (Config, error) {
 		}
 	}
 
+	issueTemplate := strings.TrimSpace(os.Getenv("ISSUE_TRACKER_URL_TEMPLATE"))
+	if err := ValidateIssueTrackerTemplate(issueTemplate); err != nil {
+		return Config{}, err
+	}
+
 	var allowedOrigins []string
 	for _, origin := range strings.Split(os.Getenv("ALLOWED_ORIGINS"), ",") {
 		if origin = strings.TrimSpace(origin); origin != "" {
@@ -224,5 +254,8 @@ func Load() (Config, error) {
 		UserJWTSecret:         os.Getenv("USER_JWT_SECRET"),
 		DevLoginEnabled:       devLoginEnabled,
 		CookieSecure:          os.Getenv("COOKIE_SECURE") == "true",
+
+		IssueTrackerURLTemplate: issueTemplate,
+		IssueTrackerName:        strings.TrimSpace(os.Getenv("ISSUE_TRACKER_NAME")),
 	}, nil
 }

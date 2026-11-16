@@ -62,3 +62,44 @@ export function buildIdentitySearchUrl(params: Partial<IdentitySearchUrlParams>)
 	const qs = usp.toString();
 	return appUrl(qs ? `/identities?${qs}` : '/identities');
 }
+
+/** Tickets for overlapping searches: only the newest may write results or the count. Compare tickets,
+ *  never `$state` values (a proxy is not `===` to the object it wraps). */
+export function createSearchSequence() {
+	let current = 0;
+	return {
+		next: () => ++current,
+		isCurrent: (ticket: number) => ticket === current
+	};
+}
+
+const searchOf = (url: string) => {
+	const i = url.indexOf('?');
+	return i < 0 ? '' : url.slice(i);
+};
+
+/** The `?query` strings the page pushed with `goto` that have not shown up in `page.url` yet. The URL
+ *  effect skips them: with slow queries a late URL for an older term would otherwise start a stale
+ *  search that overwrites the newer one, which then flips back. Anything else (deep link, Back/Forward)
+ *  is not in the set and searches as before. */
+export class PushedSearches {
+	private readonly pending: string[] = [];
+
+	constructor(private readonly cap = 10) {}
+
+	/** `currentSearch` is the URL's present search: pushing it again changes nothing, so never wait for it. */
+	add(url: string, currentSearch = ''): void {
+		const search = searchOf(url);
+		if (search === currentSearch) return;
+		this.pending.push(search);
+		if (this.pending.length > this.cap) this.pending.shift();
+	}
+
+	/** True (and forgotten) when `search` is one the page pushed itself. */
+	consume(search: string): boolean {
+		const i = this.pending.indexOf(search);
+		if (i < 0) return false;
+		this.pending.splice(i, 1);
+		return true;
+	}
+}

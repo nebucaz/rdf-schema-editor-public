@@ -6,6 +6,7 @@
 
 import { toCsv } from '#lib/utils/csv.js';
 import { extractLocalName } from '#lib/utils/iri.js';
+import type { IssueOutcome } from './issues-client.js';
 import {
 	groupFindings,
 	summarize,
@@ -30,23 +31,34 @@ export interface ReportExportInput {
 	runAt: Date;
 	appVersion: string;
 	hiddenNamespaces: string[];
+	/** The run's issues by finding id (STORY-387); absent when the report was not reconciled. */
+	issues?: Map<string, IssueOutcome> | Record<string, IssueOutcome>;
 }
 
 export type ExportKind = 'csv' | 'json' | 'md';
+
+function issueOf(input: ReportExportInput, findingId: string): IssueOutcome | undefined {
+	const { issues } = input;
+	return issues instanceof Map ? issues.get(findingId) : issues?.[findingId];
+}
 
 export function exportFilename(kind: ExportKind, runAt: Date): string {
 	return `validation-report-${runAt.toISOString().slice(0, 10)}.${kind}`;
 }
 
-const CSV_COLUMNS = ['kind', 'identity', 'label', 'type', 'rule', 'dimension', 'path', 'constraint', 'value', 'message', 'shape'];
+const CSV_COLUMNS = ['kind', 'identity', 'label', 'type', 'rule', 'dimension', 'path', 'constraint', 'value', 'message', 'shape', 'findingId', 'issueStatus', 'assignee', 'issueId', 'externalUrl'];
 
 export function reportToCsv(input: ReportExportInput): string {
-	const findings = input.findings.map((f) => [
-		'finding', f.individualIri, f.individualLabel, f.typeIri, f.ruleId, f.qualityDimension,
-		f.path, f.constraint, f.value ?? '', f.message, f.shapeIri
-	]);
+	const findings = input.findings.map((f) => {
+		const issue = issueOf(input, f.id);
+		return [
+			'finding', f.individualIri, f.individualLabel, f.typeIri, f.ruleId, f.qualityDimension,
+			f.path, f.constraint, f.value ?? '', f.message, f.shapeIri, f.id,
+			issue?.status ?? '', issue?.assignee ?? '', issue?.issueId ?? '', issue?.externalUrl ?? ''
+		];
+	});
 	const notChecked = input.notChecked.map((n) => [
-		'notChecked', '', '', '', n.ruleId, '', '', n.construct, '', n.reason, n.shapeIri
+		'notChecked', '', '', '', n.ruleId, '', '', n.construct, '', n.reason, n.shapeIri, '', '', '', '', ''
 	]);
 	return toCsv(CSV_COLUMNS, [...findings, ...notChecked]);
 }
@@ -60,7 +72,10 @@ export function reportToJson(input: ReportExportInput): string {
 			view: input.view,
 			counts: { findings: summary.findings, identities: summary.identities },
 			filter: { hiddenNamespaces: input.hiddenNamespaces },
-			violations: input.findings,
+			violations: input.findings.map((f) => {
+				const issue = issueOf(input, f.id);
+				return issue ? { ...f, issue } : f;
+			}),
 			notChecked: input.notChecked
 		},
 		null,
@@ -84,8 +99,10 @@ function valueMarkdown(f: ValidationFinding): string {
 	return cell(extractLocalName(v.text));
 }
 
-function table(findings: ValidationFinding[], withIdentity: boolean): string[] {
-	const head = withIdentity ? ['Identity', 'Type', 'Rule', 'Path', 'Constraint', 'Value', 'Message'] : ['Rule', 'Path', 'Constraint', 'Value', 'Message'];
+function table(input: ReportExportInput, findings: ValidationFinding[], withIdentity: boolean): string[] {
+	const head = withIdentity
+		? ['Identity', 'Type', 'Rule', 'Path', 'Constraint', 'Value', 'Message', 'Id', 'Status', 'Assignee']
+		: ['Rule', 'Path', 'Constraint', 'Value', 'Message', 'Id', 'Status', 'Assignee'];
 	const lines = [`| ${head.join(' | ')} |`, `| ${head.map(() => '---').join(' | ')} |`];
 	for (const f of findings) {
 		const cols = [
@@ -94,7 +111,10 @@ function table(findings: ValidationFinding[], withIdentity: boolean): string[] {
 			cell(extractLocalName(f.path)),
 			cell(f.constraint),
 			valueMarkdown(f),
-			cell(f.message)
+			cell(f.message),
+			cell(f.id),
+			cell(issueOf(input, f.id)?.status ?? ''),
+			cell(issueOf(input, f.id)?.assignee ?? '')
 		];
 		lines.push(`| ${cols.join(' | ')} |`);
 	}
@@ -124,13 +144,13 @@ export function reportToMarkdown(input: ReportExportInput): string {
 	if (input.findings.length === 0) {
 		lines.push('No findings.');
 	} else if (input.view === 'none') {
-		lines.push(...table(input.findings, true));
+		lines.push(...table(input, input.findings, true));
 	} else {
 		for (const group of groupFindings(input.findings, input.view)) {
 			const n = group.findings.length;
 			lines.push(input.view === 'identity' ? `### ${cell(group.title)} (${plural(n, 'finding', 'findings')})` : `### ${cell(group.title)} (${n})`, '');
 			if (input.view === 'identity') lines.push(`${cell(group.key)}`, '');
-			lines.push(...table(group.findings, input.view !== 'identity'), '');
+			lines.push(...table(input, group.findings, input.view !== 'identity'), '');
 		}
 	}
 	return lines.join('\n').replace(/\n+$/, '\n');

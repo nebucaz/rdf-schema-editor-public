@@ -3,8 +3,10 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/issues"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/userjwt"
 )
 
@@ -46,8 +48,14 @@ func RequireUser(next http.Handler) http.Handler {
 	})
 }
 
-// MeHandler serves GET /me.
-type MeHandler struct{}
+// UserDirectory remembers who has been seen, so the assignee pick list can show names of users other
+// than the caller. *issues.Directory satisfies it.
+type UserDirectory interface {
+	Remember(ctx context.Context, u issues.KnownUser) error
+}
+
+// MeHandler serves GET /me. Users, when set, learns every verified user that calls it.
+type MeHandler struct{ Users UserDirectory }
 
 type meUser struct {
 	Sub         string   `json:"sub"`
@@ -59,11 +67,12 @@ type meUser struct {
 
 // Get replies `{"user": {...}}` for a verified user, else `{"user": null}` — always 200. Only the
 // listed claims are exposed; the raw token never appears.
-func (MeHandler) Get(w http.ResponseWriter, r *http.Request) {
+func (h MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		User *meUser `json:"user"`
 	}
 	if user, ok := UserFromRequest(r); ok {
+		h.remember(r.Context(), user)
 		body.User = &meUser{
 			Sub:         user.Sub,
 			DisplayName: user.DisplayName(),
@@ -75,4 +84,15 @@ func (MeHandler) Get(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// remember is best-effort: the identity comes only from the verified cookie, and a failing GraphDB write
+// is logged and never changes the response.
+func (h MeHandler) remember(ctx context.Context, user userjwt.User) {
+	if h.Users == nil {
+		return
+	}
+	if err := h.Users.Remember(ctx, issues.KnownUser{Sub: user.Sub, DisplayName: user.DisplayName(), Email: user.Email}); err != nil {
+		log.Printf("remember user %q: %v", user.Sub, err)
+	}
 }

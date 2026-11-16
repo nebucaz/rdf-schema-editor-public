@@ -207,6 +207,15 @@ describe('svelte-markdown rendering', () => {
 		}
 	});
 
+	it('places the display toggles in the canvas toolbar, not the header', () => {
+		const toggles = docSections.find((s) => s.id === 'visibility-toggles');
+		expect(toggles?.content).toContain('canvas toolbar');
+		expect(toggles?.content).not.toContain('top bar');
+		const header = docSections.find((s) => s.id === 'app-header');
+		expect(header?.content).toContain('canvas toolbar');
+		expect(header?.content).toContain('Namespace and Workspace selectors');
+	});
+
 	it('no section refers to the retired hamburger menu', () => {
 		for (const section of docSections) expect(section.content.toLowerCase()).not.toContain('hamburger');
 	});
@@ -397,5 +406,22 @@ describe('process-description STORY-348: older pipeline pages point at the new g
 		expect(guide.match(/\| Role \| What they do \|/g)?.length ?? 0).toBe(1);
 		expect(governance).toContain('](pipeline-guide)');
 		expect(governance.match(/\| Role \| What they do \|/g)?.length ?? 0).toBe(0);
+	});
+});
+
+describe('validation issues docs (validation-issues-tracker STORY-391)', () => {
+	it('documents the Issues page and its lifecycle next to the validation report', () => {
+		const issues = docSections.find((s) => s.id === 'validation-issues');
+		expect(issues?.category).toBe('Panels & Views');
+		for (const word of ['auto-resolved', 'wontfix', 're-opened', 'finding id', 'ISSUE_TRACKER_URL_TEMPLATE', '/issues']) {
+			expect(issues?.content).toContain(word);
+		}
+	});
+
+	it('links the report view to the issues doc and describes the stored last run', () => {
+		const report = docSections.find((s) => s.id === 'validation-report-view');
+		expect(report?.content).toContain('(validation-issues)');
+		expect(report?.content).toContain('Last run');
+		expect(report?.content).not.toContain('a reload starts from a clean slate');
 	});
 });

@@ -466,6 +466,8 @@ export interface FetchedAssertion {
  *  an omitted `query` means no label filter, not "match nothing". `limit`/`offset` page through
  *  results (default `limit` 50, `offset` 0) — there is no keyset alternative in v1. */
 export interface IndividualSearchParams {
+	/** Cancels the request when a newer search supersedes this one (the call rejects with `AbortError`). */
+	signal?: AbortSignal;
 	/** Case-insensitive substring match against `rdfs:label`. */
 	query?: string;
 	/** Only individuals without any `rdf:type` (Unclassified); ignores the class filters. */
@@ -1251,7 +1253,10 @@ export class SparqlConnector {
 	/** Execute a raw SPARQL SELECT query, returning parsed SPARQL-JSON results. Pass
 	 *  `{ infer: false }` to query only asserted statements, bypassing GraphDB's reasoner — see
 	 *  `fetchWholeGraphQuads`. */
-	async selectQuery(query: string, options?: { infer?: boolean }): Promise<SparqlSelectResults> {
+	async selectQuery(
+		query: string,
+		options?: { infer?: boolean; signal?: AbortSignal }
+	): Promise<SparqlSelectResults> {
 		return this.executeQuery<SparqlSelectResults>(query, options);
 	}
 
@@ -8050,7 +8055,7 @@ export class SparqlConnector {
 			ORDER BY ${unclassifiedOnly ? 'STR(?label) STR(?i)' : '?label ?i'}
 			LIMIT ${limit + 1}
 			${keyset ? '' : `OFFSET ${offset}`}
-		`);
+		`, { signal: params.signal });
 
 		const rows: IndividualSearchResult[] = results.results.bindings.map((b) => ({
 			iri: b.i.value,
@@ -8070,8 +8075,10 @@ export class SparqlConnector {
 
 	/** How many Unclassified individuals match the namespace and label-text filters (all namespaces by
 	 *  default) — the total behind the Identities page's Unclassified list. */
-	async countUnclassified(params: { query?: string; namespaceBaseIri?: string } = {}): Promise<number> {
-		const { query, namespaceBaseIri } = params;
+	async countUnclassified(
+		params: { query?: string; namespaceBaseIri?: string; signal?: AbortSignal } = {}
+	): Promise<number> {
+		const { query, namespaceBaseIri, signal } = params;
 		if (namespaceBaseIri) this.assertSafeSparqlIri(namespaceBaseIri, 'namespace base IRI');
 		const filters: string[] = [];
 		if (namespaceBaseIri) filters.push(`FILTER(?ig = <${namespaceBaseIri}>)`);
@@ -8084,7 +8091,7 @@ export class SparqlConnector {
 				${unclassifiedBlock()}
 				${filters.join('\n\t\t\t\t')}
 			}
-		`);
+		`, { signal });
 		return Number(results.results.bindings[0]?.n?.value ?? 0);
 	}
 
@@ -9511,7 +9518,10 @@ export class SparqlConnector {
 		`);
 	}
 
-	private async executeQuery<T>(query: string, options?: { infer?: boolean }): Promise<T> {
+	private async executeQuery<T>(
+		query: string,
+		options?: { infer?: boolean; signal?: AbortSignal }
+	): Promise<T> {
 		// Dev only: who sent this request, captured before the first await (see utils/request-log.ts).
 		const stack = import.meta.env.DEV ? new Error().stack : undefined;
 		return requestActivity.track(() =>
@@ -9519,7 +9529,8 @@ export class SparqlConnector {
 				const response = await fetch(this.apiUrl, {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) })
+					body: JSON.stringify({ query, ...(options?.infer === false ? { infer: false } : {}) }),
+					...(options?.signal ? { signal: options.signal } : {})
 				});
 
 				if (!response.ok) {

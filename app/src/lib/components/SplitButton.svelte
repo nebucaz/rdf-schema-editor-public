@@ -6,11 +6,13 @@
 		label: string;
 		/** Accessible name of the chevron that opens the menu. */
 		menuLabel: string;
+		/** Tooltip of the main action. */
+		mainTitle?: string;
 		onMain: () => void;
 		items: { label: string; onSelect: () => void }[];
 	}
 
-	let { label, menuLabel, onMain, items }: Props = $props();
+	let { label, menuLabel, mainTitle, onMain, items }: Props = $props();
 
 	let open = $state(false);
 	let rootEl = $state<HTMLDivElement | undefined>();
@@ -73,12 +75,13 @@
 <svelte:document onpointerdown={onOutsidePointerDown} />
 
 <div class="split" bind:this={rootEl}>
-	<button type="button" class="main" onclick={onMain}>{label}</button>
+	<button type="button" class="main" title={mainTitle} onclick={onMain}>{label}</button>
 	<button
 		type="button"
 		class="chevron"
 		bind:this={chevronEl}
 		aria-label={menuLabel}
+		title={menuLabel}
 		aria-haspopup="menu"
 		aria-expanded={open}
 		onclick={() => (open ? close() : void openMenu(false))}

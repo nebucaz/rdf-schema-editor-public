@@ -19,11 +19,6 @@
 	import DropdownMenu from '#lib/components/DropdownMenu.svelte';
 	import DropdownSubmenuGroup from '#lib/components/DropdownSubmenuGroup.svelte';
 	import NamespaceFilter from '#lib/components/NamespaceFilter.svelte';
-	import ViewModeToggle from '#lib/components/ViewModeToggle.svelte';
-	import DescriptionVisibilityToggle from '#lib/components/DescriptionVisibilityToggle.svelte';
-	import InheritedAttributesVisibilityToggle from '#lib/components/InheritedAttributesVisibilityToggle.svelte';
-	import ReverseRelationsVisibilityToggle from '#lib/components/ReverseRelationsVisibilityToggle.svelte';
-	import ConceptBadgeToggle from '#lib/components/ConceptBadgeToggle.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import NamespaceManagementView from '#lib/components/NamespaceManagementView.svelte';
 	import WorkspaceManagementView from '#lib/components/WorkspaceManagementView.svelte';
@@ -222,55 +217,7 @@
 		{/if}
 		<div class="app-header-actions">
 			{#if page.data.user}
-				{#if isCanvasView}
-					{#if namespaceStore.namespaces.length > 0}
-						<div class="select-field">
-							<label class="select-caption" for="namespace-select">Namespace</label>
-							<select
-								id="namespace-select"
-								class="namespace-select"
-								title="Active namespace — where new classes, individuals, and namespace-scoped IRIs are created by default"
-								value={workbenchActions.activeNamespace}
-								onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
-							>
-								{#each namespaceStore.namespaces as ns (ns.baseIri)}
-									<option value={ns.baseIri}>{ns.prefix}</option>
-								{/each}
-							</select>
-						</div>
-					{/if}
-					{#if workspaceStore.workspaces.length > 0}
-						<div class="select-field">
-							<label class="select-caption" for="workspace-select">Workspace</label>
-							<select
-								id="workspace-select"
-								class="workspace-select"
-								title="Active workspace — which diagram is shown on the canvas"
-								value={workbenchActions.activeWorkspace}
-								onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
-							>
-								{#each workspaceStore.workspaces as ws (ws.iri)}
-									<option value={ws.iri}>{ws.label}</option>
-								{/each}
-							</select>
-						</div>
-					{/if}
-					<ViewModeToggle
-						viewMode={workbenchActions.viewMode}
-						onChange={(mode) => workbenchActions.setViewMode(mode)}
-					/>
-					<DescriptionVisibilityToggle />
-					<InheritedAttributesVisibilityToggle />
-					<ReverseRelationsVisibilityToggle />
-					{#if namespaceStore.namespaces.some((n) => n.vocabulary)}
-						<ConceptBadgeToggle />
-					{/if}
-					<NamespaceFilter
-						namespaces={filterListedNamespaces(namespaceStore.namespaces)}
-						hiddenNamespaces={workbenchActions.hiddenNamespaces}
-						onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
-					/>
-				{:else if isValidationView}
+				{#if isValidationView}
 					<NamespaceFilter
 						namespaces={filterListedNamespaces(namespaceStore.namespaces)}
 						hiddenNamespaces={validationReportFilterStore.hiddenNamespaces}
@@ -595,29 +542,6 @@
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-	}
-
-	.namespace-select,
-	.workspace-select {
-		padding: 0.3rem 0.5rem;
-		border-radius: 6px;
-		border: 1px solid var(--color-border);
-		background: var(--color-bg-secondary);
-		color: var(--color-text);
-		font-size: 0.85rem;
-	}
-
-	.select-field {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.1rem;
-	}
-
-	.select-caption {
-		font-size: 0.65rem;
-		line-height: 1;
-		color: var(--color-text-muted);
 	}
 
 	.menu-version {

@@ -20,6 +20,7 @@ function finding(over: Partial<ValidationFinding> = {}): ValidationFinding {
 		ruleId: 'R-1',
 		qualityDimension: 'Completeness',
 		shapeIri: 'http://ex#S',
+		id: 'abcdefghijklmnop',
 		...over
 	};
 }

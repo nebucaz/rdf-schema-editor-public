@@ -81,6 +81,9 @@
 	import { conceptStore } from '#lib/stores/concept-store.svelte.js';
 	import type { Concept } from '#lib/services/skos-concept.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import NamespaceFilter from '#lib/components/NamespaceFilter.svelte';
+	import ViewModeToggle from '#lib/components/ViewModeToggle.svelte';
+	import CanvasViewToggles from '#lib/components/CanvasViewToggles.svelte';
 	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
@@ -108,6 +111,7 @@
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
 	import { extractLocalName, workspaceIri, type XsdDatatype } from '#lib/utils/iri.js';
 	import { exportCanvasAsSvg } from '#lib/utils/svg-export.js';
+	import { filterListedNamespaces } from '#lib/utils/visibility.js';
 	import { isEdgeHidden, isExternalNodeHidden, buildExternalReferencingSources } from '#lib/utils/visibility.js';
 	import { classifyAddedElement } from '#lib/services/workspace-add.js';
 	import {
@@ -3640,6 +3644,7 @@
 		<SplitButton
 			label="+ Add Entity"
 			menuLabel="More ways to add entities"
+			mainTitle="Add a new entity (class) to the canvas"
 			onMain={() => void openAddEntityDialog()}
 			items={[
 				{ label: 'Add entities from namespace…', onSelect: () => openAddNamespaceClasses(null) },
@@ -3647,10 +3652,50 @@
 				{ label: 'Add external class…', onSelect: () => (showAddExternalClass = true) }
 			]}
 		/>
-		<button class="add-entity secondary-action" onclick={() => void handleAddNote()}>+ Add Note</button>
+		<button class="add-entity secondary-action" title="Add a free-text note to the canvas" onclick={() => void handleAddNote()}>+ Add Note</button>
 		{#if errorMessage}
 			<span class="error-banner">{errorMessage}</span>
 		{/if}
+		<div class="toolbar-controls">
+			{#if namespaceStore.namespaces.length > 0}
+				<select
+					id="namespace-select"
+					class="namespace-select"
+					aria-label="Namespace"
+					title="Namespace — the active namespace, where new classes, individuals and namespace-scoped IRIs are created by default"
+					value={workbenchActions.activeNamespace}
+					onchange={(e) => workbenchActions.setActiveNamespace(e.currentTarget.value)}
+				>
+					{#each namespaceStore.namespaces as ns (ns.baseIri)}
+						<option value={ns.baseIri}>{ns.prefix}</option>
+					{/each}
+				</select>
+			{/if}
+			{#if workspaceStore.workspaces.length > 0}
+				<select
+					id="workspace-select"
+					class="workspace-select"
+					aria-label="Workspace"
+					title="Workspace — which diagram is shown on the canvas"
+					value={workbenchActions.activeWorkspace}
+					onchange={(e) => workbenchActions.setActiveWorkspace(e.currentTarget.value)}
+				>
+					{#each workspaceStore.workspaces as ws (ws.iri)}
+						<option value={ws.iri}>{ws.label}</option>
+					{/each}
+				</select>
+			{/if}
+			<ViewModeToggle
+				viewMode={workbenchActions.viewMode}
+				onChange={(mode) => workbenchActions.setViewMode(mode)}
+			/>
+			<NamespaceFilter
+				namespaces={filterListedNamespaces(namespaceStore.namespaces)}
+				hiddenNamespaces={workbenchActions.hiddenNamespaces}
+				onToggle={(baseIri) => workbenchActions.toggleNamespaceVisibility(baseIri)}
+			/>
+		</div>
+		<CanvasViewToggles showConceptBadge={namespaceStore.namespaces.some((n) => n.vocabulary)} />
 	</div>
 	<div
 		class="canvas-wrap"
@@ -4347,9 +4392,28 @@
 	.toolbar {
 		display: flex;
 		align-items: center;
+		flex-wrap: wrap;
 		gap: 0.75rem;
 		padding: 0.5rem 1rem;
 		border-bottom: 1px solid var(--color-border);
+	}
+
+	.toolbar-controls {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin-left: auto;
+	}
+
+	.namespace-select,
+	.workspace-select {
+		padding: 0.3rem 0.5rem;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-bg-secondary);
+		color: var(--color-text);
+		font-size: 0.85rem;
 	}
 
 	.add-entity {

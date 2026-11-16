@@ -30,7 +30,13 @@
 	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { isUnclassifiedQueryTooShort, keysetAfter } from '#lib/utils/unclassified-search.js';
-	import { UNCLASSIFIED_FACET, buildIdentitySearchUrl, parseIdentitySearchParams } from '#lib/utils/identity-search-url.js';
+	import {
+		UNCLASSIFIED_FACET,
+		PushedSearches,
+		buildIdentitySearchUrl,
+		createSearchSequence,
+		parseIdentitySearchParams
+	} from '#lib/utils/identity-search-url.js';
 	import { prettifyLocalName } from '#lib/utils/resource-page-format.js';
 	import { buildClassHierarchyIndex, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
 	import { buildEntityNodeIndex } from '#lib/utils/identity-schema-index.js';
@@ -59,7 +65,11 @@
 	/** How many Unclassified individuals match the active filters; `null` outside Unclassified mode. */
 	let unclassifiedTotal = $state<number | null>(null);
 	let queryTooShort = $state(false);
-	let searchSeq = 0;
+	const searchSeq = createSearchSequence();
+	/** Aborts the previous search's requests when a newer one starts. */
+	let searchAbort: AbortController | null = null;
+	/** URLs this page pushed that `page.url` has not shown yet; the URL effect must not re-search them. */
+	const pushedSearches = new PushedSearches();
 
 	// Bulk class assignment (Unclassified mode only). A selection is either explicit rows or "everything
 	// matching the current filters"; changing the filters drops it.
@@ -372,7 +382,9 @@
 		error = null;
 		lastFacets = facets;
 		// Live search can overlap requests; only the newest one may write results.
-		const seq = ++searchSeq;
+		const seq = searchSeq.next();
+		searchAbort?.abort();
+		const abort = (searchAbort = new AbortController());
 		clearSelection();
 
 		const unclassifiedMode = facets.classIri === UNCLASSIFIED_FACET;
@@ -389,9 +401,13 @@
 		try {
 			if (unclassifiedMode) {
 				void sparqlConnector
-					.countUnclassified({ query: facets.query || undefined, namespaceBaseIri: facets.namespaceBaseIri ?? undefined })
+					.countUnclassified({
+						query: facets.query || undefined,
+						namespaceBaseIri: facets.namespaceBaseIri ?? undefined,
+						signal: abort.signal
+					})
 					.then((n) => {
-						if (lastFacets === facets) unclassifiedTotal = n;
+						if (searchSeq.isCurrent(seq)) unclassifiedTotal = n;
 					})
 					.catch(() => {});
 			}
@@ -403,29 +419,29 @@
 				syncSource: facets.syncSource ?? undefined,
 				syncStatus: facets.syncStatus ?? undefined,
 				limit: PAGE_SIZE,
-				offset: 0
+				offset: 0,
+				signal: abort.signal
 			});
-			if (seq !== searchSeq) return;
+			if (!searchSeq.isCurrent(seq)) return;
 			results = searchPage.results;
 			hasMore = searchPage.hasMore;
 			nextOffset = PAGE_SIZE;
 			hasSearched = true;
 		} catch (err) {
-			if (seq !== searchSeq) return;
+			if (!searchSeq.isCurrent(seq)) return;
 			error = err instanceof Error ? err.message : 'Failed to search identities';
 			results = [];
 			hasMore = false;
 		} finally {
-			if (seq === searchSeq) isLoading = false;
+			if (searchSeq.isCurrent(seq)) isLoading = false;
 		}
 
 		if (fromUrl) {
 			if (pendingNode) resolveAndSelectNode(pendingNode);
 		} else {
-			void goto(buildIdentitySearchUrl({ ...facets, node: selectedIri }), {
-				replace: true,
-				reset: false
-			});
+			const url = buildIdentitySearchUrl({ ...facets, node: selectedIri });
+			pushedSearches.add(url, page.url.search);
+			void goto(url, { replace: true, reset: false });
 		}
 	}
 
@@ -473,6 +489,8 @@
 	// match the URL they just pushed).
 	$effect(() => {
 		const search = page.url.search;
+		// A URL this page pushed itself (a late one for an older term included) carries no news.
+		if (untrack(() => pushedSearches.consume(search))) return;
 		const parsed = parseIdentitySearchParams(search);
 
 		untrack(() => {

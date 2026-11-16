@@ -1,0 +1,70 @@
+{
+  "description": "Finding id vectors. Derived by backend validation.FindingID; the frontend only checks the shape.",
+  "vectors": [
+    {
+      "name": "minCount",
+      "violation": {
+        "id": "vqqhhhx6v2cecgkw",
+        "individualIri": "http://example.org/i1",
+        "individualLabel": "",
+        "typeIri": "http://example.org/Laptop",
+        "path": "http://example.org/serialNumber",
+        "constraint": "minCount",
+        "message": "",
+        "ruleId": "arm-s:r1",
+        "qualityDimension": "",
+        "shapeIri": "http://example.org/shapes#LaptopSerial"
+      },
+      "id": "vqqhhhx6v2cecgkw"
+    },
+    {
+      "name": "same defect, other type",
+      "violation": {
+        "id": "elsxmbdnpzcawkbq",
+        "individualIri": "http://example.org/i1",
+        "individualLabel": "",
+        "typeIri": "http://example.org/Asset",
+        "path": "http://example.org/serialNumber",
+        "constraint": "minCount",
+        "message": "",
+        "ruleId": "arm-s:r1",
+        "qualityDimension": "",
+        "shapeIri": "http://example.org/shapes#LaptopSerial"
+      },
+      "id": "elsxmbdnpzcawkbq"
+    },
+    {
+      "name": "no shape iri falls back to ruleId",
+      "violation": {
+        "id": "tpx7xyakjcdt6ha7",
+        "individualIri": "http://example.org/i1",
+        "individualLabel": "",
+        "typeIri": "http://example.org/Laptop",
+        "path": "http://example.org/serialNumber",
+        "constraint": "minCount",
+        "message": "",
+        "ruleId": "arm-s:r1",
+        "qualityDimension": "",
+        "shapeIri": ""
+      },
+      "id": "tpx7xyakjcdt6ha7"
+    },
+    {
+      "name": "value and message are ignored",
+      "violation": {
+        "id": "pwij2tkroflnco2o",
+        "individualIri": "http://example.org/i1",
+        "individualLabel": "",
+        "typeIri": "http://example.org/Laptop",
+        "path": "http://example.org/serialNumber",
+        "constraint": "datatype",
+        "message": "some message",
+        "ruleId": "arm-s:r1",
+        "qualityDimension": "",
+        "shapeIri": "http://example.org/shapes#LaptopSerial",
+        "value": "x"
+      },
+      "id": "pwij2tkroflnco2o"
+    }
+  ]
+}

@@ -67,6 +67,12 @@ func TestValidationHandler_Report_ReturnsViolations(t *testing.T) {
 	if len(violations) != 1 || violations[0].Constraint != "minCount" {
 		t.Fatalf("violations = %+v, want exactly 1 minCount violation", violations)
 	}
+	if violations[0].ID == "" || violations[0].ID != validation.FindingID(violations[0]) {
+		t.Errorf("violation id = %q, want the finding id", violations[0].ID)
+	}
+	if !strings.Contains(w.Body.String(), `"id":"`) {
+		t.Errorf("response body has no id field: %s", w.Body.String())
+	}
 }
 
 // validationReportBody mirrors the envelope the handler writes.

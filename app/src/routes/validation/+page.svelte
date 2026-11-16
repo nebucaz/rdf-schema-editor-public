@@ -31,7 +31,7 @@
 	</div>
 	<ValidationAbout {tab} />
 	{#if tab === 'shacl'}
-		<ValidationReportView />
+		<ValidationReportView findingParam={page.url.searchParams.get('finding')} />
 	{:else}
 		<GateReportView />
 	{/if}

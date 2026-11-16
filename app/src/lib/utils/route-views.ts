@@ -8,6 +8,8 @@ import { stripBase } from '#lib/utils/urls.js';
 export interface RouteView {
 	isIdentitiesView: boolean;
 	isValidationView: boolean;
+	/** `/issues` — the persistent validation issues (validation-issues-tracker STORY-388). */
+	isIssuesView: boolean;
 	isWorkbenchView: boolean;
 	/** `/questions` — the competency question registry (ontology-pipeline STORY-317). */
 	isQuestionsView: boolean;
@@ -34,6 +36,7 @@ export function resolveRouteView(browserPathname: string): RouteView {
 	const pathname = stripBase(browserPathname);
 	const isIdentitiesView = pathname.startsWith('/identities');
 	const isValidationView = pathname.startsWith('/validation');
+	const isIssuesView = pathname.startsWith('/issues');
 	const isWorkbenchView = pathname.startsWith('/workbench');
 	const isReportView = pathname.startsWith('/reports');
 	const isQuestionsView = pathname.startsWith('/questions');
@@ -45,6 +48,7 @@ export function resolveRouteView(browserPathname: string): RouteView {
 	return {
 		isIdentitiesView,
 		isValidationView,
+		isIssuesView,
 		isWorkbenchView,
 		isReportView,
 		isQuestionsView,
@@ -57,6 +61,7 @@ export function resolveRouteView(browserPathname: string): RouteView {
 		isCanvasView:
 			!isIdentitiesView &&
 			!isValidationView &&
+			!isIssuesView &&
 			!isWorkbenchView &&
 			!isReportView &&
 			!isQuestionsView &&

@@ -8827,6 +8827,33 @@ describe('SparqlConnector — searchIndividuals (STORY-115)', () => {
 		expect(page.hasMore).toBe(false);
 	});
 
+	it('passes an AbortSignal to fetch for searchIndividuals and countUnclassified (STORY-377)', async () => {
+		const { fn } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+		const controller = new AbortController();
+
+		const connector = new SparqlConnector('/api/sparql');
+		await connector.searchIndividuals({ query: 'x', signal: controller.signal });
+		await connector.countUnclassified({ query: 'x', signal: controller.signal });
+
+		expect(fn.mock.calls[0][1]).toMatchObject({ signal: controller.signal });
+		expect(fn.mock.calls[1][1]).toMatchObject({ signal: controller.signal });
+	});
+
+	it('an aborted searchIndividuals rejects with AbortError (STORY-377)', async () => {
+		vi.stubGlobal('fetch', async (_url: string, opts: { signal?: AbortSignal }) => {
+			opts.signal?.throwIfAborted();
+			return new Response('{}');
+		});
+		const controller = new AbortController();
+		controller.abort();
+
+		const connector = new SparqlConnector('/api/sparql');
+		await expect(connector.searchIndividuals({ query: 'x', signal: controller.signal })).rejects.toMatchObject({
+			name: 'AbortError'
+		});
+	});
+
 	it('an empty/undefined query applies no label filter at all', async () => {
 		const { fn, queries } = mockSearchIndividualsFetch([aliceBinding()]);
 		vi.stubGlobal('fetch', fn);

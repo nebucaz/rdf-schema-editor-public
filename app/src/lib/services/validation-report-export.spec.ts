@@ -21,6 +21,7 @@ function finding(over: Partial<ValidationFinding> = {}): ValidationFinding {
 		ruleId: 'R-1',
 		qualityDimension: 'Format',
 		shapeIri: 'http://ns#S',
+		id: 'abcdefghijklmnop',
 		...over
 	};
 }
@@ -77,10 +78,10 @@ describe('reportToCsv', () => {
 		const rows = parseCsv(
 			reportToCsv(input({ notChecked: [{ shapeIri: 'http://ns#S2', ruleId: 'R-9', construct: 'sh:in', reason: 'not supported' }] }))
 		);
-		expect(rows[0]).toEqual(['kind', 'identity', 'label', 'type', 'rule', 'dimension', 'path', 'constraint', 'value', 'message', 'shape']);
+		expect(rows[0]).toEqual(['kind', 'identity', 'label', 'type', 'rule', 'dimension', 'path', 'constraint', 'value', 'message', 'shape', 'findingId', 'issueStatus', 'assignee', 'issueId', 'externalUrl']);
 		expect(rows).toHaveLength(3);
-		expect(rows[1]).toEqual(['finding', 'http://ns#a', 'Anna', 'http://ns#Person', 'R-1', 'Format', 'http://ns#name', 'pattern', '', 'm', 'http://ns#S']);
-		expect(rows[2]).toEqual(['notChecked', '', '', '', 'R-9', '', '', 'sh:in', '', 'not supported', 'http://ns#S2']);
+		expect(rows[1]).toEqual(['finding', 'http://ns#a', 'Anna', 'http://ns#Person', 'R-1', 'Format', 'http://ns#name', 'pattern', '', 'm', 'http://ns#S', 'abcdefghijklmnop', '', '', '', '']);
+		expect(rows[2]).toEqual(['notChecked', '', '', '', 'R-9', '', '', 'sh:in', '', 'not supported', 'http://ns#S2', '', '', '', '', '']);
 	});
 
 	it('starts with the BOM and uses CRLF', () => {
@@ -124,6 +125,20 @@ describe('reportToJson', () => {
 		});
 		expect(parsed.violations[0].value).toBe('');
 		expect('value' in parsed.violations[1]).toBe(false);
+	});
+});
+
+describe('finding id in the exports', () => {
+	it('is part of the JSON violations', () => {
+		expect(JSON.parse(reportToJson(input())).violations[0].id).toBe('abcdefghijklmnop');
+	});
+
+	it('is the last column of the Markdown tables, in every view', () => {
+		for (const view of ['identity', 'rule', 'dimension', 'none'] as const) {
+			const md = reportToMarkdown(input({ view }));
+			expect(md).toContain('| Id |');
+			expect(md).toContain('| abcdefghijklmnop |');
+		}
 	});
 });
 
@@ -205,5 +220,33 @@ describe('exportFilename', () => {
 		expect(exportFilename('csv', runAt)).toBe('validation-report-2026-11-13.csv');
 		expect(exportFilename('json', runAt)).toBe('validation-report-2026-11-13.json');
 		expect(exportFilename('md', runAt)).toBe('validation-report-2026-11-13.md');
+	});
+});
+
+describe('exports with issues (STORY-387)', () => {
+	const issues = {
+		abcdefghijklmnop: { findingId: 'abcdefghijklmnop', issueId: 'abcdefghijklmnop', status: 'in-progress' as const, assignee: 'alice', externalUrl: 'https://sn.example/?n=INC1', isNew: true }
+	};
+
+	it('CSV adds status, assignee, issue id and external URL', () => {
+		const rows = parseCsv(reportToCsv(input({ issues })));
+		expect(rows[1].slice(-4)).toEqual(['in-progress', 'alice', 'abcdefghijklmnop', 'https://sn.example/?n=INC1']);
+	});
+
+	it('JSON puts the issue next to its finding and leaves untracked findings without one', () => {
+		const out = JSON.parse(reportToJson(input({ issues, findings: [finding(), finding({ id: 'zzzzzzzzzzzzzzzz' })] })));
+		expect(out.violations[0].issue).toEqual(issues.abcdefghijklmnop);
+		expect(out.violations[1].issue).toBeUndefined();
+	});
+
+	it('Markdown adds a Status and Assignee column', () => {
+		const md = reportToMarkdown(input({ issues }));
+		expect(md).toContain('| Status | Assignee |');
+		expect(md).toContain('in-progress');
+		expect(md).toContain('alice');
+	});
+
+	it('exports without issues keep empty issue cells', () => {
+		expect(reportToMarkdown(input())).toContain('| Status | Assignee |');
 	});
 });

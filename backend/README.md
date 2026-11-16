@@ -57,11 +57,17 @@ in progress (dry runs are exempt), `502` if the upstream source is unreachable. 
 | Route | Service JWT | Signed-in user | Notes |
 |-------|:-----------:|:--------------:|-------|
 | `GET /health` | – | – | liveness |
-| `GET /config` | – | – | `{defaultNamespaceBaseIri, devLoginEnabled}` |
-| `GET /me` | – | – | `{user}` or `{user: null}` |
+| `GET /config` | – | – | `{defaultNamespaceBaseIri, devLoginEnabled, issueTracker: {name, enabled}}` |
+| `GET /me` | – | – | `{user}` or `{user: null}`; also remembers a verified user for the assignee list |
 | `POST /auth/dev-login`, `POST /auth/logout` | – | – | only when `DEV_LOGIN_ENABLED=true` |
 | `POST /sparql`, `POST /sparql/update` | ✔ | ✔ | GraphDB passthrough |
 | `GET /validation/report` | ✔ | ✔ | `{violations, notChecked}`; `notChecked` lists constraints the run skipped; a violation carries `value` (the offending value) when the rule has one, omitted otherwise (an empty string is kept) |
+| `POST /issues/reconcile` | ✔ | ✔ | runs the full check like `/validation/report`, creates/resolves/re-opens issues, returns `{violations, notChecked, issues: [{findingId, issueId, status, assignee, externalUrl, isNew}]}` |
+| `GET /issues/report` | ✔ | ✔ | the stored result of the last reconcile: `{runAt, violations, notChecked, issues}` (empty before the first run); the validation page opens with it |
+| `GET /issues`, `PATCH /issues/{id}`, `GET /issues/assignees` | ✔ | ✔ | list (`status`, `assignee`, `ruleId`, `individualIri`, `limit` ≤ 500, `offset`); edit status/assignee/note/`externalSystem`/`externalId`; pick list |
+| `POST /issues/{id}/ticket` | ✔ | ✔ | create (or follow-up) the ServiceNow ticket of one issue; `404` unless `SERVICENOW_BASE_URL` is set |
+| `POST /issues/tickets/dry-run`, `POST /issues/tickets` | ✔ | ✔ | bulk: the dry run plans per issue (create / follow-up / skip / blocked / deferred), the second call creates, at most `SERVICENOW_BULK_CAP` per run |
+| `POST /issues/tickets/sync` | ✔ | – | one ticket sync pass (pull state, push local changes); dry-run unless applied; used by *Sync now* and `importctl servicenow sync` |
 | `POST /shared-queries`, `GET /shared-queries/{id}` | ✔ | ✔ | short share links |
 | `POST /annotations`, `DELETE /annotations` | ✔ | ✔ | server-side stamping |
 | `GET /sources/{source}/discover`, `GET …/raw/{kind}`, `POST …/sync` | ✔ | – | sync worker and `importctl` have no user |
@@ -104,6 +110,15 @@ The SPARQL guards, query-model validation, short-link ids and annotation SPARQL 
 | `USER_JWT_SECRET` | empty | HS512 secret verifying the `Oglala` cookie, at least 64 bytes when set; unset = nobody is ever signed in |
 | `DEV_LOGIN_ENABLED` | `false` | route the dev login/logout; needs `USER_JWT_SECRET`, refused when `APP_ENV=production` |
 | `COOKIE_SECURE` | `false` | `Secure` attribute on the dev-login cookie (set with HTTPS) |
+| `ISSUE_TRACKER_URL_TEMPLATE` | empty | link to the workflow tool for an issue's external id, e.g. `https://example.service-now.com/nav_to.do?uri=incident.do?number={id}`; must be https and contain `{id}`, otherwise startup is refused; never sent to the browser |
+| `ISSUE_TRACKER_NAME` | empty | display label for that tool (`GET /config` → `issueTracker.name`) |
+| `SERVICENOW_BASE_URL` | empty | the only switch of the ServiceNow ticket integration (https); empty = no ticket routes, client or worker; set but incomplete = startup refused |
+| `SERVICENOW_AUTH`, `SERVICENOW_USER`, `SERVICENOW_PASSWORD`, `SERVICENOW_CLIENT_ID`, `SERVICENOW_CLIENT_SECRET` | empty | `oauth` (client credentials) or `basic`; secrets never leave the backend |
+| `SERVICENOW_TABLE` | `incident` | table of the tickets |
+| `SERVICENOW_SYNC_ENABLED`, `SERVICENOW_SYNC_INTERVAL` | `true`, `15m` | worker and automatic pushes on/off; period (at least `1m`). Manual creation stays available when off |
+| `SERVICENOW_ON_FINDING_GONE`, `SERVICENOW_CLOSE_CODE` | `comment`, built-in | what a vanished finding does to its ticket (`comment` or `resolve`) and the close code sent when resolving |
+| `SERVICENOW_BULK_CAP`, `SERVICENOW_APP_URL` | `25`, empty | most tickets per bulk run; public app URL for the link back in the ticket |
+| `SERVICENOW_CONFIG_FILE` | empty | JSON file: `stateMap`, `closeCode`, `routing` (see `.env.example`) |
 | `APP_ENV` | empty | `production` forbids the dev login |
 | `ALLOWED_ORIGINS` | empty | extra origins the CSRF guard accepts (comma-separated) |
 
@@ -128,6 +143,31 @@ groups}}`, or `{"user": null}` (status 200) for an absent, invalid or expired co
 `USER_JWT_SECRET` is unset. `handler.UserFromRequest(r)` gives later handlers the verified user, and
 `handler.RequireUser` refuses the request with `401 {"message": "Sign in required"}` when there is none.
 
+Every verified `GET /me` also upserts a `KnownUser` node `{sub, displayName, email, lastSeenAt}` in the issues graph
+(`<default base>/issues`), so the assignee pick list can show other users' names. The write is throttled per `sub`
+(only when the name or email changed, or the last write is over 24 h old), best-effort (a failing GraphDB write is
+logged, `/me` still answers) and takes the name only from the verified cookie, never from a request body.
+
+### Enabling ServiceNow (`internal/servicenow`)
+
+Off unless `SERVICENOW_BASE_URL` is set. Order of activation: leave it empty on deploy (nothing changes), configure a
+test instance, create single tickets by hand, try a bulk dry run, then let the worker run (`SERVICENOW_SYNC_ENABLED`
+pauses worker and automatic pushes only). Ownership: this app owns the finding, its snapshot, ticket creation and
+`wontfix`; ServiceNow owns number, state, assignment and resolution notes; the local note is never sent. Changes made
+by the sync are stamped with the actor `servicenow`. `GET /config` adds `serviceNow: {enabled, name, bulkCap, syncEnabled}`.
+`go run ./cmd/cli servicenow sync [--apply]` runs one pass. Instance values (states, close code, mandatory fields) are
+unverified until `spec/service-now-ticket/RUNBOOK.md` has been run against a real instance.
+
+### Validation issues (`/issues*`)
+
+Each finding id (see `validation.FindingID`) has one issue node in `<default base>/issues`, written only by the backend
+and outside the namespace graphs. `POST /issues/reconcile` is the only place a run writes: a finding without an issue
+gets one (`open`, `isNew: true` on that run only); an issue whose finding is gone becomes `resolved` by `system`, and a
+system-resolved one whose finding returns is re-opened; `wontfix` and user-resolved issues are never changed, and an issue
+whose shape or rule is in `notChecked` is never auto-resolved. `GET /validation/report` stays side-effect free. Each run also refreshes the finding snapshot on the issues it sees again (label, message, `value`) and stores the last run (`runAt`, `notChecked`) as one node in the issues graph; `GET /issues/report` returns the issues seen in that run as findings. Authors and
+times (`updatedBy`, `updatedAt`) are stamped from the cookie user; the external URL is derived from
+`ISSUE_TRACKER_URL_TEMPLATE` when an issue is read and cannot be sent by a client.
+
 ### Dev login (`POST /auth/dev-login`, `POST /auth/logout`)
 
 Only routed when `DEV_LOGIN_ENABLED=true` (otherwise `404`); startup is refused with
@@ -139,9 +179,9 @@ browser (see CSRF guard). The SSO "auth token" counterpart is not implemented (o
 
 ### Runtime config (`GET /config`)
 
-Replies `{"defaultNamespaceBaseIri", "devLoginEnabled"}` — the default namespace base IRI derived
+Replies `{"defaultNamespaceBaseIri", "devLoginEnabled", "issueTracker": {"name", "enabled"}}` — the default namespace base IRI derived
 from `PUBLIC_SCHEMA_NAMESPACE` (same derivation as `app/src/lib/config.ts`'s `defaultNamespaceBaseIriFrom`), and
-whether the dev login is on. No secrets; no service token needed.
+whether the dev login is on, and the issue tracker label plus whether a link template is set (never the template). No secrets; no service token needed.
 
 ### CSRF guard
 

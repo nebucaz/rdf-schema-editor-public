@@ -5,10 +5,13 @@ Report** route, via the **Validation** tab in the navigation strip.
 
 ## What you see
 
-Click **Run Validation** to fetch a fresh report. The last report stays in the page while you follow a
-link and come back with the browser's Back button, with the same Group by choice and folded blocks; nothing
-is stored beyond that, so a reload starts from a clean slate, and so does clicking Run again. A summary line above the result reads
-"N findings in M identities" and counts only what the namespace filter leaves visible.
+The page opens with the findings of the **last run**, so a finding link works without running anything; the
+toolbar says "Last run <time>". Click **Run Validation** to check again: the run replaces the list and also
+creates, resolves and re-opens the [issues](validation-issues) of the findings. The list stays in the page while you follow a
+link and come back with the browser's Back button, with the same Group by choice and folded blocks. Before the
+very first run the page only shows the hint. A summary line above the result reads
+"N findings in M identities" and counts only what the namespace filter leaves visible. After a run it adds
+"X new · Y tracked · Z resolved since the last run".
 
 The **Group by** control chooses how the findings are arranged:
 
@@ -27,6 +30,12 @@ the **value** that broke the rule and the message: the shape's own `sh:message` 
 written, for example in German), else a generated text. The value is quoted when it is text, so an empty
 value (`""`) and a blank one (`"  "`) are visible; it is a short name for a datatype or class finding, and
 empty when the rule has no single offending value (for example a missing required property).
+
+Each row ends with its **issue**: the issue id (a link to the [Issues page](validation-issues)), the assignee, a
+link to the ticket in the workflow tool when one is set, and a "new issue created" tag on the run that created it.
+Under the message, **Copy link** copies a link to this one finding (`/validation?finding=<id>`). Opening such a link
+highlights the finding and unfolds its identity. If the finding is not in the last run (for example because it was
+fixed) the page says so and links to its issue; a malformed id only shows a notice.
 
 A banner above the result appears when the run could not check some constraints: "N constraints in M
 shapes are not checked by this report", with a list of the rule, the construct and the reason. No banner
@@ -49,5 +58,6 @@ namespace.
 
 ## Related
 
+- [Validation issues](validation-issues) — the persistent issue per finding, its lifecycle and the Issues page.
 - [SHACL/structural validation](shacl-validation) — what's actually being checked and when.
 - [The `/identities` area](identities-area) — where a violation's individual link leads.

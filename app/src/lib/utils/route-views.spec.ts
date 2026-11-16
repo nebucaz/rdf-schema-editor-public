@@ -6,6 +6,7 @@ describe('resolveRouteView', () => {
 		expect(resolveRouteView('/')).toEqual({
 			isIdentitiesView: false,
 			isValidationView: false,
+			isIssuesView: false,
 			isWorkbenchView: false,
 			isReportView: false,
 			isQuestionsView: false,
@@ -95,5 +96,15 @@ describe('resolveRouteView /review (STORY-335)', () => {
 		for (const p of ['/', '/identities', '/workbench', '/review/pipeline']) {
 			expect(resolveRouteView(p).isPipelineArea).toBe(false);
 		}
+	});
+});
+
+describe('resolveRouteView /issues (validation-issues-tracker STORY-388)', () => {
+	it('flags /issues as its own view, not the canvas', () => {
+		const v = resolveRouteView('/issues');
+		expect(v.isIssuesView).toBe(true);
+		expect(v.isCanvasView).toBe(false);
+		expect(v.isValidationView).toBe(false);
+		expect(resolveRouteView('/').isIssuesView).toBe(false);
 	});
 });

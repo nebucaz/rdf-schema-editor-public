@@ -189,10 +189,27 @@
 	<Handle type="source" position={Position.Bottom} id="bottom-source" />
 	<Handle type="target" position={Position.Left} id="left-target" />
 	<Handle type="source" position={Position.Left} id="left-source" />
-	<div class="header">
+	<div class="header" class:no-concept-header={noConceptBadge}>
 		<span class="name" title={data.classIri}>{data.name}</span>
 		{#if noConceptBadge}
-			<span class="no-concept" title="No vocabulary concept defines this class. Link one in Edit.">no concept</span>
+			<svg
+				class="no-concept"
+				xmlns="http://www.w3.org/2000/svg"
+				width="14"
+				height="14"
+				viewBox="0 0 24 24"
+				fill="none"
+				stroke="currentColor"
+				stroke-width="2.5"
+				stroke-linecap="round"
+				stroke-linejoin="round"
+				role="img"
+				aria-label="No vocabulary concept"
+			>
+				<title>No vocabulary concept defines this class. Link one in Edit.</title>
+				<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20" />
+				<path d="m3 3 18 18" />
+			</svg>
 		{/if}
 		<div class="header-actions">
 			<NodeMenu entries={menuEntries} />
@@ -295,14 +312,14 @@
 		padding: 6px 8px;
 	}
 
+	/* "No concept" marker: a dashed underline in the header text colour plus a small icon, so it costs no width. */
+	.header.no-concept-header {
+		border-bottom: 2px dashed currentColor;
+	}
+
 	.no-concept {
 		flex: 0 0 auto;
-		font-size: 0.65rem;
-		line-height: 1;
-		padding: 0.1rem 0.35rem;
-		border-radius: 999px;
-		border: 1px solid currentColor;
-		opacity: 0.85;
+		opacity: 0.9;
 	}
 
 	.name {

@@ -14,7 +14,11 @@
 </script>
 
 <script lang="ts">
-	import { apiUrl } from '#lib/utils/urls.js';
+	import { onMount, tick } from 'svelte';
+	import { appUrl } from '#lib/utils/urls.js';
+	import { buildFindingLink, isFindingId, parseFindingParam } from '#lib/services/finding-link.js';
+	import { fetchStoredReport, reconcile } from '#lib/services/issues-client.js';
+	import { issueCounts, issuesByFinding } from '#lib/services/issue-merge.js';
 	import { extractLocalName } from '#lib/utils/iri.js';
 	import { buildIdentitySearchUrl } from '#lib/utils/identity-search-url.js';
 	import { toCurie, curieifyText, namespaceOf } from '#lib/utils/curie.js';
@@ -39,19 +43,28 @@
 	import { validationReportFilterStore } from '#lib/stores/validation-report-filter-store.svelte.js';
 
 	/**
-	 * STORY-132: read-only report — a "Run Validation" button calls the STORY-131 proxy route
-	 * (`/api/validation/report`, itself forwarding to the Go backend's `GET /validation/report`) and
-	 * renders the resulting violation list. Per Decision 4 (`research.md` §6/`plan.md`'s ADR table),
-	 * purely transient: no store, no `localStorage` — a page reload or a second "Run Validation"
-	 * click always starts from an empty result set and refetches. Never touches `sparqlConnector`
-	 * directly (`plan.md` STORY-132's "Implementation Notes") — this component only ever calls the
-	 * SvelteKit proxy route via `fetch`, exactly like `MissingConceptsPanel`.
+	 * STORY-132: a "Run Validation" button runs the check and renders the resulting violation list.
+	 * Since validation-issues-tracker STORY-387 the run goes through `POST /issues/reconcile`, which
+	 * runs the same check as `GET /validation/report` and also creates/updates one issue per finding;
+	 * each row then shows its issue and a "new issue created" tag. The report itself stays transient
+	 * (spec/validation Decision 4): the findings and their issue outcomes live in memory only, while
+	 * the issues are stored by the backend. Never touches `sparqlConnector` directly.
 	 */
 
+	interface Props {
+		/** The raw `?finding=` value of the page URL (validation-issues-tracker STORY-390); validated here, never interpolated. */
+		findingParam?: string | null;
+	}
+
+	let { findingParam = null }: Props = $props();
+
 	let loading = $state(false);
+	/** True until the stored report of the last run was asked for (nothing to ask when the tab already has one). */
+	let loadingStored = $state(!validationReportSession.hasRun);
 	// Report state lives in a session store, so Back from an identity page restores the report.
 	const session = validationReportSession;
 	const hasRun = $derived(session.hasRun);
+	const fromStore = $derived(session.fromStore);
 	const loadError = $derived(session.loadError);
 	const violations = $derived(session.violations);
 	const notChecked = $derived(session.notChecked);
@@ -87,6 +100,9 @@
 	 *  Backstage-synced individual, but it's still that individual's own namespace the user is
 	 *  choosing to show/hide). An individual whose namespace can't be resolved (no registered
 	 *  namespace's base matches) is never hidden — there's nothing for the filter to name it by. */
+	const issues = $derived(issuesByFinding(session.issues));
+	const reconciled = $derived(session.issues.length > 0);
+
 	const visibleViolations = $derived(
 		violations.filter((v) => {
 			const ns = namespaceOf(v.individualIri, namespaceStore.namespaces);
@@ -94,12 +110,50 @@
 		})
 	);
 
+	const target = $derived(parseFindingParam(new URLSearchParams(findingParam === null ? '' : { finding: findingParam })));
+	const targetFinding = $derived(
+		target.kind === 'ok' && hasRun && !loadError ? violations.find((v) => v.id === target.id) : undefined
+	);
+	const targetVisible = $derived(targetFinding ? visibleViolations.includes(targetFinding) : false);
+	const targetId = $derived(target.kind === 'ok' ? target.id : '');
+	let focusedRunAt: Date | null = null;
+	let copiedId = $state('');
+	// After a run, unfold the linked finding's identity and bring its row into view (once per run).
+	$effect(() => {
+		const finding = targetVisible ? targetFinding : undefined;
+		if (!finding || runAt === focusedRunAt) return;
+		focusedRunAt = runAt;
+		if (folded.has(finding.individualIri)) {
+			session.folded = new Set([...folded].filter((key) => key !== finding.individualIri));
+		}
+		void tick().then(() => {
+			document.querySelector(`[data-finding-id="${finding.id}"]`)?.scrollIntoView({ block: 'center' });
+		});
+	});
+
+	async function copyLink(id: string) {
+		try {
+			await navigator.clipboard.writeText(buildFindingLink(window.location.origin, id));
+			copiedId = id;
+		} catch {
+			copiedId = '';
+		}
+	}
+
 	const groups = $derived(groupFindings(visibleViolations, view));
 	const summary = $derived(summarize(visibleViolations));
 	const summaryText = $derived(
 		`${summary.findings} finding${summary.findings === 1 ? '' : 's'} in ${summary.identities} identit${
 			summary.identities === 1 ? 'y' : 'ies'
 		}`
+	);
+	const counts = $derived(
+		issueCounts(visibleViolations.map((v) => v.id), issues, session.resolvedBySystem)
+	);
+	const issueSummary = $derived(
+		!fromStore && (reconciled || session.resolvedBySystem > 0)
+			? `${counts.new} new · ${counts.tracked} tracked · ${counts.resolved} resolved since the last run`
+			: ''
 	);
 	const summaryParts = $derived(
 		view === 'rule'
@@ -142,7 +196,8 @@
 			view,
 			runAt,
 			appVersion: APP_VERSION,
-			hiddenNamespaces: [...validationReportFilterStore.hiddenNamespaces]
+			hiddenNamespaces: [...validationReportFilterStore.hiddenNamespaces],
+			issues
 		});
 		downloadFile(exportFilename(kind, runAt), text, mime);
 	}
@@ -160,23 +215,46 @@
 			// Namespace prefixes for the CURIE-compacted display below — usually already loaded by
 			// `+layout.svelte`'s own `ensureLoaded()` call, but calling it again here is a no-op once
 			// loaded and keeps this component correct standalone.
-			const [response] = await Promise.all([fetch(apiUrl('/validation/report')), namespaceStore.ensureLoaded()]);
-			if (!response.ok) {
-				throw new Error(`Validation report failed: ${response.status} ${response.statusText}`);
-			}
-			const data = await response.json();
+			const [data] = await Promise.all([reconcile((...args) => fetch(...args)), namespaceStore.ensureLoaded()]);
 			session.violations = Array.isArray(data?.violations) ? data.violations : [];
 			session.notChecked = Array.isArray(data?.notChecked) ? data.notChecked : [];
+			session.issues = Array.isArray(data?.issues) ? data.issues : [];
+			session.resolvedBySystem = typeof data?.resolvedBySystem === 'number' ? data.resolvedBySystem : 0;
 			session.runAt = new Date();
+			session.fromStore = false;
 		} catch (err) {
 			session.loadError = err instanceof Error ? err.message : 'Failed to run validation';
 			session.violations = [];
 			session.notChecked = [];
+			session.issues = [];
+			session.resolvedBySystem = 0;
 		} finally {
 			session.hasRun = true;
 			loading = false;
 		}
 	}
+
+	/** Opens with the findings of the last run, which the backend keeps with the issues (STORY-393). */
+	onMount(() => {
+		if (!loadingStored) return;
+		fetchStoredReport((...args) => fetch(...args))
+			.then((stored) => {
+				// A run started meanwhile, or one that came back first, wins.
+				if (session.hasRun || !stored.runAt) return;
+				session.violations = Array.isArray(stored.violations) ? stored.violations : [];
+				session.notChecked = Array.isArray(stored.notChecked) ? stored.notChecked : [];
+				session.issues = Array.isArray(stored.issues) ? stored.issues : [];
+				session.resolvedBySystem = 0;
+				session.runAt = new Date(stored.runAt);
+				session.fromStore = true;
+				session.hasRun = true;
+			})
+			.catch((err) => {
+				if (session.hasRun) return;
+				session.loadError = `The last report could not be loaded: ${err instanceof Error ? err.message : 'unknown error'}. Run Validation to create a new one.`;
+			})
+			.finally(() => (loadingStored = false));
+	});
 
 	/** `prefix:LocalName` display for a type/path IRI — falls back to a bare local name when no
 	 *  registered namespace's base matches (e.g. an external vocabulary IRI). */
@@ -198,7 +276,7 @@
 
 {#snippet findingsTable(rows: ValidationViolation[], withIdentity: boolean)}
 	<!-- Fixed layout and shared column widths, so the columns line up across all tables of the report. -->
-	<table class="findings" class:with-identity={withIdentity}>
+	<table class="findings" class:with-identity={withIdentity} class:with-issues={reconciled}>
 		<thead>
 			<tr>
 				{#if withIdentity}
@@ -210,11 +288,12 @@
 				<th class="col-path">Path</th>
 				<th class="col-constraint">Constraint</th>
 				<th class="col-value">Value</th>
+				{#if reconciled}<th class="col-issue">Issue</th>{/if}
 			</tr>
 		</thead>
 		<tbody>
 			{#each rows as v (rowKey(v))}
-				<tr>
+				<tr data-finding-id={v.id} class:focused-finding={targetVisible && v.id === targetId}>
 					{#if withIdentity}
 						<td>
 							<a href={buildIdentitySearchUrl({ node: v.individualIri })} title={v.individualIri}>
@@ -223,11 +302,31 @@
 						</td>
 						<td title={v.typeIri}>{displayIri(v.typeIri)}</td>
 					{/if}
-					<td>{displayMessage(v.message)}</td>
+					<td>
+						{displayMessage(v.message)}
+						{#if isFindingId(v.id)}
+							<button type="button" class="copy-link no-print" aria-label="Copy link to this finding" onclick={() => void copyLink(v.id)}>
+								{copiedId === v.id ? 'Copied' : 'Copy link'}
+							</button>
+						{/if}
+					</td>
 					<td title={v.shapeIri}>{v.ruleId}</td>
 					<td title={v.path}>{displayIri(v.path)}</td>
 					<td>{v.constraint}</td>
 					<td class="value">{valueText(v)}</td>
+					{#if reconciled}
+						{@const issue = issues.get(v.id)}
+						<td class="issue">
+							{#if issue}
+								<a class="issue-link" href={appUrl(`/issues?issue=${encodeURIComponent(issue.issueId)}`)}>{issue.issueId}</a>
+								{#if issue.assignee}<span class="issue-assignee">{issue.assignee}</span>{/if}
+								{#if issue.externalUrl}
+									<a class="issue-external" href={issue.externalUrl} target="_blank" rel="noopener noreferrer">ticket</a>
+								{/if}
+								{#if issue.isNew}<span class="new-issue-tag">new issue created</span>{/if}
+							{/if}
+						</td>
+					{/if}
 				</tr>
 			{/each}
 		</tbody>
@@ -263,6 +362,9 @@
 		<button type="button" class="run-btn" onclick={() => void runValidation()} disabled={loading}>
 			{loading ? 'Running…' : 'Run Validation'}
 		</button>
+		{#if runAt && !loadError}
+			<span class="last-run">Last run {runAt.toLocaleString()}</span>
+		{/if}
 		<div class="export no-print">
 			<button
 				type="button"
@@ -285,6 +387,24 @@
 		</div>
 	</div>
 
+	{#if target.kind === 'malformed'}
+		<p class="notice no-print">This is not a valid finding link, so no finding is highlighted.</p>
+	{:else if target.kind === 'ok' && !loadingStored}
+		{#if !hasRun}
+			<p class="notice no-print">
+				Run validation to locate this finding.
+				<button type="button" onclick={() => void runValidation()} disabled={loading}>Run validation to locate it</button>
+			</p>
+		{:else if !loadError && !targetFinding}
+			<p class="notice no-print">
+				This finding is not in this run; it may have been resolved.
+				<a href={appUrl(`/issues?issue=${encodeURIComponent(target.id)}`)}>Open its issue</a>
+			</p>
+		{:else if targetFinding && !targetVisible}
+			<p class="notice no-print">This finding is hidden by the namespace filter.</p>
+		{/if}
+	{/if}
+
 	{#if hasRun && !loadError && notChecked.length > 0}
 		<div class="no-print">
 		<details class="banner">
@@ -300,6 +420,8 @@
 
 	{#if loadError}
 		<p class="error">{loadError}</p>
+	{:else if loadingStored}
+		<p class="hint">Loading the last report…</p>
 	{:else if !hasRun}
 		<p class="hint">Click "Run Validation" to check every identity against its SHACL shapes.</p>
 	{:else if violations.length === 0}
@@ -336,6 +458,7 @@
 			{#each summaryParts as part (part)}
 				<span class="summary-part">{part}</span>
 			{/each}
+			{#if issueSummary}<span class="summary-part issue-summary">{issueSummary}</span>{/if}
 		</p>
 		{#if view === 'identity'}
 			{#each groups as group (group.key)}
@@ -450,6 +573,42 @@
 	.run-btn:disabled {
 		opacity: 0.6;
 		cursor: default;
+	}
+
+	.last-run {
+		align-self: center;
+		margin-left: auto;
+		font-size: 0.85rem;
+		color: var(--color-text-muted);
+	}
+
+	.notice {
+		margin: 0;
+		padding: 0.5rem 0.75rem;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		font-size: 0.9rem;
+		color: var(--color-text);
+	}
+
+	.notice button,
+	.copy-link {
+		padding: 0.1rem 0.5rem;
+		border: 1px solid var(--color-border);
+		border-radius: 4px;
+		background: transparent;
+		color: var(--color-text-muted);
+		font-size: 0.75rem;
+		cursor: pointer;
+	}
+
+	.copy-link {
+		display: block;
+		margin-top: 0.25rem;
+	}
+
+	tr.focused-finding td {
+		background: var(--color-hover);
 	}
 
 	.hint {
@@ -622,6 +781,73 @@
 
 	table.findings td {
 		overflow-wrap: anywhere;
+	}
+
+	.with-issues .col-message {
+		width: 26%;
+	}
+
+	.with-issues .col-rule,
+	.with-issues .col-path {
+		width: 14%;
+	}
+
+	.with-issues .col-constraint {
+		width: 8%;
+	}
+
+	.with-issues .col-value {
+		width: 20%;
+	}
+
+	.with-issues .col-issue {
+		width: 18%;
+	}
+
+	.with-issues.with-identity .col-identity {
+		width: 10%;
+	}
+
+	.with-issues.with-identity .col-type {
+		width: 8%;
+	}
+
+	.with-issues.with-identity .col-message {
+		width: 22%;
+	}
+
+	.with-issues.with-identity .col-rule,
+	.with-issues.with-identity .col-path {
+		width: 10%;
+	}
+
+	.with-issues.with-identity .col-constraint {
+		width: 7%;
+	}
+
+	.with-issues.with-identity .col-value {
+		width: 15%;
+	}
+
+	td.issue {
+		display: table-cell;
+		font-size: 0.85rem;
+	}
+
+	.new-issue-tag {
+		display: inline-block;
+		margin-top: 0.2rem;
+		padding: 0.05rem 0.45rem;
+		border-radius: 4px;
+		background: var(--issue-new-bg);
+		color: var(--issue-new-fg);
+		font-size: 0.78rem;
+		font-weight: 600;
+	}
+
+	.issue-assignee {
+		margin-left: 0.3rem;
+		color: var(--color-text-muted);
 	}
 
 	td.value {

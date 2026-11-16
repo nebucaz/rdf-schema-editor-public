@@ -80,7 +80,7 @@
 		};
 	}
 
-	const LIVE_SEARCH_DELAY_MS = 300;
+	const LIVE_SEARCH_DELAY_MS = 600;
 	let liveTimer: ReturnType<typeof setTimeout> | undefined;
 
 	/** With Unclassified selected the list can hold hundreds of thousands of rows, so the box searches

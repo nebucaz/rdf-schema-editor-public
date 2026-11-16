@@ -333,3 +333,35 @@ func TestLoad_JWTSecretMinimumLength(t *testing.T) {
 		})
 	}
 }
+
+func TestLoad_IssueTrackerTemplate(t *testing.T) {
+	cases := []struct {
+		name, tpl string
+		wantErr   string
+	}{
+		{"unset", "", ""},
+		{"valid", "https://x.service-now.com/nav_to.do?uri=incident.do?number={id}", ""},
+		{"missing placeholder", "https://x.example/incident", "{id}"},
+		{"http", "http://x.example/?n={id}", "https"},
+		{"no host", "https:///?n={id}", "https"},
+		{"not a url", "https://x.example/%zz?n={id}", "valid URL"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("GRAPHDB_ENDPOINT_URL", "http://localhost:7201/repositories/rdfschema")
+			t.Setenv("AUTH_JWT_SECRET", testAuthSecret)
+			t.Setenv("ISSUE_TRACKER_URL_TEMPLATE", tc.tpl)
+			t.Setenv("ISSUE_TRACKER_NAME", " ServiceNow ")
+			cfg, err := Load()
+			if tc.wantErr == "" {
+				if err != nil || cfg.IssueTrackerURLTemplate != tc.tpl || cfg.IssueTrackerName != "ServiceNow" {
+					t.Errorf("cfg = %+v err = %v", cfg, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("err = %v, want it to mention %q", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -18,6 +18,7 @@ describe('AppNav under a base path', () => {
 			'/path/',
 			'/path/workbench',
 			'/path/validation',
+			'/path/issues',
 			'/path/pipeline'
 		]);
 		const current = links.filter((a) => a.getAttribute('aria-current') === 'page');

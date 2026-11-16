@@ -36,6 +36,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runDiscover(rest, stdout, stderr)
 	case "sync":
 		return runSync(rest, stdout, stderr)
+	case "servicenow":
+		return runServiceNow(rest, stdout, stderr)
 	case "raw":
 		return runRaw(rest, stdout, stderr)
 	case "mint-token":
@@ -57,6 +59,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  importctl discover <source> [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl sync <source> [--apply] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl raw <source> <kind> [--out FILE] [--backend-url URL] [--token TOKEN]")
+	fmt.Fprintln(w, "  importctl servicenow sync [--apply] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl mint-token --sub <value> [--ttl DURATION]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  --backend-url URL   Go backend base URL (default: BACKEND_URL env var, or "+defaultBackendURL+")")
@@ -150,6 +153,29 @@ func runSync(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	printSync(stdout, source, resp)
+	return 0
+}
+
+// runServiceNow implements `importctl servicenow sync [--apply]`: one ServiceNow ticket sync pass (pull ticket
+// state, push local changes) through POST /issues/tickets/sync. Dry-run unless --apply, like `sync backstage`.
+func runServiceNow(args []string, stdout, stderr io.Writer) int {
+	const usage = "usage: importctl servicenow sync [--apply] [--backend-url URL] [--token TOKEN]"
+	positional, backendURL, apply, token, err := parseArgs(args)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(positional) != 1 || positional[0] != "sync" {
+		fmt.Fprintln(stderr, usage)
+		return 1
+	}
+	client := &apiClient{baseURL: backendURL, token: token, http: http.DefaultClient}
+	resp, err := client.serviceNowSync(context.Background(), !apply)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	printServiceNowSync(stdout, resp)
 	return 0
 }
 

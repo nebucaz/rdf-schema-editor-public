@@ -57,7 +57,7 @@ describe('loadRuntimeConfig (static-frontend STORY-011)', () => {
 		const result = await loadRuntimeConfig(
 			respond({ defaultNamespaceBaseIri: 'http://example.org/ns/schema#', devLoginEnabled: true })
 		);
-		expect(result).toEqual({ ok: true, defaultNamespaceBaseIri: 'http://example.org/ns', devLoginEnabled: true });
+		expect(result).toEqual({ ok: true, defaultNamespaceBaseIri: 'http://example.org/ns', devLoginEnabled: true, issueTracker: { name: '', enabled: false }, serviceNow: { enabled: false, name: '', bulkCap: 0, syncEnabled: false } });
 	});
 
 	it('reports a failed request as an error', async () => {
@@ -73,5 +73,38 @@ describe('loadRuntimeConfig (static-frontend STORY-011)', () => {
 		}) as unknown as typeof fetch;
 		expect((await loadRuntimeConfig(down)).ok).toBe(false);
 		expect((await loadRuntimeConfig(respond({ nope: 1 }))).ok).toBe(false);
+	});
+});
+
+describe('issue tracker config (STORY-386)', () => {
+	it('falls back to a disabled tracker in tests and builds', async () => {
+		const { ISSUE_TRACKER } = await import('./config');
+		expect(ISSUE_TRACKER).toEqual({ name: '', enabled: false });
+	});
+
+	it('reads issueTracker from /api/config and tolerates its absence', async () => {
+		const { loadRuntimeConfig } = await import('./config');
+		const reply = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+		const base = { defaultNamespaceBaseIri: 'http://x/ns', devLoginEnabled: false };
+		expect(await loadRuntimeConfig(reply({ ...base, issueTracker: { name: 'ServiceNow', enabled: true } }))).toMatchObject({ ok: true, issueTracker: { name: 'ServiceNow', enabled: true } });
+		expect(await loadRuntimeConfig(reply(base))).toMatchObject({ ok: true, issueTracker: { name: '', enabled: false } });
+	});
+
+	it('reads serviceNow from /api/config and treats its absence as off', async () => {
+		const { loadRuntimeConfig } = await import('./config');
+		const reply = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+		const base = { defaultNamespaceBaseIri: 'http://x/ns', devLoginEnabled: false };
+		expect(await loadRuntimeConfig(reply({ ...base, serviceNow: { enabled: true, name: 'ServiceNow', bulkCap: 25, syncEnabled: false } }))).toMatchObject({
+			ok: true,
+			serviceNow: { enabled: true, name: 'ServiceNow', bulkCap: 25, syncEnabled: false }
+		});
+		expect(await loadRuntimeConfig(reply({ ...base, serviceNow: { enabled: 'yes', bulkCap: '5' } }))).toMatchObject({
+			serviceNow: { enabled: false, name: '', bulkCap: 0, syncEnabled: false }
+		});
+	});
+
+	it('exposes SERVICE_NOW as off in tests', async () => {
+		const { SERVICE_NOW } = await import('./config');
+		expect(SERVICE_NOW.enabled).toBe(false);
 	});
 });

@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 
 vi.mock('#lib/stores/namespace-store.svelte.js', () => ({
 	namespaceStore: {
@@ -17,6 +17,7 @@ import ValidationReportView from './ValidationReportView.svelte';
 import { validationReportFilterStore } from '#lib/stores/validation-report-filter-store.svelte.js';
 
 const violation = {
+	id: 'abcdefghijklmnop',
 	individualIri: 'http://ns#alice',
 	individualLabel: 'Alice',
 	typeIri: 'http://ns#Person',
@@ -94,6 +95,10 @@ describe('ValidationReportView envelope', () => {
 		expect(await screen.findByText(/every identity conforms/)).toBeTruthy();
 	});
 });
+
+/** How many POSTs (runs) the stubbed fetch has seen; the stored report is a GET. */
+const posts = () =>
+	((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit | undefined][]).filter(([, i]) => i?.method === 'POST').length;
 
 const finding = (over: Partial<typeof violation> & { value?: string }) => ({ ...violation, ...over });
 
@@ -387,7 +392,7 @@ describe('ValidationReportView export menu', () => {
 	it('is disabled after a failed run', async () => {
 		vi.stubGlobal('fetch', vi.fn(async () => new Response('x', { status: 500, statusText: 'boom' })));
 		await run();
-		await screen.findByText(/Validation report failed/);
+		await screen.findByText('Request failed (500)');
 		expect(exportButton().disabled).toBe(true);
 	});
 
@@ -549,10 +554,11 @@ describe('ValidationReportView coming back', () => {
 		expect(document.querySelectorAll('.block-body.folded')).toHaveLength(3);
 	});
 
-	it('starts empty once the session is reset (a reload)', () => {
+	it('starts empty once the session is reset (a reload) and nothing is stored', async () => {
 		resetValidationReportSession();
+		respondWith({ runAt: '', violations: [], notChecked: [], issues: [] });
 		render(ValidationReportView);
-		expect(screen.getByText(/Click "Run Validation"/)).toBeTruthy();
+		expect(await screen.findByText(/Click "Run Validation"/)).toBeTruthy();
 	});
 });
 
@@ -584,5 +590,213 @@ describe('ValidationReportView column layout', () => {
 		await screen.findByText('Bob');
 		await fireEvent.click(screen.getByRole('radio', { name: 'None' }));
 		expect(headers(document.querySelector('table.findings')!)).toEqual(['Identity', 'Type', 'Message', 'Rule', 'Path', 'Constraint', 'Value']);
+	});
+});
+
+describe('ValidationReportView issues (STORY-387)', () => {
+	const a = finding({ id: 'aaaaaaaaaaaaaaaa', individualIri: 'http://ns#a', individualLabel: 'Anna', message: 'anna problem' });
+	const b = finding({ id: 'bbbbbbbbbbbbbbbb', individualIri: 'http://ns#b', individualLabel: 'Bob', message: 'bob problem' });
+	const outcome = (id: string, over: Record<string, unknown> = {}) => ({
+		findingId: id, issueId: id, status: 'open', assignee: '', externalUrl: '', isNew: false, ...over
+	});
+	const reconciled = {
+		violations: [a, b],
+		notChecked: [],
+		issues: [outcome(a.id, { isNew: true }), outcome(b.id, { status: 'in-progress', assignee: 'alice', externalUrl: 'https://sn.example/?n=INC1' })],
+		resolvedBySystem: 3
+	};
+
+	it('runs through POST /issues/reconcile, not GET /validation/report', async () => {
+		respondWith(reconciled);
+		await run();
+		await screen.findByText('Anna');
+		const calls = (fetch as unknown as ReturnType<typeof vi.fn>).mock.calls as [string, RequestInit | undefined][];
+		const [url, init] = calls.find(([, i]) => i?.method === 'POST')!;
+		expect(url).toMatch(/\/issues\/reconcile$/);
+		expect(init!.method).toBe('POST');
+	});
+
+	it('tags only the issue this run created and shows status and assignee of the others', async () => {
+		respondWith(reconciled);
+		await run();
+		await screen.findByText('Anna');
+		expect(screen.getAllByText('new issue created')).toHaveLength(1);
+		const bobRow = screen.getByText('bob problem').closest('tr')!;
+		expect(bobRow.textContent).toContain('alice');
+		expect(bobRow.textContent).not.toContain('new issue created');
+		const annaRow = screen.getByText('anna problem').closest('tr')!;
+		expect(annaRow.querySelector('a[href*="/issues"]')).toBeTruthy();
+	});
+
+	it('shows how many issues are new, tracked and resolved by the system', async () => {
+		respondWith(reconciled);
+		await run();
+		expect(await screen.findByText('1 new · 1 tracked · 3 resolved since the last run')).toBeTruthy();
+	});
+
+	it('shows no new tag when the same issues come back on the next run', async () => {
+		respondWith({ ...reconciled, issues: reconciled.issues.map((o) => ({ ...o, isNew: false })), resolvedBySystem: 0 });
+		await run();
+		await screen.findByText('Anna');
+		expect(screen.queryByText('new issue created')).toBeNull();
+		expect(screen.getByText('0 new · 2 tracked · 0 resolved since the last run')).toBeTruthy();
+	});
+
+	it('hands the issues to the exports', async () => {
+		respondWith(reconciled);
+		await run();
+		await screen.findByText('Anna');
+		await fireEvent.click(screen.getByRole('button', { name: 'Export' }));
+		await fireEvent.click(screen.getByRole('menuitem', { name: 'CSV' }));
+		const csv = (downloadFile as unknown as ReturnType<typeof vi.fn>).mock.calls.at(-1)![1] as string;
+		expect(csv).toContain('in-progress');
+		expect(csv).toContain('https://sn.example/?n=INC1');
+	});
+});
+
+describe('ValidationReportView deep link (STORY-390)', () => {
+	const a = finding({ id: 'aaaaaaaaaaaaaaaa', individualIri: 'http://ns#a', individualLabel: 'Anna', message: 'anna problem' });
+	const b = finding({ id: 'bbbbbbbbbbbbbbbb', individualIri: 'http://ns#b', individualLabel: 'Bob', message: 'bob problem' });
+	const reconciled = { violations: [a, b], notChecked: [], issues: [], resolvedBySystem: 0 };
+	const scrollIntoView = vi.fn();
+
+	beforeEach(() => {
+		scrollIntoView.mockClear();
+		Element.prototype.scrollIntoView = scrollIntoView;
+	});
+
+	it('highlights and scrolls to the linked finding after a run, unfolding its identity', async () => {
+		respondWith(reconciled);
+		render(ValidationReportView, { props: { findingParam: 'bbbbbbbbbbbbbbbb' } });
+		expect(await screen.findByText(/Run validation to locate this finding/)).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Run Validation' }));
+		await screen.findByText('bob problem');
+		await waitFor(() => expect(scrollIntoView).toHaveBeenCalled());
+		const row = screen.getByText('bob problem').closest('tr')!;
+		expect(row.classList.contains('focused-finding')).toBe(true);
+		expect(screen.getByText('anna problem').closest('tr')!.classList.contains('focused-finding')).toBe(false);
+		expect(screen.queryByText(/Run validation to locate/)).toBeNull();
+	});
+
+	it('offers to run the validation from the notice when no run exists, without running on load', async () => {
+		respondWith(reconciled);
+		render(ValidationReportView, { props: { findingParam: 'bbbbbbbbbbbbbbbb' } });
+		await screen.findByText(/Run validation to locate this finding/);
+		expect(posts()).toBe(0);
+		await fireEvent.click(screen.getByRole('button', { name: 'Run validation to locate it' }));
+		await screen.findByText('bob problem');
+		expect(posts()).toBe(1);
+	});
+
+	it('shows a notice, not an error, for a malformed id', async () => {
+		respondWith(reconciled);
+		render(ValidationReportView, { props: { findingParam: '<script>' } });
+		expect(screen.getByText(/not a valid finding link/)).toBeTruthy();
+		await fireEvent.click(screen.getByRole('button', { name: 'Run Validation' }));
+		await screen.findByText('bob problem');
+		expect(screen.getByText(/not a valid finding link/)).toBeTruthy();
+		expect(document.querySelector('.focused-finding')).toBeNull();
+	});
+
+	it('links a finding that is no longer in the run to its issue', async () => {
+		respondWith(reconciled);
+		render(ValidationReportView, { props: { findingParam: 'cccccccccccccccc' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Run Validation' }));
+		await screen.findByText('bob problem');
+		expect(screen.getByText(/not in this run/)).toBeTruthy();
+		const link = screen.getByRole('link', { name: 'Open its issue' });
+		expect(link.getAttribute('href')).toContain('/issues?issue=cccccccccccccccc');
+	});
+
+	it('copies an absolute link to the finding', async () => {
+		const writeText = vi.fn(async () => {});
+		vi.stubGlobal('navigator', { clipboard: { writeText } });
+		respondWith(reconciled);
+		await run();
+		await screen.findByText('bob problem');
+		const row = screen.getByText('bob problem').closest('tr')!;
+		await fireEvent.click(row.querySelector('button.copy-link') as HTMLButtonElement);
+		expect(writeText).toHaveBeenCalledTimes(1);
+		const copied = (writeText.mock.calls[0] as unknown as [string])[0];
+		expect(copied).toMatch(/^https?:\/\/.+\/validation\?finding=bbbbbbbbbbbbbbbb$/);
+	});
+});
+
+describe('ValidationReportView stored report (STORY-393)', () => {
+	const a = finding({ id: 'aaaaaaaaaaaaaaaa', individualIri: 'http://ns#a', individualLabel: 'Anna', message: 'anna problem' });
+	const b = finding({ id: 'bbbbbbbbbbbbbbbb', individualIri: 'http://ns#b', individualLabel: 'Bob', message: 'bob problem' });
+	const outcome = (id: string, over: Record<string, unknown> = {}) => ({
+		findingId: id, issueId: id, status: 'open', assignee: '', externalUrl: '', isNew: false, ...over
+	});
+	const stored = {
+		runAt: '2026-03-04T05:06:07.089Z',
+		violations: [a, b],
+		notChecked,
+		issues: [outcome(a.id), outcome(b.id, { status: 'wontfix' })]
+	};
+
+	/** GET /issues/report answers `getBody`; a POST (a run) answers `postBody`. */
+	function serve(getBody: unknown, postBody: unknown = stored) {
+		vi.stubGlobal(
+			'fetch',
+			vi.fn(async (_url: string, init?: RequestInit) =>
+				new Response(JSON.stringify(init?.method === 'POST' ? postBody : getBody), { status: 200 })
+			)
+		);
+	}
+
+	beforeEach(() => {
+		Element.prototype.scrollIntoView = vi.fn();
+	});
+
+	it('opens with the findings of the last run, without running validation', async () => {
+		serve(stored);
+		render(ValidationReportView);
+		expect(await screen.findByText('anna problem')).toBeTruthy();
+		expect(screen.getByText('bob problem')).toBeTruthy();
+		expect(posts()).toBe(0);
+		expect(screen.getByText(/Last run/)).toBeTruthy();
+		expect(screen.getByText('3 constraints in 2 shapes are not checked by this report')).toBeTruthy();
+	});
+
+	it('says so when the stored report cannot be read, instead of showing an empty page', async () => {
+		vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ message: 'Not found' }), { status: 404 })));
+		render(ValidationReportView);
+		expect(await screen.findByText(/The last report could not be loaded: Not found/)).toBeTruthy();
+	});
+
+	it('keeps the hint when no run is stored yet', async () => {
+		serve({ runAt: '', violations: [], notChecked: [], issues: [] });
+		render(ValidationReportView);
+		expect(await screen.findByText(/Click "Run Validation"/)).toBeTruthy();
+	});
+
+	it('Run Validation re-runs and replaces the stored list', async () => {
+		serve(stored, { ...stored, runAt: '2026-03-05T00:00:00.000Z', violations: [b], issues: [outcome(b.id, { isNew: true })], resolvedBySystem: 1 });
+		render(ValidationReportView);
+		await screen.findByText('anna problem');
+		await fireEvent.click(screen.getByRole('button', { name: 'Run Validation' }));
+		await waitFor(() => expect(screen.queryByText('anna problem')).toBeNull());
+		expect(screen.getByText('bob problem')).toBeTruthy();
+		expect(screen.getByText('1 new · 0 tracked · 1 resolved since the last run')).toBeTruthy();
+	});
+
+	it('highlights a linked finding on open, with no run', async () => {
+		serve(stored);
+		render(ValidationReportView, { props: { findingParam: 'bbbbbbbbbbbbbbbb' } });
+		await screen.findByText('bob problem');
+		await waitFor(() => expect(screen.getByText('bob problem').closest('tr')!.classList.contains('focused-finding')).toBe(true));
+		expect(posts()).toBe(0);
+		expect(screen.queryByText(/Run validation to locate this finding/)).toBeNull();
+	});
+
+	it('links the row to its issue by the issue id, without a status badge', async () => {
+		serve(stored);
+		render(ValidationReportView);
+		await screen.findByText('bob problem');
+		const row = screen.getByText('bob problem').closest('tr')!;
+		const link = row.querySelector('a[href*="/issues?issue=bbbbbbbbbbbbbbbb"]') as HTMLAnchorElement;
+		expect(link.textContent?.trim()).toBe('bbbbbbbbbbbbbbbb');
+		expect(row.querySelector('.status-chip')).toBeNull();
 	});
 });

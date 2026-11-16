@@ -27,6 +27,18 @@
 	--nav-height: 60px;
 	--transition: 0.2s ease;
 
+	/* Issue status chips and the "new issue created" tag (validation-issues-tracker STORY-387) */
+	--issue-open-fg: #b3261e;
+	--issue-open-bg: rgba(179, 38, 30, 0.1);
+	--issue-progress-fg: #8a5a00;
+	--issue-progress-bg: rgba(237, 142, 0, 0.14);
+	--issue-resolved-fg: #2e7d32;
+	--issue-resolved-bg: rgba(46, 125, 50, 0.12);
+	--issue-wontfix-fg: #5f6368;
+	--issue-wontfix-bg: rgba(95, 99, 104, 0.12);
+	--issue-new-fg: #ffffff;
+	--issue-new-bg: #007acc;
+
 	/* Turtle syntax highlighting (TriplesPanel) */
 	--ttl-comment: #6a737d;
 	--ttl-keyword: #d73a49;
@@ -82,6 +94,16 @@
 	--color-success-bg: rgba(76, 175, 80, 0.15);
 	--color-warning: #ffb74d;
 	--color-warning-bg: rgba(255, 183, 77, 0.15);
+	--issue-open-fg: #ff8a80;
+	--issue-open-bg: rgba(244, 67, 54, 0.18);
+	--issue-progress-fg: #ffb74d;
+	--issue-progress-bg: rgba(255, 183, 77, 0.16);
+	--issue-resolved-fg: #81c784;
+	--issue-resolved-bg: rgba(76, 175, 80, 0.18);
+	--issue-wontfix-fg: #b0b4b9;
+	--issue-wontfix-bg: rgba(176, 180, 185, 0.16);
+	--issue-new-fg: #0b1620;
+	--issue-new-bg: #58a6ff;
 
 	/* Turtle syntax highlighting (TriplesPanel) */
 	--ttl-comment: #8b949e;

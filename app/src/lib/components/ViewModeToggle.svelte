@@ -18,6 +18,7 @@
 		class="segment"
 		class:active={viewMode === 'schema'}
 		aria-pressed={viewMode === 'schema'}
+		title="Schema view — classes, properties and relations"
 		onclick={() => onChange('schema')}
 	>
 		Schema
@@ -27,6 +28,7 @@
 		class="segment"
 		class:active={viewMode === 'instances'}
 		aria-pressed={viewMode === 'instances'}
+		title="Instances view — the individuals of the schema"
 		onclick={() => onChange('instances')}
 	>
 		Instances
