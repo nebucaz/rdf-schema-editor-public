@@ -25,7 +25,11 @@ const INTEGER = new Set([
 const FRACTIONAL = new Set(['decimal', 'double', 'float']);
 const TEMPORAL_OR_BOOLEAN = new Set(['boolean', 'date', 'dateTime']);
 
-export function operatorsForProperty(p: Pick<BuilderProperty, 'datatype' | 'allowedValues'>): FilterOp[] {
+/** A concept property holds concept IRIs: only presence can be filtered, a typed comparison would never match. */
+export const OPERATORS_FOR_CONCEPT: readonly FilterOp[] = ['isEmpty', 'isNotEmpty'];
+
+export function operatorsForProperty(p: Pick<BuilderProperty, 'datatype' | 'allowedValues' | 'valueSchemeIri'>): FilterOp[] {
+	if (p.valueSchemeIri) return [...OPERATORS_FOR_CONCEPT];
 	if (p.allowedValues && p.allowedValues.length > 0) return [...OPERATORS_FOR_ENUMERATION];
 	if (isComparableDatatype(p.datatype)) return [...OPERATORS_FOR_COMPARABLE];
 	const dt = extractLocalName(p.datatype);

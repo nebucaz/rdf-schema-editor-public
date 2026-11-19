@@ -52,6 +52,8 @@ in progress (dry runs are exempt), `502` if the upstream source is unreachable. 
 `BackstageSyncWorker` also ticks a real sync automatically on `BACKSTAGE_SYNC_INTERVAL` (default
 `1h`, see `.env.example`) — this route is for on-demand/CLI-triggered runs, not a replacement for it.
 
+The sync never writes SKOS concepts (`skos:Concept`, `skos:inScheme`) or anything in a `<base>/vocab` graph; concepts stay manual work (`internal/sync/no_concept_writes_test.go` guards it). "Concept" inside `internal/sync` means the app's *Concept Namespace* (`rse:namespace`), not SKOS.
+
 ## Route overview
 
 | Route | Service JWT | Signed-in user | Notes |
@@ -71,6 +73,7 @@ in progress (dry runs are exempt), `502` if the upstream source is unreachable. 
 | `POST /shared-queries`, `GET /shared-queries/{id}` | ✔ | ✔ | short share links |
 | `POST /annotations`, `DELETE /annotations` | ✔ | ✔ | server-side stamping |
 | `GET /sources/{source}/discover`, `GET …/raw/{kind}`, `POST …/sync` | ✔ | – | sync worker and `importctl` have no user |
+| `GET /glossary/schemes`, `GET /glossary/concepts`, `GET /glossary/concepts/{id}` | ✔ | – | read-only glossary for other tools (catalog, BI, RAG); JSON or Turtle; a cookie alone is refused |
 
 "Signed-in user" = a verified `Oglala` cookie (`handler.RequireUser`, otherwise JSON 401 `"Sign in required"`).
 
@@ -92,6 +95,34 @@ DELETE /annotations   {"iri": string}                       ->  {"success": true
 Stores the reified annotation (`internal/annotations`); `annotatedBy`/`annotatedAt` are stamped from the cookie
 user and the server clock. `DELETE` only removes nodes typed `Annotation`. Bad input is `400`, GraphDB failures
 `502`.
+
+### Glossary API (`/glossary*`, `internal/glossary`)
+
+Other tools pull the vocabulary with the service token (`importctl`'s, see "Authentication"); there is no user, no
+write route and no SPARQL passthrough. Only the `<base>/vocab` graph of the namespace flagged
+`rse:vocabularyNamespace` is read, and only a fixed list of predicates, so **hidden labels, editorial notes and the
+project's own `rse:` fields never leave GraphDB** (`rse:status` is served as `status`, nothing else).
+
+```
+GET /glossary/schemes
+GET /glossary/concepts?scheme=<id>&lang=<tag>&modifiedSince=<ISO date or time>&page=<n>&pageSize=<n>
+GET /glossary/concepts/{id}
+Accept: application/json | text/turtle        (or ?format=json|turtle)
+
+200 (json)  {"items": [Concept], "page": n, "hasMore": bool}      (X-Has-More header on the list, both formats)
+400 invalid id, language, date, page or format · 401 missing/invalid service token · 404 unknown concept · 502 GraphDB error
+```
+
+Ids are the local name of the IRI in the vocab graph (`^[A-Za-z0-9_-]{1,128}$`); an empty result is `[]`. Lists are in
+IRI order, `pageSize` defaults to 100 and is capped at 500. `lang` keeps the concepts that have a preferred label in
+that language and only that language's labels; a label without a language tag is keyed `und`. `modifiedSince`
+compares with `dct:modified` (concepts without one are left out). A concept carries `iri`, `prefLabel` and
+`altLabels` per language, `definition`, `scopeNote`, `example`, `notation`, `broader`/`narrower`/`related` (both
+halves of every pair), `mappings`, `scheme`, `topConcept`, `status`, `createdAt`, `modifiedAt`.
+
+The Turtle writer is held to the app's own export by `testdata/golden/glossary.json` + `glossary.ttl`
+(`go test ./internal/glossary`, `skos-export-golden.spec.ts`); regenerate the `.ttl` with
+`UPDATE_GOLDEN=1 go test ./internal/glossary`.
 
 The SPARQL guards, query-model validation, short-link ids and annotation SPARQL are mirrored in the frontend;
 `testdata/golden/*.json` are shared fixtures that both `go test` and Vitest consume.
@@ -226,6 +257,7 @@ export IMPORTCTL_AUTH_TOKEN=$(AUTH_JWT_SECRET=... go run ./cmd/cli mint-token --
 go run ./cmd/cli discover backstage
 go run ./cmd/cli sync backstage              # dry-run by default — writes nothing
 go run ./cmd/cli sync backstage --apply      # performs a real sync
+go run ./cmd/cli glossary export --out glossary.ttl     # every page of /glossary/concepts (--format json, --scheme, --lang, --modified-since)
 
 # dump the raw upstream JSON for every Component (or any other kind) — no mapping applied
 go run ./cmd/cli raw backstage Component

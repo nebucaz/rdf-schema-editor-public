@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { appUrl } from '#lib/utils/urls.js';
 import { DEBT_KINDS, collectDebt, countDebt, filterDebt, type DebtInput } from './semantic-debt';
 import { DEFAULT_DEBT_SETTINGS } from './debt-settings';
 import type { CompetencyQuestion, CompetencyQuestionRun } from './competency-question';
@@ -99,6 +100,40 @@ describe('collectDebt (STORY-334)', () => {
 	});
 });
 
+describe('collectDebt: concept properties (concept-valued-properties STORY-440)', () => {
+	const stage = `${NS}#deviceStage`;
+	const base = {
+		classes: [cls('Device')], datatypeProperties: [], subClassOf: [], individualClassRelations: [],
+		individuals: [{ iri: `${NS}#laptop`, label: 'laptop', classIri: `${NS}#Device`, namespaceBaseIri: NS, syncSource: null, syncStatus: null }],
+		conceptProperties: [{ iri: stage, label: 'stage', domain: `${NS}#Device`, valueSchemeIri: 'urn:scheme:life', required: false, repeatable: false, namespaceBaseIri: NS }],
+		individualIndividualRelations: [
+			{ individualIri: `${NS}#laptop`, predicateIri: stage, name: 'stage', targetIndividualIri: 'urn:c:old', namespaceBaseIri: NS },
+			{ individualIri: `${NS}#laptop`, predicateIri: stage, name: 'stage', targetIndividualIri: 'urn:c:alien', namespaceBaseIri: NS }
+		],
+		objectProperties: [{ iri: `${NS}#hasStatus`, label: 'hasStatus', domain: `${NS}#Device`, range: 'http://www.w3.org/2004/02/skos/core#Concept', namespaceBaseIri: NS, required: false, repeatable: false }]
+	} as unknown as FetchedSchema;
+	const concepts = [concept('old', { schemeIri: 'urn:scheme:life', status: 'retired' }), concept('alien', { schemeIri: 'urn:scheme:other' })];
+
+	it('lists a retired value and a relation to skos:Concept, not the foreign value that Validation reports', () => {
+		const found = collectDebt(input({ schema: base, concepts })).filter((d) => ['retired-concept-value', 'relation-to-skos-concept', 'concept-property-empty-scheme'].includes(d.kind));
+		expect(found.map((d) => `${d.kind}:${d.elementIri}`).sort()).toEqual([
+			`relation-to-skos-concept:${NS}#hasStatus`,
+			`retired-concept-value:${NS}#laptop`
+		]);
+		expect(found.every((d) => d.href !== null)).toBe(true);
+	});
+
+	it('lists a concept property whose scheme has no concepts', () => {
+		const found = collectDebt(input({ schema: base, concepts: [concept('alien', { schemeIri: 'urn:scheme:other' })] }));
+		expect(found.some((d) => d.kind === 'concept-property-empty-scheme' && d.elementIri === stage)).toBe(true);
+	});
+
+	it('knows the labels of the new kinds', () => {
+		const kinds = DEBT_KINDS.map((k) => k.kind);
+		expect(kinds).toEqual(expect.arrayContaining(['concept-property-empty-scheme', 'retired-concept-value', 'relation-to-skos-concept']));
+	});
+});
+
 describe('filterDebt / countDebt', () => {
 	const items = collectDebt(input({ concepts: [concept('a', { definition: '' }), concept('b', { authority: '' })], questions: [question('q', { lastReviewed: '' })] }));
 
@@ -115,5 +150,31 @@ describe('filterDebt / countDebt', () => {
 
 	it('names every kind', () => {
 		for (const k of DEBT_KINDS) expect(k.label.length).toBeGreaterThan(0);
+	});
+});
+
+describe('scheme health debt (STORY-422)', () => {
+	it('lists orphans, disconnected clusters and undefined references with an Open link', () => {
+		const found = collectDebt(
+			input({
+				concepts: [
+					concept('top', { related: ['urn:c:ghost'] }),
+					concept('lonely', { topConcept: false }),
+					concept('x'),
+					concept('y', { topConcept: false, broader: ['urn:c:x'] }),
+					concept('p'),
+					concept('q', { topConcept: false, broader: ['urn:c:p'] })
+				]
+			})
+		);
+		const by = (kind: string) => found.filter((d) => d.kind === kind);
+		expect(by('orphan-concept').map((d) => d.elementIri)).toEqual(['urn:c:lonely']);
+		expect(by('undefined-reference').map((d) => d.elementIri)).toEqual(['urn:c:top']);
+		expect(by('disconnected-cluster')).toHaveLength(1);
+		expect(by('orphan-concept')[0].href).toBe(appUrl(`/vocabulary?concept=${encodeURIComponent('urn:c:lonely')}`));
+	});
+
+	it('is quiet without concepts', () => {
+		expect(collectDebt(input()).filter((d) => ['orphan-concept', 'disconnected-cluster', 'undefined-reference'].includes(d.kind))).toEqual([]);
 	});
 });

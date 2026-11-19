@@ -1,0 +1,41 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix ex:   <http://example.org/concept-demo#> .
+
+# Two schemes for testing "Add concept property" (spec/concept-valued-properties).
+# Import on the Vocabulary page: Import, choose this file, Preview import, Apply import.
+
+ex:Lifecycle a skos:ConceptScheme ;
+    skos:prefLabel "Lifecycle"@en ;
+    skos:hasTopConcept ex:Planned, ex:Active, ex:Retired .
+
+ex:Planned a skos:Concept ;
+    skos:inScheme ex:Lifecycle ; skos:topConceptOf ex:Lifecycle ;
+    skos:prefLabel "Planned"@en ;
+    skos:definition "Approved, but not yet in operation."@en .
+
+ex:Active a skos:Concept ;
+    skos:inScheme ex:Lifecycle ; skos:topConceptOf ex:Lifecycle ;
+    skos:prefLabel "Active"@en ;
+    skos:altLabel "In operation"@en ;
+    skos:definition "In productive use."@en .
+
+ex:Retired a skos:Concept ;
+    skos:inScheme ex:Lifecycle ; skos:topConceptOf ex:Lifecycle ;
+    skos:prefLabel "Retired"@en ;
+    skos:definition "Taken out of use."@en .
+
+ex:Risk a skos:ConceptScheme ;
+    skos:prefLabel "Risk level"@en ;
+    skos:hasTopConcept ex:Low, ex:Medium, ex:High .
+
+ex:Low a skos:Concept ;
+    skos:inScheme ex:Risk ; skos:topConceptOf ex:Risk ;
+    skos:prefLabel "Low"@en ; skos:definition "Negligible impact."@en .
+
+ex:Medium a skos:Concept ;
+    skos:inScheme ex:Risk ; skos:topConceptOf ex:Risk ;
+    skos:prefLabel "Medium"@en ; skos:definition "Noticeable but tolerable impact."@en .
+
+ex:High a skos:Concept ;
+    skos:inScheme ex:Risk ; skos:topConceptOf ex:Risk ;
+    skos:prefLabel "High"@en ; skos:definition "Severe impact."@en .

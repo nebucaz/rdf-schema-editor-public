@@ -439,6 +439,7 @@ func TestFetchIgnoredPropertyKeys_OncePerShapeAndKey(t *testing.T) {
 			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#message"},"ruleId":{"type":"literal","value":"R"}},
 			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#in"},"ruleId":{"type":"literal","value":"R"}},
 			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#in"},"ruleId":{"type":"literal","value":"R"}},
+			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://ld.pageagent.com/rdf-schema-editor/schema#valueScheme"}},
 			{"shape":{"type":"uri","value":"http://ns#S"},"key":{"type":"uri","value":"http://www.w3.org/ns/shacl#nodeKind"}}
 		]}}`
 	})
@@ -451,6 +452,6 @@ func TestFetchIgnoredPropertyKeys_OncePerShapeAndKey(t *testing.T) {
 	}
 	assertUnscoped(t, *lastQuery)
 	if len(got) != 2 || got[0].Construct != "sh:in" || got[1].Construct != "sh:nodeKind" || got[0].RuleId != "R" || got[0].ShapeIri != "http://ns#S" {
-		t.Errorf("got = %+v, want sh:in and sh:nodeKind once each", got)
+		t.Errorf("got = %+v, want sh:in and sh:nodeKind once each, and not the rse:valueScheme marker", got)
 	}
 }

@@ -10,6 +10,7 @@ import type { CompetencyQuestion, CompetencyQuestionRun } from './competency-que
 import { runGates } from './gates/index';
 import { gateFindingLink } from './gates/links';
 import { modelClasses } from './gates/link';
+import { analyseSchemeHealth, schemeHealthDebt } from './scheme-health';
 import { conceptTitle, type Concept } from './skos-concept';
 import type { FetchedSchema } from './sparql-connector';
 
@@ -21,7 +22,13 @@ export const DEBT_KINDS = [
 	{ kind: 'class-without-shape', label: 'Class without shape' },
 	{ kind: 'class-without-question', label: 'Class without question' },
 	{ kind: 'failing-question', label: 'Failing question' },
-	{ kind: 'overdue-question-review', label: 'Question review overdue' }
+	{ kind: 'overdue-question-review', label: 'Question review overdue' },
+	{ kind: 'orphan-concept', label: 'Orphan concept' },
+	{ kind: 'disconnected-cluster', label: 'Disconnected concepts' },
+	{ kind: 'undefined-reference', label: 'Reference to unknown concept' },
+	{ kind: 'concept-property-empty-scheme', label: 'Concept property without concepts' },
+	{ kind: 'retired-concept-value', label: 'Retired concept used as a value' },
+	{ kind: 'relation-to-skos-concept', label: 'Relation to skos:Concept' }
 ] as const;
 
 export type DebtKind = (typeof DEBT_KINDS)[number]['kind'];
@@ -49,7 +56,11 @@ const GATE_KIND: Record<string, DebtKind> = {
 	'concept-without-definition': 'undefined-term',
 	'definition-drift': 'drifted-definition',
 	'class-without-shape': 'class-without-shape',
-	'question-review-overdue': 'overdue-question-review'
+	'question-review-overdue': 'overdue-question-review',
+	// The foreign-value finding is left out on purpose: Validation reports it already.
+	'concept-property-empty-scheme': 'concept-property-empty-scheme',
+	'concept-property-retired-value': 'retired-concept-value',
+	'relation-to-skos-concept': 'relation-to-skos-concept'
 };
 
 const LIVE: readonly string[] = ['proposed', 'approved', 'active'];
@@ -86,6 +97,16 @@ export function collectDebt(input: DebtInput): DebtItem[] {
 				href: link
 			});
 		}
+	}
+
+	for (const h of schemeHealthDebt(analyseSchemeHealth(concepts), labelOf)) {
+		items.push({
+			kind: h.kind,
+			elementIri: h.concept,
+			label: labelOf(h.concept),
+			detail: h.detail,
+			href: appUrl(`/vocabulary?concept=${encodeURIComponent(h.concept)}`)
+		});
 	}
 
 	const linked = new Set(questions.flatMap((q) => q.linkedElements));

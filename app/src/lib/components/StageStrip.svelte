@@ -125,10 +125,19 @@
 		background: none;
 		color: var(--color-accent);
 		font-size: 0.8rem;
+		text-decoration: underline;
+		text-underline-offset: 2px;
 		cursor: pointer;
 	}
 	.guide-link:hover {
+		color: var(--color-accent-hover);
+	}
+	.stat a {
 		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+	.stat a:hover {
+		color: var(--color-accent-hover);
 	}
 	.findings {
 		color: var(--color-error);

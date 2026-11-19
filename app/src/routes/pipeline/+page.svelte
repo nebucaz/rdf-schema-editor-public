@@ -8,8 +8,10 @@
 	import { reviewPipelineUrl } from '#lib/services/review-links.js';
 	import SemanticDebtList from '#lib/components/SemanticDebtList.svelte';
 	import PipelineGettingStarted from '#lib/components/PipelineGettingStarted.svelte';
+	import SchemeHealthPanel from '#lib/components/SchemeHealthPanel.svelte';
 	import StageStrip from '#lib/components/StageStrip.svelte';
 	import type { DebtSettings } from '#lib/services/debt-settings.js';
+	import { analyseSchemeHealth } from '#lib/services/scheme-health.js';
 	import { collectDebt, countDebt } from '#lib/services/semantic-debt.js';
 	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
 	import { debtSettingsStore } from '#lib/stores/debt-settings-store.js';
@@ -33,6 +35,8 @@
 
 	/** Computed over what is already loaded: changing a setting costs no request. */
 	const debt = $derived(debtInput ? collectDebt({ ...debtInput, settings: debtSettings, now: new Date() }) : []);
+
+	const health = $derived(debtInput ? analyseSchemeHealth(debtInput.concepts) : []);
 
 	function changeSettings(next: DebtSettings) {
 		debtSettingsStore.set(next);
@@ -137,6 +141,12 @@
 				<p class="pending" data-testid="debt-loading">Loading…</p>
 			{/if}
 		</section>
+		{#if detailsLoaded && debtInput && debtInput.concepts.length > 0}
+			<section id="scheme-health" aria-label="Scheme health overview">
+				<h2>Scheme health</h2>
+				<SchemeHealthPanel reports={health} concepts={debtInput.concepts} />
+			</section>
+		{/if}
 	{/if}
 </div>
 

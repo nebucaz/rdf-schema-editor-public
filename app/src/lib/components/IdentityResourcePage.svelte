@@ -33,6 +33,7 @@
 	import { SYNC_SOURCE_PREDICATE_IRI } from '#lib/utils/iri.js';
 	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
 	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
+	import { conceptOptionEntries } from '#lib/services/concept-value-options.js';
 
 	const EMPTY_CLASS_HIERARCHY_INDEX: ClassHierarchyIndex = {
 		classNamespaceByIri: new Map(),
@@ -305,18 +306,21 @@
 		relationFields: CanvasRelationFieldSpec[]
 	): Promise<Record<string, RelationTargetOption[]>> {
 		const entries = await Promise.all(
-			relationFields.map(async (rel) => {
+			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
+				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
 				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
 				return [
-					rel.iri,
-					options.map((o) => ({
-						iri: o.iri,
-						label: `[${namespacePrefixByBaseIri.get(o.namespaceBaseIri) ?? o.namespaceBaseIri}] ${o.label}`
-					}))
-				] as const;
+					[
+						rel.iri,
+						options.map((o) => ({
+							iri: o.iri,
+							label: `[${namespacePrefixByBaseIri.get(o.namespaceBaseIri) ?? o.namespaceBaseIri}] ${o.label}`
+						}))
+					]
+				];
 			})
 		);
-		return Object.fromEntries(entries);
+		return Object.fromEntries(entries.flat());
 	}
 
 	async function reloadEditAssertions() {

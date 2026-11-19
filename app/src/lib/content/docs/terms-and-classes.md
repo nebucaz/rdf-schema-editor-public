@@ -8,6 +8,14 @@ A class can point to the concept that defines it. The link is stored on the clas
 
 Starting from the other side, **Promote to class** on an approved or active concept creates a class from it and links the two. For a model that already has classes, **Create concepts for unlinked classes** proposes one concept per class, which you review before anything is written (see [Vocabulary](vocabulary)). Retargeting a link, for example after a concept is replaced, can be done from the Gate Report.
 
+## Classes or concepts?
+
+**Classes provide inheritance; concepts identify state.** A class is for things that share properties or shapes, drawn on the canvas with an `rdfs:subClassOf` hierarchy. A concept scheme is for classification values, with a `skos:broader` hierarchy and `skos:inScheme` membership. The example: *Laptop* and *Server* are subclasses of *Device*, while the *Lifecycle* scheme (*Planned*, *In operation*, *Retired*) holds the values of a property such as `lifecycleStage`.
+
+Mirroring a concept hierarchy as classes is optional. Do it where a concept is the definition of a class, as in the link described above, and leave a pure classification scheme without classes.
+
+To restrict a property to the concepts of one scheme, use **Add concept property** on an entity. Do not draw a relation to the external class `skos:Concept` instead: a concept is not typed by a declared class, so `sh:class skos:Concept` is not evaluated for concepts and the validation report shows false violations. The [Pipeline Guide](pipeline-guide) has the longer explanation, including the limit of 1000 concepts in the value list and how deprecated concepts are treated.
+
 ## Two terms, one name
 
 When two meanings share a name, keep the preferred label plain and fill the **disambiguation** field of each concept with a short qualifier, such as *finance* for one *Bank* and *river* for the other. The qualifier shows in brackets after the label, and it is part of the concept's identifier. Add a scope note to each so a reader can tell them apart. Parentheses are not allowed inside the label itself. See pp. 45-52 of the book for the reasoning.

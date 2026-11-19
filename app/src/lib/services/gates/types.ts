@@ -4,6 +4,7 @@
  */
 import type { CompetencyQuestion } from '../competency-question';
 import type { Governance } from '../governance';
+import type { SkosCollection } from '../skos-collection';
 import type { Concept } from '../skos-concept';
 import type { FetchedSchema } from '../sparql-connector';
 
@@ -46,6 +47,10 @@ export interface GateOptions {
 	stages?: string[];
 	/** The core vocabulary's concepts, for the vocabulary gates; without them those gates report nothing. */
 	concepts?: Concept[];
+	/** The vocabulary's collections. They group concepts without a hierarchy, so no gate may report them. */
+	collections?: SkosCollection[];
+	/** The vocabulary's concept schemes, for the type disjointness gate (concepts' own scheme links are used as well). */
+	schemes?: { iri: string }[];
 	/** The core namespace's governance settings; without them the governance gate reports nothing. */
 	governance?: (Governance & { namespaceIri: string }) | null;
 	/** The competency questions, for the question review gate; without them it reports nothing. */

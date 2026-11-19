@@ -48,9 +48,32 @@ These read the vocabulary's live concepts and report nothing without a vocabular
 - **Sibling overlap** (info): two concepts under the same broader concept have nearly the same definition.
 - **Circular definition** (warning): the definition contains the term. **Long definition** (warning): more than two sentences.
 - **Mapping within a scheme** (warning): a `skos:exactMatch`, `closeMatch`, `relatedMatch`, `broadMatch` or `narrowMatch` points to a concept of the same scheme. **Related within a hierarchy chain** (info): a `skos:related` joins a concept and one of its own ancestors.
-- **Class and concept hierarchy** (warning): class A is a subclass of B and both have a concept, but A's concept is not (transitively) narrower than B's. The message spells out the class chain and both concept chains. Two classes sharing one concept are not reported.
+- **Class and concept hierarchy** (warning): class A is a subclass of B and both have a concept, but A's concept is not (transitively) narrower than B's. The message spells out the class hierarchy and both concept hierarchies and is a prompt for human judgement, since the two need not mirror each other. Only classes linked to concepts are looked at, and two classes sharing one concept are not reported.
 
 The taxonomy outline shows these findings next to the concept or class they are about.
+
+### Concept properties
+
+These gates look at properties whose values must be concepts of a scheme, and need the vocabulary's concepts (a repository without a vocabulary reports nothing).
+
+- **Concept property without concepts** (warning): the property's scheme has no concepts, or no longer exists.
+- **Retired concept as a value** (warning): an individual holds a deprecated or retired concept; the message names the replacement when the concept has one.
+- **Value outside the scheme** (info): an individual holds something that is not a concept of the scheme. Validation reports it too, so it is not counted in the semantic debt.
+- **Relation to skos:Concept** (warning): a relation points at the external class `skos:Concept`, which the validation cannot check; use a concept property with a scheme instead.
+
+The two value checks read the individuals' values, so they only run on a model loaded with its individuals (the Pipeline page does; a view that loads the schema alone skips them silently).
+
+### SKOS structure and label gates
+
+These follow the SKOS reference and the qSKOS quality criteria. Where a rule is a convention of this app rather than of the W3C, the message says so.
+
+- **Mapping clash** (warning): an exact match and a broad, related or narrow match to the same concept (SKOS S46).
+- **Related between siblings** (info): a related link between two concepts that share a broader concept. **Hierarchical redundancy** (info): a broader link that the hierarchy already implies. **Reflexive relation** (warning): a concept linked to itself.
+- **Omitted top concept** (warning): a scheme with concepts but no top concept. **Mapping without scheme** (info): a concept with mappings that belongs to no scheme.
+- **Invalid language tag** (warning): a label whose tag is not well-formed BCP 47. **Incomplete language coverage** (info): concepts lack a preferred label in a language others in the scheme use.
+- **Empty or unprintable label** (warning).
+- **Duplicate notation** (info): one notation used by two concepts of a scheme; unique notation is a convention of this app.
+- **Type disjointness** (warning): one IRI used as both a concept and a scheme, or a collection and a concept or scheme (SKOS S9, S37). **Collection member invalid** (warning): a collection holds something that is neither a concept nor a collection of the vocabulary.
 
 ## Governance gates
 

@@ -20,7 +20,7 @@ interface NsData {
 	dtProps: { p: string; label?: string; domain: string; range: string }[];
 	objProps: { p: string; label?: string; domain: string; range: string; reverseOf?: string }[];
 	subClassOf: { sub: string; sup: string }[];
-	shapes: { path: string; min?: number; max?: number; rfs?: boolean }[];
+	shapes: { path: string; min?: number; max?: number; rfs?: boolean; scheme?: string; name?: string; target?: string }[];
 	labelRequired: { cls: string; min?: number }[];
 	inConstraints: { cls: string; path: string; value: string; isIri?: boolean }[];
 	/** Generic-relation rows whose shape lives in this namespace's shapes graph. */
@@ -45,7 +45,12 @@ const DATA: NsData[] = [
 			}
 		],
 		subClassOf: [{ sub: 'http://example.org/a#Team', sup: 'http://example.org/a#Person' }],
-		shapes: [{ path: 'http://example.org/a#name', min: 1, max: 1 }, { path: 'http://example.org/a#memberOf', min: 0 }],
+		shapes: [
+			{ path: 'http://example.org/a#name', min: 1, max: 1 },
+			{ path: 'http://example.org/a#memberOf', min: 0 },
+			// A concept property: a sh:property with the rse:valueScheme marker, no sh:class and no range.
+			{ path: 'http://example.org/a#personStage', min: 1, max: 1, scheme: 'http://example.org/core/vocab#Lifecycle', name: 'stage', target: 'http://example.org/a#Person' }
+		],
 		labelRequired: [{ cls: 'http://example.org/a#Person', min: 1 }, { cls: 'http://example.org/a#Team' }],
 		inConstraints: [
 			{ cls: 'http://example.org/a#Person', path: 'http://example.org/a#name', value: 'Ann' },
@@ -105,7 +110,12 @@ function legacyMock() {
 				}))
 			);
 		if (q.includes('SELECT ?path ?minCount ?maxCount ?requiredForSubclasses'))
-			return json(d.shapes.map((s) => ({ path: uri(s.path), ...opt('minCount', s.min), ...opt('maxCount', s.max), ...opt('requiredForSubclasses', s.rfs) })));
+			return json(
+				d.shapes.map((s) => ({
+					path: uri(s.path), ...opt('minCount', s.min), ...opt('maxCount', s.max), ...opt('requiredForSubclasses', s.rfs),
+					...(s.scheme ? { valueScheme: uri(s.scheme), psName: lit(s.name!), psTarget: uri(s.target!) } : {})
+				}))
+			);
 		if (q.includes('SELECT ?sub ?super')) return json(d.subClassOf.map((s) => ({ sub: uri(s.sub), super: uri(s.sup) })));
 		if (q.includes('sh:path rdfs:label')) return json(d.labelRequired.map((l) => ({ class: uri(l.cls), ...opt('minCount', l.min) })));
 		if (q.includes('SELECT ?class ?path ?value'))
@@ -144,7 +154,10 @@ function batchedMock() {
 			);
 		}
 		if (q.includes('SELECT ?g ?path ?minCount'))
-			return all(shapesGraph, (d) => d.shapes, (s) => ({ path: uri(s.path), ...opt('minCount', s.min), ...opt('maxCount', s.max), ...opt('requiredForSubclasses', s.rfs) }));
+			return all(shapesGraph, (d) => d.shapes, (s) => ({
+				path: uri(s.path), ...opt('minCount', s.min), ...opt('maxCount', s.max), ...opt('requiredForSubclasses', s.rfs),
+				...(s.scheme ? { valueScheme: uri(s.scheme), psName: lit(s.name!), target: uri(s.target!), shape: uri(`${s.target}Shape`) } : {})
+			}));
 		if (q.includes('SELECT ?g ?sub ?super')) return all(schemaGraph, (d) => d.subClassOf, (s) => ({ sub: uri(s.sub), super: uri(s.sup) }));
 		if (q.includes('SELECT ?g ?class ?minCount')) return all(shapesGraph, (d) => d.labelRequired, (l) => ({ class: uri(l.cls), ...opt('minCount', l.min) }));
 		if (q.includes('SELECT ?g ?class ?path ?value'))
@@ -169,6 +182,14 @@ describe('SparqlConnector.fetchSchemaBatched (reduce-requests STORY-298)', () =>
 		expect({ ...batched, shapes: undefined }).toEqual(legacy);
 		// Guard against a vacuous pass: the fixture really produced content, including the cross-namespace cases.
 		expect(batched.classes).toHaveLength(3);
+		expect(batched.conceptProperties).toEqual([
+			{
+				iri: 'http://example.org/a#personStage', label: 'stage', domain: 'http://example.org/a#Person',
+				valueSchemeIri: 'http://example.org/core/vocab#Lifecycle', required: true, repeatable: false,
+				minCount: 1, maxCount: 1, namespaceBaseIri: BASES[0]
+			}
+		]);
+		expect(batched.objectProperties.some((p) => p.iri === 'http://example.org/a#personStage')).toBe(false);
 		expect(batched.objectProperties.filter((p) => p.relationKind === 'generic')).toHaveLength(2);
 		expect(batched.datatypeProperties.map((p) => [p.namespaceBaseIri, p.required])).toEqual([
 			[BASES[0], true],

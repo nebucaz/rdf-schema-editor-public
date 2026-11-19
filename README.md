@@ -191,7 +191,7 @@ Two different tokens are involved. Only the first one is ever pasted into a file
 | | Service token | User token |
 |---|---|---|
 | **Says** | "this request comes from our own frontend" | "this is user *X*" |
-| **Needed by** | the data routes: `/sparql`, `/sparql/update`, `/sources/*`, `/validation/report`, `/shared-queries`, `/annotations` | `/sparql*`, `/validation/report`, `/shared-queries`, `/annotations` — each also needs a signed-in user (401 "Sign in required" otherwise). `/sources/*` does not (the sync worker and `importctl` have no user) |
+| **Needed by** | the data routes: `/sparql`, `/sparql/update`, `/sources/*`, `/validation/report`, `/shared-queries`, `/annotations`, `/glossary*` | `/sparql*`, `/validation/report`, `/shared-queries`, `/annotations` — each also needs a signed-in user (401 "Sign in required" otherwise). `/sources/*` does not (the sync worker and `importctl` have no user) |
 | **Signed with** | `AUTH_JWT_SECRET` (`backend/.env`) | `USER_JWT_SECRET` (`backend/.env`) |
 | **Sent as** | `Authorization: Bearer …` header | HttpOnly cookie `Oglala` |
 | **In production** | nginx adds it to every `/api/` request | issued by the corporate SSO |
@@ -280,6 +280,10 @@ Release: bump `version` in `app/package.json`, merge, then tag the merge commit 
 tag. The Docker build has no `.git`, so pass the value in:
 `APP_GIT_DESCRIBE=$(git describe --tags --always --dirty --match 'v*') docker compose up --build`
 (unset = version only).
+
+## SKOS vocabulary: import, export, glossary
+
+The Vocabulary page imports and exports standard SKOS (Turtle, CSV), merges duplicate concepts and keeps collections and scheme metadata. `/review/glossary` and `/review/scheme?scheme=<id>` are read-only pages for signed-in readers (the second prints). Other tools pull the vocabulary from the backend's read-only `/glossary/*` routes with the service token, or with `go run ./cmd/cli glossary export`; see `backend/README.md`'s "Glossary API". In-app: Documentation, "SKOS: Import, Export and API". The checks only a person with a running app and GraphDB can do are in `spec/skos-support/RUNBOOK.md`.
 
 ## Practitioner guide
 

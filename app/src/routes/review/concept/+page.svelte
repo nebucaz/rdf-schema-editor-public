@@ -4,7 +4,7 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import ConceptReview from '#lib/components/ConceptReview.svelte';
-	import type { Concept, ConceptScheme } from '#lib/services/skos-concept.js';
+	import { schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
 	import { sparqlConnector } from '#lib/services/sparql-connector.js';
 	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
 
@@ -15,7 +15,10 @@
 
 	const wanted = $derived(page.url.searchParams.get('iri') ?? '');
 	const concept = $derived(concepts.find((c) => c.iri === wanted) ?? null);
-	const schemeName = $derived(schemes.find((s) => s.iri === concept?.schemeIri)?.name ?? '');
+	const schemeName = $derived.by(() => {
+		const scheme = schemes.find((s) => s.iri === concept?.schemeIri);
+		return scheme ? schemeDisplayName(scheme) : '';
+	});
 
 	onMount(async () => {
 		if (!page.data.user) return;

@@ -74,6 +74,8 @@ export const DCT = {
 	description: `${DCT_NS}description`,
 	identifier: `${DCT_NS}identifier`,
 	publisher: `${DCT_NS}publisher`,
+	creator: `${DCT_NS}creator`,
+	rights: `${DCT_NS}rights`,
 	license: `${DCT_NS}license`,
 	created: `${DCT_NS}created`,
 	modified: `${DCT_NS}modified`,

@@ -1,6 +1,8 @@
+import { MAX_EXPANSION_TERMS } from './query-expansion';
 import { apiUrl as buildApiUrl } from '../utils/urls';
 import { callerFromStack, requestLog } from '../utils/request-log';
 import { isShortId } from './short-links';
+import { buildSchemeConstraintMessage, buildSchemeConstraintSelect } from './concept-property';
 import {
 	formatExpectedResult,
 	parseExpectedResult,
@@ -38,9 +40,18 @@ import {
 } from './change-request';
 import type { Snapshot, SnapshotDiff } from './impact-assessment';
 import { CHANGE_KINDS, type ChangeKind } from './change-log';
+import type { MergePlan } from './concept-merge';
 import { EMPTY_GOVERNANCE, MATURITY_LEVELS, validateGovernance, type Governance, type MaturityLevel } from './governance';
 import { requestActivity } from '#lib/stores/request-activity.svelte.js';
 import { nameableEntitiesFromSchema, dedupeByIri } from './addable-elements';
+import type { ImportWrites } from './skos-import-apply';
+import {
+	validateCollectionDraft,
+	wouldCreateCycle,
+	type CollectionDraft,
+	type SkosCollection
+} from './skos-collection';
+import { classifyAgent, utcTimestamp, validateSchemeMetadata, type SchemeMetadata } from './scheme-metadata';
 import { isSafeSparqlIri, assertSafeSparqlIri, escapeSparqlString } from '../utils/sparql-safe';
 import {
 	classIri,
@@ -108,6 +119,7 @@ import {
 	SCHEME_OUT_OF_SCOPE_PREDICATE_IRI,
 	SCHEME_STAKEHOLDERS_PREDICATE_IRI,
 	conceptIri,
+	collectionIri,
 	conceptSchemeIri,
 	WORKSPACE_CLASS_IRI,
 	WORKSPACE_MEMBERSHIP_CLASS_IRI,
@@ -173,7 +185,8 @@ import {
 	statementIri,
 	kebabCase,
 	XSD_NAMESPACE,
-	type XsdDatatype
+	type XsdDatatype,
+	CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI
 } from '#lib/utils/iri.js';
 import {
 	DEFAULT_NAMESPACE_BASE_IRI,
@@ -390,6 +403,26 @@ export interface FetchedShapeConstraint {
 	minCount?: number;
 	maxCount?: number;
 	requiredForSubclasses?: boolean;
+	/** Set on a concept property's `sh:property` (concept-valued-properties): its `sh:name`, the NodeShape's
+	 *  `sh:targetClass` and the `rse:valueScheme` marker. Absent on every other constraint. */
+	name?: string;
+	targetClassIri?: string;
+	valueSchemeIri?: string;
+}
+
+/** A property whose values must be concepts of one scheme (spec/concept-valued-properties). Read from the shapes
+ *  graph alone (the `rse:valueScheme` marker); it is never an object property: it has no range and draws no edge. */
+export interface FetchedConceptProperty {
+	iri: string;
+	label: string;
+	/** The class whose NodeShape carries the property. */
+	domain: string;
+	valueSchemeIri: string;
+	required: boolean;
+	repeatable: boolean;
+	minCount?: number;
+	maxCount?: number;
+	namespaceBaseIri: string;
 }
 
 export interface FetchedSubClassOf {
@@ -493,11 +526,34 @@ export interface IndividualSearchParams {
 	 *  Off by default so `/identities` keeps its label-only behaviour. Terms shorter than
 	 *  `MIN_ALL_STRINGS_SEARCH_LENGTH` return an empty page without querying. */
 	matchAllStringProperties?: boolean;
+	/** skos-support STORY-426: further terms (synonyms, narrower concepts) matched like `query`, OR-ed with it; at most
+	 *  `MAX_EXPANSION_TERMS` are used. Empty or absent changes nothing. */
+	extraTerms?: string[];
 	limit?: number;
 	offset?: number;
 	/** Unclassified mode only: continue after this row (keyset paging, no `OFFSET`), so a deep page
 	 *  costs the same as the first. Takes precedence over `offset`. */
 	after?: { label: string; iri: string };
+}
+
+/** `CONTAINS(LCASE(STR(<variable>)), LCASE("term"))` for every term, OR-ed (in parentheses when more than one). Terms are escaped by `escape`. */
+function containsAnyTerm(variable: string, terms: string[], escape: (s: string) => string): string {
+	const parts = terms.map((t) => `CONTAINS(LCASE(STR(${variable})), LCASE("${escape(t)}"))`);
+	return parts.length > 1 ? `(${parts.join(' || ')})` : parts[0];
+}
+
+/** The extra terms a search may use: trimmed, non-empty, without duplicates of the query, capped. */
+function usableExtraTerms(query: string, extra: string[] | undefined): string[] {
+	const seen = new Set([query.toLowerCase()]);
+	const out: string[] = [];
+	for (const raw of extra ?? []) {
+		const t = raw.trim();
+		if (!t || seen.has(t.toLowerCase())) continue;
+		seen.add(t.toLowerCase());
+		out.push(t);
+		if (out.length >= MAX_EXPANSION_TERMS) break;
+	}
+	return out;
 }
 
 /** Minimum term length for the all-strings search — a 1-character substring scan over every literal
@@ -823,6 +879,8 @@ export interface FetchedSchema {
 	/** Every NodeShape, from `fetchSchemaBatched` only (the per-namespace path does not read them); absent
 	 *  means "not loaded", which is different from "no shapes". */
 	shapes?: FetchedShape[];
+	/** Concept-valued properties (spec/concept-valued-properties); absent when there are none. */
+	conceptProperties?: FetchedConceptProperty[];
 }
 
 /** A `sh:NodeShape`: the class it targets (if any) and the `sh:path` of each of its property shapes.
@@ -1152,6 +1210,7 @@ async function logRequest<T>(
 
 /** What the per-namespace queries return before they are combined into a `FetchedSchema`. */
 interface RawNamespaceSchema {
+	namespaceBaseIri: string;
 	classes: FetchedClass[];
 	datatypeRaw: FetchedPropertyBase[];
 	objectRaw: FetchedPropertyBase[];
@@ -1166,6 +1225,16 @@ interface RawNamespaceSchema {
 	labelRequiredClassIris: string[];
 	shapeInConstraints: FetchedInConstraint[];
 	shapes?: FetchedShape[];
+}
+
+/** The concept-property fields of a constraint row (`?valueScheme ?psName ?psTarget`), or nothing for any other row. */
+function conceptConstraintFields(b: Record<string, { value: string } | undefined>): Partial<FetchedShapeConstraint> {
+	if (!b.valueScheme || !b.psTarget) return {};
+	return {
+		valueSchemeIri: b.valueScheme.value,
+		targetClassIri: b.psTarget.value,
+		...(b.psName ? { name: b.psName.value } : {})
+	};
 }
 
 /** One namespace's raw query results as a `FetchedSchema`: joins the SHACL cardinality onto the properties by
@@ -1185,6 +1254,22 @@ function assembleNamespaceSchema(raw: RawNamespaceSchema): FetchedSchema {
 			};
 		});
 
+	const conceptProperties: FetchedConceptProperty[] = [];
+	for (const c of raw.constraints) {
+		if (!c.valueSchemeIri || !c.targetClassIri) continue;
+		conceptProperties.push({
+			iri: c.path,
+			label: c.name ?? extractLocalName(c.path),
+			domain: c.targetClassIri,
+			valueSchemeIri: c.valueSchemeIri,
+			required: (c.minCount ?? 0) >= 1,
+			repeatable: c.maxCount === undefined,
+			minCount: c.minCount,
+			maxCount: c.maxCount,
+			namespaceBaseIri: raw.namespaceBaseIri
+		});
+	}
+
 	return {
 		classes: raw.classes,
 		datatypeProperties: mergeCardinality(raw.datatypeRaw),
@@ -1200,7 +1285,8 @@ function assembleNamespaceSchema(raw: RawNamespaceSchema): FetchedSchema {
 		individualIndividualRelations: raw.individualIndividualRelations,
 		labelRequiredClassIris: raw.labelRequiredClassIris,
 		shapeInConstraints: raw.shapeInConstraints,
-		...(raw.shapes ? { shapes: raw.shapes } : {})
+		...(raw.shapes ? { shapes: raw.shapes } : {}),
+		...(conceptProperties.length > 0 ? { conceptProperties } : {})
 	};
 }
 
@@ -1230,7 +1316,8 @@ function mergeNamespaceSchemas(schemas: FetchedSchema[], namespaces: FetchedName
 		individualIndividualRelations: schemas.flatMap((s) => s.individualIndividualRelations),
 		labelRequiredClassIris: schemas.flatMap((s) => s.labelRequiredClassIris ?? []),
 		shapeInConstraints: schemas.flatMap((s) => s.shapeInConstraints ?? []),
-		...(schemas.some((s) => s.shapes) ? { shapes: schemas.flatMap((s) => s.shapes ?? []) } : {})
+		...(schemas.some((s) => s.shapes) ? { shapes: schemas.flatMap((s) => s.shapes ?? []) } : {}),
+		...(schemas.some((s) => s.conceptProperties) ? { conceptProperties: schemas.flatMap((s) => s.conceptProperties ?? []) } : {})
 	};
 }
 
@@ -1239,6 +1326,7 @@ export class SparqlConnector {
 	/** Idempotent migration checks that have already succeeded in this page session (STORY-269). */
 	private attributedRelationshipEnsured = false;
 	private defaultWorkspaceEnsured = false;
+	private hasTopConceptEnsured = new Set<string>();
 
 	constructor(apiUrl: string = buildApiUrl('/sparql')) {
 		this.apiUrl = apiUrl;
@@ -1248,6 +1336,7 @@ export class SparqlConnector {
 	resetMigrationChecks(): void {
 		this.attributedRelationshipEnsured = false;
 		this.defaultWorkspaceEnsured = false;
+		this.hasTopConceptEnsured.clear();
 	}
 
 	/** Execute a raw SPARQL SELECT query, returning parsed SPARQL-JSON results. Pass
@@ -2813,6 +2902,184 @@ export class SparqlConnector {
 		}
 
 		await this.deletePropertyTriples(propIri, sourceClassIri, graphs);
+	}
+
+	// -- Concept properties (spec/concept-valued-properties STORY-435) ---------------------------
+
+	/** Checks that `schemeIri` is a `skos:ConceptScheme` in the vocabulary namespace and returns its name.
+	 *  Throws, before anything is written, when there is no vocabulary namespace or no such scheme. */
+	private async resolveConceptScheme(schemeIri: string): Promise<{ name: string }> {
+		this.assertSafeSparqlIri(schemeIri, 'scheme IRI');
+		const coreBaseIri = await this.fetchVocabularyNamespace();
+		if (!coreBaseIri) {
+			throw new Error('No vocabulary namespace is set, so there is no concept scheme to point the property at');
+		}
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?label ${fromClause(this.vocabGraph(coreBaseIri))} WHERE {
+				<${schemeIri}> a <${SKOS.ConceptScheme}> .
+				OPTIONAL { <${schemeIri}> rdfs:label ?label }
+			} LIMIT 1
+		`);
+		const binding = results.results.bindings[0];
+		if (!binding) throw new Error(`Unknown concept scheme (${schemeIri})`);
+		return { name: binding.label?.value ?? extractLocalName(schemeIri) };
+	}
+
+	/** The `sh:sparql` blank node of a concept property, as an RDF fragment (no surrounding graph). */
+	private conceptConstraintNode(propIri: string, schemeIri: string, propertyName: string, schemeName: string): string {
+		const select = this.escapeString(buildSchemeConstraintSelect(propIri, schemeIri));
+		const message = this.escapeString(buildSchemeConstraintMessage(propertyName, schemeName));
+		return `sh:sparql [ a sh:SPARQLConstraint ; sh:message "${message}" ; sh:select "${select}" ]`;
+	}
+
+	/** Matches the `sh:sparql` node generated for `propIri` on `shapeIri` (its select names the property). */
+	private conceptConstraintPattern(shapeIri: string, propIri: string): string {
+		return `<${shapeIri}> sh:sparql ?sc . ?sc sh:select ?sel . FILTER(CONTAINS(STR(?sel), "$this <${propIri}> ?value")) ?sc ?scP ?scO .`;
+	}
+
+	/**
+	 * Adds a concept property to `sourceClassIri`: an `owl:ObjectProperty` (no `rdfs:range`, no `sh:class`), a
+	 * `sh:property` entry carrying `rse:valueScheme`, and the generated `sh:sparql` constraint on the class's
+	 * NodeShape, in one update in the source class's namespace graphs. `rdfs:domain` ties the property to its
+	 * class, so it is never mistaken for a generic relation (`findGenericObjectProperty`).
+	 */
+	async insertConceptProperty(
+		sourceClassIri: string,
+		name: string,
+		schemeIri: string,
+		required: boolean,
+		repeatable: boolean
+	): Promise<{ iri: string }> {
+		if (!name.trim()) throw new Error('Property name must not be empty');
+		this.assertSafeSparqlIri(sourceClassIri, 'source class IRI');
+		this.assertSafeSparqlIri(schemeIri, 'scheme IRI');
+
+		const namespaceBaseIri = await this.findNamespaceOfClass(sourceClassIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const scheme = await this.resolveConceptScheme(schemeIri);
+		const propIri = propertyIri(sourceClassIri, name, graphs.schema);
+		if (await this.propertyExists(propIri, namespaceBaseIri)) {
+			throw new Error(`A property named "${name}" already exists on this entity (${propIri})`);
+		}
+		const shapeIri = await this.ensureNodeShape(sourceClassIri, namespaceBaseIri);
+		const escapedName = this.escapeString(name);
+		const constraints = [required ? 'sh:minCount 1' : null, !repeatable ? 'sh:maxCount 1' : null]
+			.filter((c): c is string => c !== null)
+			.map((c) => ` ; ${c}`)
+			.join('');
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			INSERT DATA {
+				GRAPH <${graphs.schema}> {
+					<${propIri}> a owl:ObjectProperty ;
+						rdfs:domain <${sourceClassIri}> ;
+						rdfs:label "${escapedName}" .
+				}
+				GRAPH <${graphs.shapes}> {
+					<${shapeIri}> sh:property [
+						sh:path <${propIri}> ;
+						sh:name "${escapedName}"${constraints} ;
+						<${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> <${schemeIri}>
+					] ;
+						${this.conceptConstraintNode(propIri, schemeIri, name, scheme.name)} .
+				}
+			}
+		`);
+		return { iri: propIri };
+	}
+
+	/** Changes a concept property's name, scheme, required and repeatable. Marker and select are replaced together
+	 *  in one update (no orphaned `sh:sparql` node); the property's IRI never changes. */
+	async updateConceptProperty(
+		sourceClassIri: string,
+		propIri: string,
+		update: { name: string; schemeIri: string; required: boolean; repeatable: boolean }
+	): Promise<void> {
+		if (!update.name.trim()) throw new Error('Property name must not be empty');
+		this.assertSafeSparqlIri(sourceClassIri, 'source class IRI');
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		this.assertSafeSparqlIri(update.schemeIri, 'scheme IRI');
+
+		const namespaceBaseIri = await this.findNamespaceOfClass(sourceClassIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const scheme = await this.resolveConceptScheme(update.schemeIri);
+		const shapeIri = nodeShapeIri(sourceClassIri, graphs.shapes);
+		const escapedName = this.escapeString(update.name);
+		const minCountInsert = update.required ? '?propShape sh:minCount 1 .' : '';
+		const maxCountInsert = !update.repeatable ? '?propShape sh:maxCount 1 .' : '';
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			${withGraph(graphs.schema)}
+			DELETE { <${propIri}> rdfs:label ?oldLabel }
+			INSERT { <${propIri}> rdfs:label "${escapedName}" }
+			WHERE { OPTIONAL { <${propIri}> rdfs:label ?oldLabel } } ;
+			${withGraph(graphs.shapes)}
+			DELETE {
+				?propShape sh:name ?oldName ;
+					sh:minCount ?oldMinCount ;
+					sh:maxCount ?oldMaxCount ;
+					<${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> ?oldScheme .
+			}
+			INSERT {
+				?propShape sh:name "${escapedName}" ; <${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> <${update.schemeIri}> .
+				${minCountInsert}
+				${maxCountInsert}
+			}
+			WHERE {
+				<${shapeIri}> sh:property ?propShape .
+				?propShape sh:path <${propIri}> .
+				OPTIONAL { ?propShape sh:name ?oldName }
+				OPTIONAL { ?propShape sh:minCount ?oldMinCount }
+				OPTIONAL { ?propShape sh:maxCount ?oldMaxCount }
+				OPTIONAL { ?propShape <${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> ?oldScheme }
+			} ;
+			${withGraph(graphs.shapes)}
+			DELETE { <${shapeIri}> sh:sparql ?sc . ?sc ?scP ?scO }
+			WHERE { ${this.conceptConstraintPattern(shapeIri, propIri)} } ;
+			INSERT DATA {
+				GRAPH <${graphs.shapes}> {
+					<${shapeIri}> ${this.conceptConstraintNode(propIri, update.schemeIri, update.name, scheme.name)} .
+				}
+			}
+		`);
+	}
+
+	/**
+	 * Removes a concept property: the declaration, its `sh:property` entry and its `sh:sparql` node. Follows
+	 * refuse-then-force: while individuals hold a value it refuses and reports how many, unless
+	 * `{ force: true }`. The values themselves stay, as for any other deleted property.
+	 */
+	async deleteConceptProperty(
+		sourceClassIri: string,
+		propIri: string,
+		options?: { force?: boolean }
+	): Promise<{ deleted: boolean; valueCount: number }> {
+		this.assertSafeSparqlIri(sourceClassIri, 'source class IRI');
+		this.assertSafeSparqlIri(propIri, 'property IRI');
+		const namespaceBaseIri = await this.findNamespaceOfClass(sourceClassIri);
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const shapeIri = nodeShapeIri(sourceClassIri, graphs.shapes);
+
+		const counted = await this.selectQuery(
+			`SELECT (COUNT(DISTINCT ?i) AS ?n) WHERE { GRAPH ?g { ?i <${propIri}> ?v } }`
+		);
+		const valueCount = Number(counted.results.bindings[0]?.n?.value ?? '0');
+		if (valueCount > 0 && !options?.force) return { deleted: false, valueCount };
+
+		await this.executeUpdate(`
+			${PREFIXES}
+			DELETE WHERE {
+				${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape sh:path <${propIri}> . ?propShape ?p ?o .`, graphs.shapes)}
+			} ;
+			${withGraph(graphs.shapes)}
+			DELETE { <${shapeIri}> sh:sparql ?sc . ?sc ?scP ?scO }
+			WHERE { ${this.conceptConstraintPattern(shapeIri, propIri)} } ;
+			DELETE WHERE { ${inGraph(`<${propIri}> ?p ?o .`, graphs.schema)} }
+		`);
+		return { deleted: true, valueCount };
 	}
 
 	// -- Attributed relationships / association classes (STORY-007) ---------------------------
@@ -5534,6 +5801,35 @@ export class SparqlConnector {
 		return { iri };
 	}
 
+	/** Creates an enumerated class and one member per label in ONE update (skos-support STORY-424): the class in
+	 *  the namespace's schema graph, the members in its instances graph, labels only. No link to any concept and
+	 *  no `skos:exactMatch` is stored. Refuses an empty list and an existing class. */
+	async insertEnumeratedClass(
+		namespaceBaseIri: string,
+		name: string,
+		memberLabels: string[]
+	): Promise<{ iri: string; members: string[] }> {
+		const label = name.trim();
+		if (!label) throw new Error('The class needs a name');
+		const labels = [...new Set(memberLabels.map((l) => l.trim()).filter(Boolean))];
+		if (labels.length === 0) throw new Error('An enumerated class needs at least one member; there are no members to write');
+		const graphs = namespaceGraphs(namespaceBaseIri);
+		const iri = classIri(label, graphs.schema);
+		this.assertSafeSparqlIri(iri, 'class IRI');
+		const members = labels.map((l) => ({ label: l, iri: individualIri(iri, l, graphs.instances) }));
+		for (const m of members) this.assertSafeSparqlIri(m.iri, 'individual IRI');
+		if (new Set(members.map((m) => m.iri)).size !== members.length) {
+			throw new Error('Two members would get the same identifier; rename one of them');
+		}
+		if (await this.classExists(iri, namespaceBaseIri)) throw new Error(`A class named "${label}" already exists (${iri})`);
+		const classTriples = `<${iri}> a owl:Class ; rdfs:label "${this.escapeString(label)}" .`;
+		const memberTriples = members.map((m) => `<${m.iri}> a <${iri}> ; rdfs:label "${this.escapeString(m.label)}" .`).join(' ');
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(classTriples, graphs.schema)} ${inGraph(memberTriples, graphs.instances)} }`
+		);
+		return { iri, members: members.map((m) => m.iri) };
+	}
+
 	/** Writes the concepts and class links of a backfill in one update: new concepts into the vocab graph,
 	 *  each link into its class's own schema graph. Everything is checked before anything is sent. */
 	async createConceptsForClasses(
@@ -5609,7 +5905,7 @@ export class SparqlConnector {
 		const vocab = this.vocabGraph(coreBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT DISTINCT ?s ?label ?desc ?purpose ?decisions ?outOfScope ?stakeholders ${fromClause(vocab)} WHERE {
+			SELECT DISTINCT ?s ?label ?desc ?purpose ?decisions ?outOfScope ?stakeholders ?dctTitle ?creator ?publisher ?rights ?modified ${fromClause(vocab)} WHERE {
 				?s a <${SKOS.ConceptScheme}> .
 				OPTIONAL { ?s rdfs:label ?label }
 				OPTIONAL { ?s rdfs:comment ?desc }
@@ -5617,6 +5913,11 @@ export class SparqlConnector {
 				OPTIONAL { ?s <${SCHEME_DECISIONS_PREDICATE_IRI}> ?decisions }
 				OPTIONAL { ?s <${SCHEME_OUT_OF_SCOPE_PREDICATE_IRI}> ?outOfScope }
 				OPTIONAL { ?s <${SCHEME_STAKEHOLDERS_PREDICATE_IRI}> ?stakeholders }
+				OPTIONAL { ?s <${DCT.title}> ?dctTitle }
+				OPTIONAL { ?s <${DCT.creator}> ?creator }
+				OPTIONAL { ?s <${DCT.publisher}> ?publisher }
+				OPTIONAL { ?s <${DCT.rights}> ?rights }
+				OPTIONAL { ?s <${DCT.modified}> ?modified }
 			} ORDER BY ?label
 		`);
 		return results.results.bindings.map((b) => ({
@@ -5628,8 +5929,54 @@ export class SparqlConnector {
 				decisionsSupported: b.decisions?.value ?? '',
 				outOfScope: b.outOfScope?.value ?? '',
 				stakeholders: b.stakeholders?.value ?? ''
+			},
+			metadata: {
+				title: b.dctTitle?.value ?? '',
+				creator: b.creator?.value ?? '',
+				publisher: b.publisher?.value ?? '',
+				rights: b.rights?.value ?? '',
+				modified: b.modified?.value ?? ''
 			}
 		}));
+	}
+
+	/** Replaces the scheme's `dct:` description. `modified` is stamped here and a value passed in is ignored;
+	 *  an empty field is removed. IRIs go through the guard, text is escaped. */
+	async updateConceptSchemeMetadata(coreBaseIri: string, schemeIri: string, metadata: SchemeMetadata): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(schemeIri, 'concept scheme IRI');
+		const errors = validateSchemeMetadata(metadata);
+		if (errors.length) throw new Error(errors[0]);
+		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${schemeIri}> a <${SKOS.ConceptScheme}> }`))) {
+			throw new Error(`Concept scheme ${schemeIri} not found`);
+		}
+		const term = (value: string) => `"${this.escapeString(value.trim())}"`;
+		const agent = (value: string) => {
+			const a = classifyAgent(value);
+			return a ? (a.kind === 'iri' ? `<${a.value}>` : term(a.value)) : '';
+		};
+		const fields: [string, string][] = [
+			[DCT.title, metadata.title.trim() ? term(metadata.title) : ''],
+			[DCT.creator, agent(metadata.creator)],
+			[DCT.publisher, agent(metadata.publisher)],
+			[DCT.rights, metadata.rights.trim() ? term(metadata.rights) : ''],
+			[DCT.modified, `"${utcTimestamp()}"^^xsd:dateTime`]
+		];
+		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
+		const deletes = fields.map(([p]) => 'DELETE WHERE { ' + inGraph(`<${schemeIri}> <${p}> ?old .`, vocab) + ' } ;').join('\n');
+		const filled = fields.filter(([, v]) => v).map(([p, v]) => `<${schemeIri}> <${p}> ${v} .`);
+		const insert = 'INSERT DATA { ' + inGraph(filled.join(' '), vocab) + ' }';
+		await this.executeUpdate(`${PREFIXES} ${deletes} ${insert}`);
+	}
+
+	/** One update operation that stamps `dct:modified` on the scheme `concept` belongs to; a concept
+	 *  without a scheme matches nothing. Appended to concept writes so both land in one request. */
+	private touchSchemeOfConcept(vocab: string, conceptIri: string): string {
+		const stamp = `"${utcTimestamp()}"^^xsd:dateTime`;
+		const del = inGraph(`?scheme <${DCT.modified}> ?previous .`, vocab);
+		const ins = inGraph(`?scheme <${DCT.modified}> ${stamp} .`, vocab);
+		const where = inGraph(`<${conceptIri}> <${SKOS.inScheme}> ?scheme . OPTIONAL { ?scheme <${DCT.modified}> ?previous }`, vocab);
+		return 'DELETE { ' + del + ' } INSERT { ' + ins + ' } WHERE { ' + where + ' }';
 	}
 
 	/** Replaces the scheme's scope record (an empty field is removed). */
@@ -5675,6 +6022,9 @@ export class SparqlConnector {
 		};
 		text(SKOS.definition, d.definition);
 		text(SKOS.scopeNote, d.scopeNote);
+		for (const n of d.notation ?? []) text(SKOS.notation, n);
+		for (const n of d.example ?? []) text(SKOS.example, n);
+		for (const n of d.editorialNote ?? []) text(SKOS.editorialNote, n);
 		text(CONCEPT_DISAMBIGUATION_PREDICATE_IRI, d.disambiguation);
 		text(CONCEPT_SOURCE_PREDICATE_IRI, d.source);
 		text(CONCEPT_AUTHORITY_PREDICATE_IRI, d.authority);
@@ -5690,7 +6040,14 @@ export class SparqlConnector {
 			parts.push(`<${CONCEPT_REPLACED_BY_PREDICATE_IRI}> <${d.replacedBy.trim()}>`);
 		}
 		parts.push(`<${DCT.modified}> "${this.today()}"^^xsd:date`);
-		return `<${iri}> ${parts.join(' ; ')} .`;
+		// `skos:hasTopConcept` is stored beside `skos:topConceptOf` so tools that read only the scheme see its top concepts.
+		const inverse = d.topConcept && d.schemeIri.trim() ? ` <${d.schemeIri.trim()}> <${SKOS.hasTopConcept}> <${iri}> .` : '';
+		return `<${iri}> ${parts.join(' ; ')} .${inverse}`;
+	}
+
+	/** `DELETE WHERE` for the `skos:hasTopConcept` triple(s) any scheme holds for this concept. */
+	private dropHasTopConceptOp(vocab: string, conceptIri: string): string {
+		return `DELETE WHERE { ${inGraph(`?s <${SKOS.hasTopConcept}> <${conceptIri}> .`, vocab)} }`;
 	}
 
 	/** Stores a new concept, minted from its first preferred label and qualifier; refuses a taken IRI. */
@@ -5703,19 +6060,27 @@ export class SparqlConnector {
 			throw new Error(`A concept "${label}" already exists (${iri}); add a disambiguation or reuse it`);
 		}
 		const created = `<${iri}> <${DCT.created}> "${this.today()}"^^xsd:date .`;
-		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`${triples} ${created}`, vocab)} }`);
+		await this.executeUpdate(
+			`${PREFIXES} INSERT DATA { ${inGraph(`${triples} ${created}`, vocab)} } ;\n${this.touchSchemeOfConcept(vocab, iri)}`
+		);
 		return iri;
 	}
 
 	/** Replaces the concept's fields in one request; the IRI, `dct:created` and `rse:deprecatedOn` stay. */
 	async updateConcept(coreBaseIri: string, iri: string, draft: ConceptDraft): Promise<void> {
 		const vocab = this.vocabGraph(coreBaseIri);
-		const triples = this.conceptTriples(iri, draft);
+		const replace = this.conceptReplaceOps(vocab, iri, draft);
 		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> a <${SKOS.Concept}> }`))) {
 			throw new Error(`Concept ${iri} not found`);
 		}
-		// The form does not edit the hierarchy, so `skos:broader` survives, unless the concept becomes a top
-		// concept: a top concept has no broader concept.
+		await this.executeUpdate(`${PREFIXES} ${replace} ;\n${this.touchSchemeOfConcept(vocab, iri)}`);
+	}
+
+	/** The two operations that replace a concept's fields with `draft`, keeping what the form does not edit:
+	 *  `dct:created`, the deprecation date, `skos:related`, the mappings and, unless the concept becomes a top
+	 *  concept (which has none), `skos:broader`. */
+	private conceptReplaceOps(vocab: string, iri: string, draft: ConceptDraft): string {
+		const triples = this.conceptTriples(iri, draft);
 		const kept = [
 			DCT.created,
 			CONCEPT_DEPRECATED_ON_PREDICATE_IRI,
@@ -5724,29 +6089,53 @@ export class SparqlConnector {
 			...(draft.topConcept ? [] : [SKOS.broader])
 		];
 		const keptList = kept.map((p) => `<${p}>`).join(', ');
-		await this.executeUpdate(`${PREFIXES}
+		return `${this.dropHasTopConceptOp(vocab, iri)} ;
 			DELETE { ${inGraph(`<${iri}> ?p ?o .`, vocab)} } WHERE { ${inGraph(`<${iri}> ?p ?o . FILTER(?p NOT IN (${keptList}))`, vocab)} } ;
-			INSERT DATA { ${inGraph(triples, vocab)} }`);
+			INSERT DATA { ${inGraph(triples, vocab)} }`;
+	}
+
+	/** The `WHERE` patterns that pick concepts by scheme, status and search text, shared by the page and the count
+	 *  query so both always agree. Search is a case-insensitive substring over the labels, the definition and the
+	 *  notation (the fields `filterConcepts` reads); the text goes through `escapeString`. */
+	private conceptFilterPatterns(options: { schemeIri?: string; search?: string; status?: ConceptStatus }): string {
+		const parts: string[] = [];
+		if (options.schemeIri) {
+			this.assertSafeSparqlIri(options.schemeIri, 'concept scheme IRI');
+			parts.push(`?c <${SKOS.inScheme}> <${options.schemeIri}> .`);
+		}
+		if (options.status) {
+			if (!(CONCEPT_STATUSES as readonly string[]).includes(options.status)) throw new Error(`Unknown concept status "${options.status}"`);
+			parts.push(`?c <${CONCEPT_STATUS_PREDICATE_IRI}> "${options.status}" .`);
+		}
+		const wanted = options.search?.trim().toLowerCase();
+		if (wanted) {
+			const fields = [SKOS.prefLabel, SKOS.altLabel, SKOS.hiddenLabel, SKOS.definition, SKOS.notation].map((p) => `<${p}>`).join(', ');
+			parts.push(
+				`FILTER EXISTS { ?c ?sp ?sv . FILTER(?sp IN (${fields}) && CONTAINS(LCASE(STR(?sv)), "${this.escapeString(wanted)}")) }`
+			);
+		}
+		return parts.join(' ');
 	}
 
 	/** One page of concepts, with every field, from a single query: the page is chosen by a subquery
-	 *  over concept IRIs and then every triple of those concepts is read (one row per triple). */
+	 *  over concept IRIs (ordered by preferred label, then IRI) and then every triple of those concepts is
+	 *  read (one row per triple). `search` and `status` filter on the server, so a search reaches concepts
+	 *  that are not on the loaded page. */
 	async fetchConcepts(
 		coreBaseIri: string,
-		options: { limit?: number; offset?: number; schemeIri?: string } = {}
+		options: { limit?: number; offset?: number; schemeIri?: string; search?: string; status?: ConceptStatus } = {}
 	): Promise<{ concepts: Concept[]; hasMore: boolean }> {
 		const vocab = this.vocabGraph(coreBaseIri);
 		const limit = Math.max(1, Math.min(options.limit ?? 200, 1000));
 		const offset = Math.max(0, options.offset ?? 0);
-		let inScheme = '';
-		if (options.schemeIri) {
-			this.assertSafeSparqlIri(options.schemeIri, 'concept scheme IRI');
-			inScheme = `?c <${SKOS.inScheme}> <${options.schemeIri}> .`;
-		}
+		const filters = this.conceptFilterPatterns(options);
 		const results = await this.selectQuery(`
 			${PREFIXES}
 			SELECT ?c ?p ?o ?lang ${fromClause(vocab)} WHERE {
-				{ SELECT ?c WHERE { ?c a <${SKOS.Concept}> . ${inScheme} } ORDER BY ?c LIMIT ${limit + 1} OFFSET ${offset} }
+				{ SELECT ?c (MIN(LCASE(STR(?l))) AS ?sortKey) WHERE {
+					?c a <${SKOS.Concept}> . ${filters}
+					OPTIONAL { ?c <${SKOS.prefLabel}> ?l }
+				} GROUP BY ?c ORDER BY ?sortKey ?c LIMIT ${limit + 1} OFFSET ${offset} }
 				?c ?p ?o .
 				FILTER(?p != rdf:type)
 				BIND(LANG(?o) AS ?lang)
@@ -5759,7 +6148,7 @@ export class SparqlConnector {
 				c = {
 					iri: b.c.value,
 					prefLabels: [], altLabels: [], hiddenLabels: [],
-					definition: '', scopeNote: '', disambiguation: '', schemeIri: '', topConcept: false,
+					definition: '', scopeNote: '', notation: [], example: [], editorialNote: [], disambiguation: '', schemeIri: '', topConcept: false,
 					status: 'proposed', source: '', authority: '', replacedBy: '', deprecationReason: '',
 					created: '', modified: '', deprecatedOn: '', broader: [], related: [], mappings: []
 				};
@@ -5773,6 +6162,9 @@ export class SparqlConnector {
 				case SKOS.hiddenLabel: c.hiddenLabels.push({ text: value, lang }); break;
 				case SKOS.definition: c.definition = value; break;
 				case SKOS.scopeNote: c.scopeNote = value; break;
+				case SKOS.notation: (c.notation ??= []).push(value); break;
+				case SKOS.example: (c.example ??= []).push(value); break;
+				case SKOS.editorialNote: (c.editorialNote ??= []).push(value); break;
 				case SKOS.inScheme: c.schemeIri = value; break;
 				case SKOS.topConceptOf: c.topConcept = true; c.schemeIri = c.schemeIri || value; break;
 				case SKOS.broader: (c.broader ??= []).push(value); break;
@@ -5793,8 +6185,43 @@ export class SparqlConnector {
 				case DCT.modified: c.modified = value; break;
 			}
 		}
-		const sorted = [...byIri.values()].sort((a, b) => (a.iri < b.iri ? -1 : a.iri > b.iri ? 1 : 0));
+		const sortKey = (c: Concept) => c.prefLabels.map((l) => l.text.toLowerCase()).sort()[0] ?? '';
+		const sorted = [...byIri.values()].sort((a, b) => {
+			const ka = sortKey(a);
+			const kb = sortKey(b);
+			if (ka !== kb) return ka < kb ? -1 : 1;
+			return a.iri < b.iri ? -1 : a.iri > b.iri ? 1 : 0;
+		});
 		return { concepts: sorted.slice(0, limit), hasMore: sorted.length > limit };
+	}
+
+	/** Concepts per scheme in one grouped query, for the Scheme filter and the Schemes list; concepts without a
+	 *  scheme are counted under the key `''`. */
+	async countConceptsByScheme(coreBaseIri: string): Promise<Record<string, number>> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?s (COUNT(DISTINCT ?c) AS ?n) ${fromClause(vocab)} WHERE {
+				?c a <${SKOS.Concept}> .
+				OPTIONAL { ?c <${SKOS.inScheme}> ?s }
+			} GROUP BY ?s
+		`);
+		const counts: Record<string, number> = {};
+		for (const b of results.results.bindings) counts[b.s?.value ?? ''] = (counts[b.s?.value ?? ''] ?? 0) + (Number(b.n?.value) || 0);
+		return counts;
+	}
+
+	/** How many concepts match scheme, search and status: the total behind "page 2 of 7". One query. */
+	async countConcepts(
+		coreBaseIri: string,
+		options: { schemeIri?: string; search?: string; status?: ConceptStatus } = {}
+	): Promise<number> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT (COUNT(DISTINCT ?c) AS ?n) ${fromClause(vocab)} WHERE { ?c a <${SKOS.Concept}> . ${this.conceptFilterPatterns(options)} }
+		`);
+		return Number(results.results.bindings[0]?.n?.value ?? 0) || 0;
 	}
 
 	/** Changes one `skos:broader` link of a concept (STORY-328): removes `from` and adds `to`, either of which may
@@ -5856,11 +6283,28 @@ export class SparqlConnector {
 			this.assertSafeSparqlIri(schemeIri, 'concept scheme IRI');
 			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.broader}> ?old .`, vocab)} }`);
 			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> ?s .`, vocab)} }`);
-			ops.push(`INSERT DATA { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> <${schemeIri}> . <${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date .`, vocab)} }`);
+			ops.push(this.dropHasTopConceptOp(vocab, iri));
+			ops.push(`INSERT DATA { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> <${schemeIri}> . <${schemeIri}> <${SKOS.hasTopConcept}> <${iri}> . <${iri}> <${DCT.modified}> "${this.today()}"^^xsd:date .`, vocab)} }`);
 		} else {
 			ops.push(`DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.topConceptOf}> ?s .`, vocab)} }`);
+			ops.push(this.dropHasTopConceptOp(vocab, iri));
 		}
 		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	/** One-time, idempotent backfill: adds `skos:hasTopConcept` for every `skos:topConceptOf` that lacks its inverse.
+	 *  An ASK first, so a repository that is already in step costs one read and no write (a write would also
+	 *  invalidate the schema cache). Remembered per connector instance and core namespace once it succeeded. */
+	async ensureHasTopConcept(coreBaseIri: string): Promise<void> {
+		if (this.hasTopConceptEnsured.has(coreBaseIri)) return;
+		const vocab = this.vocabGraph(coreBaseIri);
+		const missing = `?c <${SKOS.topConceptOf}> ?s . FILTER NOT EXISTS { ?s <${SKOS.hasTopConcept}> ?c }`;
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { ${missing} }`)) {
+			await this.executeUpdate(
+				`${PREFIXES} INSERT { ${inGraph(`?s <${SKOS.hasTopConcept}> ?c .`, vocab)} } WHERE { ${inGraph(missing, vocab)} }`
+			);
+		}
+		this.hasTopConceptEnsured.add(coreBaseIri);
 	}
 
 	/** Moves a concept one step along the lifecycle. Deprecation records reason, optional
@@ -5909,7 +6353,7 @@ export class SparqlConnector {
 		coreBaseIri: string,
 		iri: string,
 		options?: { force?: boolean }
-	): Promise<{ deleted: boolean; linkedClasses: string[]; narrower: string[] }> {
+	): Promise<{ deleted: boolean; linkedClasses: string[]; narrower: string[]; collections: string[] }> {
 		const vocab = this.vocabGraph(coreBaseIri);
 		this.assertSafeSparqlIri(iri, 'concept IRI');
 		const classes = await this.selectQuery(`
@@ -5922,16 +6366,412 @@ export class SparqlConnector {
 		`);
 		const linkedClasses = classes.results.bindings.map((b) => b.cls.value);
 		const narrower = below.results.bindings.map((b) => b.n.value);
-		if ((linkedClasses.length || narrower.length) && !options?.force) {
-			return { deleted: false, linkedClasses, narrower };
+		const inCollections = (await this.fetchCollections(coreBaseIri)).filter((col) => col.members.includes(iri));
+		const collections = inCollections.map((col) => col.iri);
+		if ((linkedClasses.length || narrower.length || collections.length) && !options?.force) {
+			return { deleted: false, linkedClasses, narrower, collections };
 		}
 		const cleanup = options?.force
 			? `DELETE WHERE { GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> <${iri}> } } ;
 			DELETE WHERE { ${inGraph(`?n <${SKOS.broader}> <${iri}> .`, vocab)} } ;
 			DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.narrower}> ?n .`, vocab)} } ;`
 			: '';
-		await this.executeUpdate(`${PREFIXES} ${cleanup} DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, vocab)} }`);
-		return { deleted: true, linkedClasses, narrower };
+		const unlink = this.membershipRemovalOps(vocab, inCollections, iri).map((op) => `${op} ;`).join('\n');
+		await this.executeUpdate(
+			`${PREFIXES} ${cleanup} ${unlink} ${this.touchSchemeOfConcept(vocab, iri)} ;\n ${this.dropHasTopConceptOp(vocab, iri)} ;\n DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, vocab)} }`
+		);
+		return { deleted: true, linkedClasses, narrower, collections };
+	}
+
+	/** Deletes a scheme. Refuses while it still holds concepts or something points at it (classes defined by its
+	 *  concepts, concept properties that take its values, collections that list its concepts), reporting all of
+	 *  them; `force` removes the scheme, its concepts, their links and memberships and the class links in ONE
+	 *  update. Concept properties are kept (they are properties, not data of the scheme); the gates then report
+	 *  the missing scheme. */
+	async deleteConceptScheme(
+		coreBaseIri: string,
+		schemeIri: string,
+		options?: { force?: boolean }
+	): Promise<{ deleted: boolean; concepts: string[]; linkedClasses: string[]; conceptProperties: string[]; collections: string[] }> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const scheme = this.checked(schemeIri, 'concept scheme IRI');
+		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${scheme}> a <${SKOS.ConceptScheme}> }`))) {
+			throw new Error('Scheme not found');
+		}
+		const members = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?c ${fromClause(vocab)} WHERE { ?c <${SKOS.inScheme}> <${scheme}> }
+		`);
+		const concepts = members.results.bindings.map((b) => b.c.value);
+		const classes = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?cls WHERE {
+				GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?c }
+				${inGraph(`?c <${SKOS.inScheme}> <${scheme}> .`, vocab)}
+			}
+		`);
+		const props = await this.selectQuery(`
+			${PREFIXES}
+			SELECT DISTINCT ?prop WHERE { GRAPH ?g { ?prop <${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> <${scheme}> } }
+		`);
+		const inScheme = new Set(concepts);
+		const holding = (await this.fetchCollections(coreBaseIri)).filter((col) => col.members.some((m) => inScheme.has(m)));
+		const linkedClasses = classes.results.bindings.map((b) => b.cls.value);
+		const conceptProperties = props.results.bindings.map((b) => b.prop.value);
+		const collections = holding.map((col) => col.iri);
+		const report = { concepts, linkedClasses, conceptProperties, collections };
+		if ((concepts.length || linkedClasses.length || conceptProperties.length || collections.length) && !options?.force) {
+			return { deleted: false, ...report };
+		}
+
+		const ops: string[] = [];
+		for (const col of holding) {
+			const remaining = col.members.filter((m) => !inScheme.has(m));
+			if (col.ordered) ops.push(...this.listRewriteOps(vocab, col.iri, remaining));
+			else for (const m of col.members.filter((x) => inScheme.has(x))) ops.push('DELETE DATA { ' + inGraph(`<${col.iri}> <${SKOS.member}> <${m}> .`, vocab) + ' }');
+		}
+		const member = `?c <${SKOS.inScheme}> <${scheme}> .`;
+		ops.push(`DELETE { GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?c } } WHERE { GRAPH ?g { ?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}> ?c } ${inGraph(member, vocab)} }`);
+		ops.push(`DELETE { GRAPH <${vocab}> { ?x ?p ?c } } WHERE { GRAPH <${vocab}> { ?x ?p ?c . ${member} } }`);
+		ops.push(`DELETE { GRAPH <${vocab}> { ?c ?p ?o } } WHERE { GRAPH <${vocab}> { ${member} ?c ?p ?o } }`);
+		ops.push('DELETE WHERE { ' + inGraph(`<${scheme}> ?p ?o .`, vocab) + ' }');
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+		return { deleted: true, ...report };
+	}
+
+	// -- Merge (skos-support STORY-423) -----------------------------------------------------------------
+
+	/** Applies a merge plan in ONE update, so a failure changes nothing: the survivor gets the merged fields and
+	 *  the duplicate's relations, every incoming link and collection membership moves to the survivor, classes
+	 *  that pointed at the duplicate point at the survivor, and the duplicate stays as a `retired` tombstone with
+	 *  `rse:replacedBy` the survivor. IRIs never change. */
+	async mergeConcepts(coreBaseIri: string, plan: MergePlan): Promise<void> {
+		if (plan.error) throw new Error(plan.error);
+		if (plan.conflicts.some((c) => !c.resolved)) throw new Error('Decide the conflicts before merging');
+		const vocab = this.vocabGraph(coreBaseIri);
+		const sur = this.checked(plan.survivor, 'concept IRI');
+		const dup = this.checked(plan.duplicate, 'concept IRI');
+		const stamp = `"${this.today()}"^^xsd:date`;
+		const one = (kind: 'DELETE' | 'INSERT', triples: string) => `${kind} DATA { ${inGraph(triples, vocab)} }`;
+		const ops: string[] = [this.conceptReplaceOps(vocab, sur, plan.survivorDraft)];
+
+		const added = [
+			...plan.addBroader.map((t) => `<${sur}> <${SKOS.broader}> <${this.checked(t, 'broader concept IRI')}> .`),
+			...plan.addRelated.map((t) => `<${sur}> <${SKOS.related}> <${this.checked(t, 'related concept IRI')}> .`),
+			...plan.addMappings.map((m) => this.conceptRelationTriple(sur, m.kind, m.target) + ' .')
+		];
+		if (added.length) ops.push(one('INSERT', added.join(' ')));
+
+		const retarget = (concept: string, predicate: string, keep: boolean) => {
+			this.checked(concept, 'concept IRI');
+			ops.push(one('DELETE', `<${concept}> <${predicate}> <${dup}> .`));
+			if (keep) ops.push(one('INSERT', `<${concept}> <${predicate}> <${sur}> .`));
+		};
+		for (const r of plan.incomingBroader) retarget(r.concept, SKOS.broader, r.keep);
+		for (const x of plan.incomingRelated) retarget(x, SKOS.related, false);
+		for (const m of plan.incomingMappings) {
+			if (!(MAPPING_KINDS as readonly string[]).includes(m.kind)) throw new Error(`Unknown relation "${m.kind}"`);
+			retarget(m.concept, SKOS[m.kind], m.keep);
+		}
+		for (const r of plan.incomingReplacedBy) retarget(r.concept, CONCEPT_REPLACED_BY_PREDICATE_IRI, r.keep);
+
+		for (const col of plan.collections) {
+			this.checked(col.iri, 'collection IRI');
+			if (col.ordered) ops.push(...this.listRewriteOps(vocab, col.iri, col.members));
+			else {
+				ops.push(one('DELETE', `<${col.iri}> <${SKOS.member}> <${dup}> .`));
+				ops.push(one('INSERT', `<${col.iri}> <${SKOS.member}> <${sur}> .`));
+			}
+		}
+
+		const classLink = `?cls <${CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI}>`;
+		ops.push(
+			`DELETE { GRAPH ?g { ${classLink} <${dup}> } } INSERT { GRAPH ?g { ${classLink} <${sur}> } } WHERE { GRAPH ?g { ${classLink} <${dup}> } }`
+		);
+
+		// The duplicate keeps its labels and text as a tombstone; its relations moved to the survivor.
+		const cleared = [SKOS.broader, SKOS.related, SKOS.topConceptOf, ...MAPPING_KINDS.map((k) => SKOS[k]), CONCEPT_STATUS_PREDICATE_IRI, CONCEPT_REPLACED_BY_PREDICATE_IRI, CONCEPT_DEPRECATION_REASON_PREDICATE_IRI, CONCEPT_DEPRECATED_ON_PREDICATE_IRI, DCT.modified];
+		for (const p of cleared) ops.push('DELETE WHERE { ' + inGraph(`<${dup}> <${p}> ?old .`, vocab) + ' }');
+		ops.push(this.dropHasTopConceptOp(vocab, dup));
+		ops.push(
+			one(
+				'INSERT',
+				`<${dup}> <${CONCEPT_STATUS_PREDICATE_IRI}> "retired" . <${dup}> <${CONCEPT_REPLACED_BY_PREDICATE_IRI}> <${sur}> . ` +
+					`<${dup}> <${CONCEPT_DEPRECATION_REASON_PREDICATE_IRI}> "Merged into another concept" . ` +
+					`<${dup}> <${CONCEPT_DEPRECATED_ON_PREDICATE_IRI}> ${stamp} . <${dup}> <${DCT.modified}> ${stamp} .`
+			)
+		);
+		ops.push(this.touchSchemeOfConcept(vocab, sur), this.touchSchemeOfConcept(vocab, dup));
+
+		for (const iri of [sur, dup]) {
+			if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> a <${SKOS.Concept}> }`))) {
+				throw new Error(`Concept ${iri} not found`);
+			}
+		}
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	// -- Import (skos-support STORY-417) ------------------------------------------------------------
+
+	/** Writes the accepted entries of a reviewed import in ONE update, so a failure leaves nothing half-imported.
+	 *  Refused unless `coreBaseIri` is the namespace marked as the vocabulary namespace. */
+	async applyImportPlan(coreBaseIri: string, writes: ImportWrites): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const ops: string[] = [];
+		const touched = new Set<string>();
+		const stamp = `"${utcTimestamp()}"^^xsd:dateTime`;
+		const lit = (value: string) => `"${this.escapeString(value.trim())}"`;
+
+		for (const w of writes.schemes) {
+			this.assertSafeSparqlIri(w.iri, 'concept scheme IRI');
+			const s = w.scheme;
+			const agent = (value: string) => {
+				const a = classifyAgent(value);
+				return a ? (a.kind === 'iri' ? (this.assertSafeSparqlIri(a.value, 'agent IRI'), `<${a.value}>`) : lit(a.value)) : '';
+			};
+			const fields: [string, string][] = [
+				['http://www.w3.org/2000/01/rdf-schema#label', s.name.trim() ? lit(s.name) : ''],
+				['http://www.w3.org/2000/01/rdf-schema#comment', s.description.trim() ? lit(s.description) : ''],
+				[DCT.title, s.title.trim() ? lit(s.title) : ''],
+				[DCT.creator, agent(s.creator)],
+				[DCT.publisher, agent(s.publisher)],
+				[DCT.rights, s.rights.trim() ? lit(s.rights) : '']
+			];
+			if (w.mode === 'update') {
+				for (const [p] of fields.filter(([, v]) => v)) ops.push('DELETE WHERE { ' + inGraph(`<${w.iri}> <${p}> ?old .`, vocab) + ' }');
+			}
+			const filled = fields.filter(([, v]) => v).map(([p, v]) => `<${w.iri}> <${p}> ${v} .`);
+			if (w.mode === 'insert') filled.unshift(`<${w.iri}> a <${SKOS.ConceptScheme}> .`);
+			if (filled.length) ops.push('INSERT DATA { ' + inGraph(filled.join(' '), vocab) + ' }');
+			touched.add(w.iri);
+		}
+
+		for (const w of writes.concepts) {
+			this.assertSafeSparqlIri(w.iri, 'concept IRI');
+			const relations = [
+				...w.broader.map((t) => `<${w.iri}> <${SKOS.broader}> <${this.checked(t, 'broader concept IRI')}> .`),
+				...w.related.map((t) => `${this.conceptRelationTriple(w.iri, 'related', t)} .`),
+				...w.mappings.map((m) => `${this.conceptRelationTriple(w.iri, m.kind, m.target)} .`)
+			].join(' ');
+			if (w.mode === 'insert') {
+				const triples = this.conceptTriples(w.iri, w.draft);
+				const created = `<${w.iri}> <${DCT.created}> "${this.today()}"^^xsd:date .`;
+				ops.push('INSERT DATA { ' + inGraph(`${triples} ${created} ${relations}`, vocab) + ' }');
+			} else {
+				ops.push(this.conceptReplaceOps(vocab, w.iri, w.draft));
+				if (relations) ops.push('INSERT DATA { ' + inGraph(relations, vocab) + ' }');
+			}
+			if (w.draft.schemeIri) touched.add(w.draft.schemeIri.trim());
+		}
+
+		for (const w of writes.collections) {
+			this.assertSafeSparqlIri(w.iri, 'collection IRI');
+			const col = w.collection;
+			if (w.mode === 'update' && col.ordered) {
+				ops.push(...this.listRewriteOps(vocab, w.iri, col.members));
+				continue;
+			}
+			const labels = col.prefLabels.filter((l) => l.text.trim()).map((l) => `<${w.iri}> <${SKOS.prefLabel}> ${this.langLiteral(l)} .`);
+			const members = col.ordered ? [] : col.members.map((m) => `<${w.iri}> <${SKOS.member}> <${this.checked(m, 'collection member IRI')}> .`);
+			const head = w.mode === 'insert' ? [`<${w.iri}> a <${col.ordered ? SKOS.OrderedCollection : SKOS.Collection}> .`] : [];
+			ops.push('INSERT DATA { ' + inGraph([...head, ...labels, ...members].join(' '), vocab) + ' }');
+			if (w.mode === 'insert' && col.ordered) ops.push('INSERT DATA { ' + inGraph(`<${w.iri}> <${SKOS.memberList}> ${this.listTerm(col.members)} .`, vocab) + ' }');
+		}
+
+		if (ops.length === 0) return;
+		for (const scheme of touched) {
+			this.assertSafeSparqlIri(scheme, 'concept scheme IRI');
+			ops.push('DELETE WHERE { ' + inGraph(`<${scheme}> <${DCT.modified}> ?old .`, vocab) + ' }');
+			ops.push('INSERT DATA { ' + inGraph(`<${scheme}> <${DCT.modified}> ${stamp} .`, vocab) + ' }');
+		}
+		if ((await this.fetchVocabularyNamespace()) !== coreBaseIri) {
+			throw new Error('The import goes into the vocabulary namespace; mark one on the Vocabulary page first');
+		}
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	private checked(iri: string, field: string): string {
+		this.assertSafeSparqlIri(iri, field);
+		return iri;
+	}
+
+	// -- Collections (skos-support STORY-409) -----------------------------------------------------
+
+	/** Every collection of the vocab graph with labels, kind and members (an ordered collection's in list order). */
+	async fetchCollections(coreBaseIri: string): Promise<SkosCollection[]> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const base = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?c ?p ?o ?lang ${fromClause(vocab)} WHERE {
+				VALUES ?kind { <${SKOS.Collection}> <${SKOS.OrderedCollection}> }
+				?c a ?kind .
+				?c ?p ?o .
+				FILTER(?p IN (rdf:type, <${SKOS.prefLabel}>, <${SKOS.member}>))
+				BIND(LANG(?o) AS ?lang)
+			}
+		`);
+		// The position of a list node is the number of nodes from the head up to it.
+		const lists = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?c ?m (COUNT(?mid) AS ?pos) ${fromClause(vocab)} WHERE {
+				?c a <${SKOS.OrderedCollection}> ; <${SKOS.memberList}> ?head .
+				?head rdf:rest* ?mid .
+				?mid rdf:rest* ?n .
+				?n rdf:first ?m .
+			} GROUP BY ?c ?n ?m ORDER BY ?c ?pos
+		`);
+		const byIri = new Map<string, SkosCollection>();
+		for (const b of base.results.bindings) {
+			let col = byIri.get(b.c.value);
+			if (!col) {
+				col = { iri: b.c.value, prefLabels: [], ordered: false, members: [] };
+				byIri.set(col.iri, col);
+			}
+			if (b.p.value === SKOS.prefLabel) col.prefLabels.push({ text: b.o.value, lang: b.lang?.value ?? '' });
+			else if (b.p.value === SKOS.member) col.members.push(b.o.value);
+			else if (b.o.value === SKOS.OrderedCollection) col.ordered = true;
+		}
+		const positioned = lists.results.bindings
+			.map((b) => ({ c: b.c.value, m: b.m.value, pos: Number(b.pos?.value ?? 0) }))
+			.sort((x, y) => x.pos - y.pos);
+		for (const row of positioned) byIri.get(row.c)?.members.push(row.m);
+		const title = (col: SkosCollection) => col.prefLabels[0]?.text ?? '';
+		return [...byIri.values()].sort((a, b) => title(a).localeCompare(title(b)) || (a.iri < b.iri ? -1 : 1));
+	}
+
+	/** `( <a> <b> )`, or `rdf:nil` for an empty list. */
+	private listTerm(members: string[]): string {
+		for (const m of members) this.assertSafeSparqlIri(m, 'collection member IRI');
+		return members.length ? '( ' + members.map((m) => `<${m}>`).join(' ') + ' )' : 'rdf:nil';
+	}
+
+	/** The update operations that replace an ordered collection's `rdf:List` with `members`, in one request. */
+	private listRewriteOps(vocab: string, collectionIri: string, members: string[]): string[] {
+		const head = `<${collectionIri}> <${SKOS.memberList}> ?head .`;
+		return [
+			'DELETE { ' + inGraph('?n ?p ?o .', vocab) + ' } WHERE { ' + inGraph(head + ' ?head rdf:rest* ?n . ?n ?p ?o .', vocab) + ' }',
+			'DELETE WHERE { ' + inGraph(head, vocab) + ' }',
+			'INSERT DATA { ' + inGraph(`<${collectionIri}> <${SKOS.memberList}> ${this.listTerm(members)} .`, vocab) + ' }'
+		];
+	}
+
+	/** Operations that take `member` out of each collection that holds it; the member itself is never touched. */
+	private membershipRemovalOps(vocab: string, collections: SkosCollection[], member: string): string[] {
+		const ops: string[] = [];
+		for (const col of collections.filter((x) => x.members.includes(member))) {
+			if (col.ordered) {
+				ops.push(...this.listRewriteOps(vocab, col.iri, col.members.filter((m) => m !== member)));
+			} else {
+				ops.push('DELETE DATA { ' + inGraph(`<${col.iri}> <${SKOS.member}> <${member}> .`, vocab) + ' }');
+			}
+		}
+		return ops;
+	}
+
+	private async assertCollectionExists(vocab: string, iri: string): Promise<void> {
+		const found = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> a ?t . FILTER(?t IN (<${SKOS.Collection}>, <${SKOS.OrderedCollection}>)) }`
+		);
+		if (!found) throw new Error(`Collection ${iri} not found`);
+	}
+
+	/** Mints from the first preferred label and types the node only as a collection, never also as a concept or scheme. */
+	async insertCollection(coreBaseIri: string, draft: CollectionDraft): Promise<string> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const errors = validateCollectionDraft(draft);
+		if (errors.length) throw new Error(errors[0]);
+		const label = draft.prefLabels.find((l) => l.text.trim())!.text.trim();
+		const iri = collectionIri(label, coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> ?p ?o }`)) {
+			throw new Error(`A collection "${label}" already exists (${iri})`);
+		}
+		const parts = [`a <${draft.ordered ? SKOS.OrderedCollection : SKOS.Collection}>`];
+		for (const l of draft.prefLabels.filter((x) => x.text.trim())) parts.push(`<${SKOS.prefLabel}> ${this.langLiteral(l)}`);
+		if (draft.ordered) parts.push(`<${SKOS.memberList}> rdf:nil`);
+		await this.executeUpdate(`${PREFIXES} INSERT DATA { ${inGraph(`<${iri}> ${parts.join(' ; ')} .`, vocab)} }`);
+		return iri;
+	}
+
+	/** Replaces the preferred labels of a collection. */
+	async updateCollectionLabels(coreBaseIri: string, iri: string, prefLabels: SkosCollection['prefLabels']): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		const errors = validateCollectionDraft({ prefLabels, ordered: false });
+		if (errors.length) throw new Error(errors[0]);
+		await this.assertCollectionExists(vocab, iri);
+		const labels = prefLabels.filter((l) => l.text.trim()).map((l) => `<${iri}> <${SKOS.prefLabel}> ${this.langLiteral(l)} .`);
+		await this.executeUpdate(
+			`${PREFIXES} DELETE WHERE { ${inGraph(`<${iri}> <${SKOS.prefLabel}> ?old .`, vocab)} } ; INSERT DATA { ${inGraph(labels.join(' '), vocab)} }`
+		);
+	}
+
+	/** Adds a concept or collection of this vocabulary graph; refuses itself and membership cycles. */
+	async addCollectionMember(coreBaseIri: string, iri: string, member: string): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		this.assertSafeSparqlIri(member, 'collection member IRI');
+		if (iri === member) throw new Error('A collection cannot be a member of itself');
+		await this.assertCollectionExists(vocab, iri);
+		const isNode = await this.askQuery(
+			`${PREFIXES} ASK ${fromClause(vocab)} { <${member}> a ?t . FILTER(?t IN (<${SKOS.Concept}>, <${SKOS.Collection}>, <${SKOS.OrderedCollection}>)) }`
+		);
+		if (!isNode) throw new Error(`Member ${member} not found in the vocabulary graph; only concepts and collections can be members`);
+		const all = await this.fetchCollections(coreBaseIri);
+		if (wouldCreateCycle(all, iri, member)) throw new Error('That would make the collection contain itself (a membership cycle)');
+		const col = all.find((x) => x.iri === iri);
+		if (col?.members.includes(member)) return;
+		const ops = col?.ordered
+			? this.listRewriteOps(vocab, iri, [...col.members, member])
+			: ['INSERT DATA { ' + inGraph(`<${iri}> <${SKOS.member}> <${member}> .`, vocab) + ' }'];
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	/** Removes the membership only; the member concept stays. */
+	async removeCollectionMember(coreBaseIri: string, iri: string, member: string): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		this.assertSafeSparqlIri(member, 'collection member IRI');
+		await this.assertCollectionExists(vocab, iri);
+		const col = (await this.fetchCollections(coreBaseIri)).find((x) => x.iri === iri);
+		const ops = col?.ordered
+			? this.listRewriteOps(vocab, iri, col.members.filter((m) => m !== member))
+			: ['DELETE DATA { ' + inGraph(`<${iri}> <${SKOS.member}> <${member}> .`, vocab) + ' }'];
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+	}
+
+	/** Rewrites an ordered collection's list in one update; `members` must be the same members, reordered. */
+	async reorderCollection(coreBaseIri: string, iri: string, members: string[]): Promise<void> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		const col = (await this.fetchCollections(coreBaseIri)).find((x) => x.iri === iri);
+		if (!col) throw new Error(`Collection ${iri} not found`);
+		if (!col.ordered) throw new Error('Only an ordered collection has an order');
+		const same = members.length === col.members.length && [...members].sort().join('\n') === [...col.members].sort().join('\n');
+		if (!same) throw new Error('A reorder must keep the same members');
+		await this.executeUpdate(`${PREFIXES} ${this.listRewriteOps(vocab, iri, members).join(' ;\n')}`);
+	}
+
+	/** Refuses while the collection has members; with `force` it removes the collection and its list nodes, never the members. */
+	async deleteCollection(
+		coreBaseIri: string,
+		iri: string,
+		options?: { force?: boolean }
+	): Promise<{ deleted: boolean; members: string[] }> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'collection IRI');
+		const all = await this.fetchCollections(coreBaseIri);
+		const col = all.find((x) => x.iri === iri);
+		if (!col) throw new Error(`Collection ${iri} not found`);
+		if (col.members.length && !options?.force) return { deleted: false, members: col.members };
+		const ops = this.membershipRemovalOps(vocab, all.filter((x) => x.iri !== iri), iri);
+		if (col.ordered) {
+			const head = `<${iri}> <${SKOS.memberList}> ?head .`;
+			ops.push('DELETE { ' + inGraph('?n ?p ?o .', vocab) + ' } WHERE { ' + inGraph(head + ' ?head rdf:rest* ?n . ?n ?p ?o .', vocab) + ' }');
+		}
+		ops.push('DELETE WHERE { ' + inGraph(`<${iri}> ?p ?o .`, vocab) + ' }');
+		await this.executeUpdate(`${PREFIXES} ${ops.join(' ;\n')}`);
+		return { deleted: true, members: col.members };
 	}
 
 	// -- Competency questions (ontology-pipeline STORY-317) --------------------------------------
@@ -7256,19 +8096,21 @@ export class SparqlConnector {
 		const graphs = namespaceGraphs(namespaceBaseIri);
 		const results = await this.selectQuery(`
 			${PREFIXES}
-			SELECT ?path ?minCount ?maxCount ?requiredForSubclasses ${fromClause(graphs.shapes)} WHERE {
+			SELECT ?path ?minCount ?maxCount ?requiredForSubclasses ?valueScheme ?psName ?psTarget ${fromClause(graphs.shapes)} WHERE {
 				?shape a sh:NodeShape ; sh:property ?ps .
 				?ps sh:path ?path .
 				OPTIONAL { ?ps sh:minCount ?minCount }
 				OPTIONAL { ?ps sh:maxCount ?maxCount }
 				OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
+				OPTIONAL { ?ps <${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> ?valueScheme . OPTIONAL { ?ps sh:name ?psName } OPTIONAL { ?shape sh:targetClass ?psTarget } }
 			}
 		`);
 		return results.results.bindings.map((b) => ({
 			path: b.path.value,
 			minCount: b.minCount ? parseInt(b.minCount.value, 10) : undefined,
 			maxCount: b.maxCount ? parseInt(b.maxCount.value, 10) : undefined,
-			requiredForSubclasses: b.requiredForSubclasses?.value === 'true'
+			requiredForSubclasses: b.requiredForSubclasses?.value === 'true',
+			...conceptConstraintFields(b)
 		}));
 	}
 
@@ -7488,6 +8330,7 @@ export class SparqlConnector {
 		]);
 
 		return assembleNamespaceSchema({
+			namespaceBaseIri,
 			classes,
 			datatypeRaw,
 			objectRaw,
@@ -7633,7 +8476,7 @@ export class SparqlConnector {
 			`),
 			run(`
 				${PREFIXES}
-				SELECT ?g ?path ?minCount ?maxCount ?requiredForSubclasses ?shape ?target WHERE {
+				SELECT ?g ?path ?minCount ?maxCount ?requiredForSubclasses ?shape ?target ?valueScheme ?psName WHERE {
 					${shapesValues('?g')}
 					GRAPH ?g {
 						?shape a sh:NodeShape .
@@ -7644,6 +8487,7 @@ export class SparqlConnector {
 							OPTIONAL { ?ps sh:minCount ?minCount }
 							OPTIONAL { ?ps sh:maxCount ?maxCount }
 							OPTIONAL { ?ps <${REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI}> ?requiredForSubclasses }
+							OPTIONAL { ?ps <${CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI}> ?valueScheme . OPTIONAL { ?ps sh:name ?psName } }
 						}
 					}
 				}
@@ -7770,6 +8614,7 @@ export class SparqlConnector {
 			graphs.map((g) => [
 				g.baseIri,
 				{
+					namespaceBaseIri: g.baseIri,
 					classes: [],
 					datatypeRaw: [],
 					objectRaw: [],
@@ -7833,7 +8678,8 @@ export class SparqlConnector {
 				path: b.path.value,
 				minCount: b.minCount ? parseInt(b.minCount.value, 10) : undefined,
 				maxCount: b.maxCount ? parseInt(b.maxCount.value, 10) : undefined,
-				requiredForSubclasses: b.requiredForSubclasses?.value === 'true'
+				requiredForSubclasses: b.requiredForSubclasses?.value === 'true',
+				...conceptConstraintFields({ ...b, psTarget: b.target })
 			});
 		}
 		for (const b of subClassRows) {
@@ -7989,8 +8835,9 @@ export class SparqlConnector {
 			filters.push(`FILTER(BOUND(?syncStatus) && STR(?syncStatus) = "${this.escapeString(syncStatus)}")`);
 		}
 		if (query && !matchAll) {
+			const all = [query, ...usableExtraTerms(query, params.extraTerms)];
 			filters.push(
-				`FILTER(BOUND(?label) && CONTAINS(LCASE(STR(?label)), LCASE("${this.escapeString(query)}")))`
+				`FILTER(BOUND(?label) && ${containsAnyTerm('?label', all, (t) => this.escapeString(t))})`
 			);
 		}
 		if (matchAll) filters.push('FILTER(?type != rdf:Statement)');
@@ -8013,7 +8860,7 @@ export class SparqlConnector {
 
 		const matchPattern = matchAll
 			? `?i ?mp ?mv .
-					FILTER(isLiteral(?mv) && CONTAINS(LCASE(STR(?mv)), LCASE("${this.escapeString(query!)}")))`
+					FILTER(isLiteral(?mv) && ${containsAnyTerm('?mv', [query!, ...usableExtraTerms(query!, params.extraTerms)], (t) => this.escapeString(t))})`
 			: '';
 		// One row per (individual, type): an individual with several `rdfs:label`s, the same type asserted in
 		// several graphs, several sync values, or a class declared in several graphs would otherwise come back
@@ -8176,10 +9023,11 @@ export class SparqlConnector {
 	 * `searchIndividuals({ matchAllStringProperties: true })`. Two small `COUNT ... GROUP BY` queries
 	 * (rather than one grouped by both) so a multi-typed individual isn't double-counted per namespace.
 	 */
-	async searchIndividualFacetCounts(params: { query: string }): Promise<IndividualFacetCounts> {
+	async searchIndividualFacetCounts(params: { query: string; extraTerms?: string[] }): Promise<IndividualFacetCounts> {
 		const { query } = params;
 		if ((query?.length ?? 0) < MIN_ALL_STRINGS_SEARCH_LENGTH) return { byClass: [], byNamespace: [] };
-		const term = this.escapeString(query);
+		const terms = [query, ...usableExtraTerms(query, params.extraTerms)];
+		const match = containsAnyTerm('?mv', terms, (t) => this.escapeString(t));
 
 		const build = (groupVar: '?type' | '?ig') => `
 			${PREFIXES}
@@ -8187,7 +9035,7 @@ export class SparqlConnector {
 				GRAPH ?ig {
 					?i a ?type .
 					?i ?mp ?mv .
-					FILTER(isLiteral(?mv) && CONTAINS(LCASE(STR(?mv)), LCASE("${term}")))
+					FILTER(isLiteral(?mv) && ${match})
 				}
 				GRAPH ?classGraph { ?type a owl:Class }
 				FILTER(?type NOT IN (${NON_INDIVIDUAL_TYPES}))

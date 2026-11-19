@@ -61,7 +61,8 @@ export const classConceptHierarchyGate: Gate = {
 				elementIri: a.iri,
 				message:
 					`"${a.label}" is a subclass of "${b.label}", but its concept "${conceptTitle(ca)}" is not narrower than "${conceptTitle(cb)}", the concept of "${b.label}". ` +
-					`Class chain: ${classChain(a, schema, classes)}. Concept chains: ${conceptChain(ca, concepts)}; ${conceptChain(cb, concepts)}.`
+					`Class hierarchy: ${classChain(a, schema, classes)}. Concept hierarchy: ${conceptChain(ca, concepts)}; ${conceptChain(cb, concepts)}. ` +
+					`The two need not mirror each other; this is a prompt (for human judgement), not an error.`
 			});
 		}
 		return found;

@@ -27,6 +27,8 @@ export interface BuilderProperty {
 	maxCount?: number;
 	/** From an `sh:in` list, when present. */
 	allowedValues?: BuilderValue[];
+	/** Set on a concept property (concept-valued-properties): its values are concept IRIs of this scheme. */
+	valueSchemeIri?: string;
 }
 
 export interface BuilderRelationship {
@@ -74,6 +76,8 @@ export interface BuilderClass {
 export interface BuilderSchema {
 	classes: Map<string, BuilderClass>;
 }
+
+const XSD_ANY_URI = 'http://www.w3.org/2001/XMLSchema#anyURI';
 
 const labelOr = (label: string | null | undefined, iri: string) =>
 	label && label.trim() ? label : extractLocalName(iri);
@@ -158,6 +162,19 @@ export function buildBuilderSchema(schema: FetchedSchema): BuilderSchema {
 				maxCount: p.maxCount,
 				allowedValues: inByProperty.get(`${c.iri}\u0000${p.iri}`)
 			}));
+		for (const cp of schema.conceptProperties ?? []) {
+			if (cp.domain !== c.iri || properties.some((p) => p.iri === cp.iri)) continue;
+			properties.push({
+				iri: cp.iri,
+				label: labelOr(cp.label, cp.iri),
+				datatype: XSD_ANY_URI,
+				required: cp.required,
+				repeatable: cp.repeatable,
+				minCount: cp.minCount,
+				maxCount: cp.maxCount,
+				valueSchemeIri: cp.valueSchemeIri
+			});
+		}
 		const relationships = outbound.get(c.iri) ?? [];
 		const targets = superclassesOf.get(c.iri) ?? new Set([c.iri]);
 		const inboundRaw: Omit<BuilderInboundRelationship, 'displayLabel'>[] = [];

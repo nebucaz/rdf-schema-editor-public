@@ -7,6 +7,7 @@ never touches your existing schema.
 |---|---|---|
 | [`soc/`](soc/) | A security-operations sample: servers, logfiles, authentication events and alerts, for the Query Workbench, including backwards hops, OR groups and relative time. | [`soc/RUNBOOK.md`](soc/RUNBOOK.md) |
 | [`itam-shapes/`](itam-shapes/) | Six ITAM data quality shapes (SHACL, incl. `sh:sparql`) with a minimal schema and 23 test records that must produce exactly 22 findings, for the Validation report. | [`itam-shapes/RUNBOOK.md`](itam-shapes/RUNBOOK.md) |
+| [`asset-classification/`](asset-classification/) | One SKOS scheme of 28 classification values (lifecycle stage, criticality, hosting, sensitivity, legacy terms) that shows every link of the Taxonomy graph: broader, related, mapping and same concept (a concept with two parents). Values say in which state an asset is; kinds of things stay classes. | Import `asset-classification.ttl` on the Vocabulary page (use **Where it lands** to import it under your own IRIs), then **Taxonomy** > **Graph** |
 
 ## Importing a sample
 

@@ -15,6 +15,10 @@ The order is a suggestion: a controlled vocabulary of terms first, then how the 
 
 A stage without data is shown as *Not started*; that is a state, not an error.
 
+## Scheme health
+
+Below the semantic debt list, **Scheme health** shows one block for each concept scheme: how many concepts it holds, the orphans (no broader, narrower, related or mapped concept, and not a top concept), the concepts without any relation, the groups of concepts that are cut off from the rest, the concepts with more than one broader concept, related links that only repeat the hierarchy, and references to concepts that do not exist. It also gives the average depth and the average number of narrower concepts. Collections are not counted, and deprecated or retired concepts are left out. Orphans, disconnected groups and unknown references also appear in the semantic debt list. The numbers are computed from what is already loaded.
+
 ## Links
 
 Every count links to the screen that lists it: classes and properties to the Schema canvas, findings to the Gate report, questions to the Questions page, individuals to the Identities browser filtered to the namespace.

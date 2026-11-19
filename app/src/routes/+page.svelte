@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
+	import { conceptOptionEntries, memberFormFields } from '#lib/services/concept-value-options.js';
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { mode } from 'mode-watcher';
@@ -20,7 +21,8 @@
 		type EntityMemberVM,
 		type EntityNodeData,
 		type EntityNodeType,
-		type EntityRelationFieldVM
+		type EntityRelationFieldVM,
+	type EntityConceptFieldVM
 	} from '#lib/components/EntityNode.svelte';
 	import ExternalClassNode, {
 		type ExternalClassNodeData,
@@ -45,6 +47,8 @@
 	import SplitButton from '#lib/components/SplitButton.svelte';
 	import AddNamespaceClassesModal from '#lib/components/AddNamespaceClassesModal.svelte';
 	import AttributeForm from '#lib/components/AttributeForm.svelte';
+	import ConceptPropertyForm from '#lib/components/ConceptPropertyForm.svelte';
+	import { conceptSchemeStore } from '#lib/stores/concept-scheme-store.svelte.js';
 	import ManageMembersModal from '#lib/components/ManageMembersModal.svelte';
 	import MemberForm from '#lib/components/MemberForm.svelte';
 	import RelationForm from '#lib/components/RelationForm.svelte';
@@ -724,6 +728,7 @@
 			namespaceColor: namespaceColorFor(namespaceBaseIri),
 			attributes,
 			relationFields,
+			conceptFields: lastConceptFields.get(classIriValue) ?? [],
 			members,
 			isAssociationClass,
 			isAuthoritativeEntity,
@@ -793,6 +798,16 @@
 			},
 			onDeleteAttribute: (attribute: EntityAttributeVM) => {
 				deleteAttributeTarget = { classIri: classIriValue, attribute };
+			},
+			onAddConceptProperty: () => {
+				conceptPropertyModal = { classIri: classIriValue };
+			},
+			onEditConceptProperty: (field: EntityConceptFieldVM) => {
+				conceptPropertyModal = { classIri: classIriValue, field };
+			},
+			onDeleteConceptProperty: (field: EntityConceptFieldVM) => {
+				deleteConceptTarget = { classIri: classIriValue, field, valueCount: null };
+				deleteConceptError = null;
 			},
 			onManageInstances: () => {
 				manageMembersClassIri = classIriValue;
@@ -1162,6 +1177,55 @@
 		attributeModal = null;
 	}
 
+	// -- Concept properties (spec/concept-valued-properties STORY-437) --------------------------------
+
+	/** The concept fields of every class as of the last model build (own and inherited); `makeNodeData` reads it. */
+	let lastConceptFields = $state<Map<string, EntityConceptFieldVM[]>>(new Map());
+	let conceptPropertyModal = $state<{ classIri: string; field?: EntityConceptFieldVM } | null>(null);
+	/** `valueCount` stays `null` until the first delete attempt reports how many individuals hold a value. */
+	let deleteConceptTarget = $state<{ classIri: string; field: EntityConceptFieldVM; valueCount: number | null } | null>(null);
+	let deleteConceptBusy = $state(false);
+	let deleteConceptError = $state<string | null>(null);
+
+	/** Rebuilds the canvas from the shared schema after a concept property write, so inherited rows follow too. */
+	async function reloadCanvasModelAfterWrite() {
+		lastFetchedSchema = await schemaStore.refresh('full');
+		buildAndApplyCanvasModel(lastFetchedSchema);
+		applyVisibilityFilters();
+	}
+
+	async function handleConceptPropertySubmit(name: string, schemeIri: string, required: boolean, repeatable: boolean) {
+		if (!conceptPropertyModal) return;
+		const { classIri: classIriValue, field } = conceptPropertyModal;
+		if (field) {
+			await sparqlConnector.updateConceptProperty(classIriValue, field.iri, { name, schemeIri, required, repeatable });
+		} else {
+			await sparqlConnector.insertConceptProperty(classIriValue, name, schemeIri, required, repeatable);
+		}
+		conceptPropertyModal = null;
+		await reloadCanvasModelAfterWrite();
+	}
+
+	async function handleDeleteConceptConfirm(force: boolean) {
+		if (!deleteConceptTarget) return;
+		const { classIri: classIriValue, field } = deleteConceptTarget;
+		deleteConceptBusy = true;
+		deleteConceptError = null;
+		try {
+			const result = await sparqlConnector.deleteConceptProperty(classIriValue, field.iri, { force });
+			if (!result.deleted) {
+				deleteConceptTarget = { classIri: classIriValue, field, valueCount: result.valueCount };
+				return;
+			}
+			deleteConceptTarget = null;
+			await reloadCanvasModelAfterWrite();
+		} catch (err) {
+			deleteConceptError = err instanceof Error ? err.message : 'Failed to delete concept property';
+		} finally {
+			deleteConceptBusy = false;
+		}
+	}
+
 	async function handleDeleteAttributeConfirm() {
 		if (!deleteAttributeTarget) return;
 		const { classIri: classIriValue, attribute } = deleteAttributeTarget;
@@ -1503,7 +1567,7 @@
 	 *  rationale, for STORY-114's relation fields instead of attributes. */
 	const editIndividualRelationFields = $derived.by(() => {
 		const n = editIndividualNode;
-		return n ? (findEntityNode(n.data.classIri)?.data.relationFields ?? []) : [];
+		return n ? memberFormFields(findEntityNode(n.data.classIri)?.data) : [];
 	});
 
 	/**
@@ -1519,18 +1583,18 @@
 	 * entry points below.
 	 */
 	async function loadRelationTargetOptions(
-		relationFields: EntityRelationFieldVM[]
+		relationFields: EntityConceptFieldVM[]
 	): Promise<Record<string, RelationTargetOption[]>> {
 		const entries = await Promise.all(
-			relationFields.map(async (rel) => {
+			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
+				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
 				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
 				return [
-					rel.iri,
-					options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))
-				] as const;
+					[rel.iri, options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))]
+				];
 			})
 		);
-		return Object.fromEntries(entries);
+		return Object.fromEntries(entries.flat());
 	}
 
 	let editIndividualRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
@@ -1561,7 +1625,7 @@
 	$effect(() => {
 		if (manageMembersClassIri) {
 			void ensureAssertionOptionsLoaded();
-			const relationFields = manageMembersNode?.data.relationFields ?? [];
+			const relationFields = memberFormFields(manageMembersNode?.data);
 			if (relationFields.length === 0) {
 				manageMembersRelationTargetOptions = {};
 			} else {
@@ -1637,7 +1701,7 @@
 	/** Own+inherited attribute and relation fields of `classIri`, from the merged canvas model. */
 	function fieldsOfClass(classIriValue: string): { iri: string; name: string }[] {
 		const data = findEntityNode(classIriValue)?.data;
-		return [...(data?.attributes ?? []), ...(data?.relationFields ?? [])].map((f) => ({ iri: f.iri, name: f.name }));
+		return [...(data?.attributes ?? []), ...memberFormFields(data)].map((f) => ({ iri: f.iri, name: f.name }));
 	}
 
 	// -- Unified relation edit modal (change relation + assertions), any node-type combination ---
@@ -2872,6 +2936,9 @@
 		lastClassConcepts = new Map(
 			schema.classes.flatMap((c) => (c.definedByConcept ? [[c.iri, c.definedByConcept] as [string, string]] : []))
 		);
+		lastConceptFields = new Map(
+			model.nodes.flatMap((n) => (n.kind === 'entity' && n.conceptFields ? [[n.iri, n.conceptFields] as [string, EntityConceptFieldVM[]]] : []))
+		);
 		lastAuthoritativeEntityIris = model.authoritativeEntityIris;
 		lastLabelRequiredClassIris = model.labelRequiredClassIris;
 		lastSubclassRequiredAttributesByClass = new Map(
@@ -3299,6 +3366,7 @@
 				{ force: options.force ?? true }
 			);
 			individualRelationsReady = true; // the effect above fetches the members' relations
+			void conceptSchemeStore.refresh().catch(() => {});
 		} catch (err) {
 			errorMessage = err instanceof Error ? err.message : 'Failed to load schema from GraphDB';
 		} finally {
@@ -4001,6 +4069,49 @@
 	{/if}
 </Modal>
 
+<Modal
+	isOpen={conceptPropertyModal !== null}
+	title={conceptPropertyModal?.field ? 'Edit Concept Property' : 'Add Concept Property'}
+	onClose={() => (conceptPropertyModal = null)}
+	dismissible={false}
+>
+	{#if conceptPropertyModal}
+		<ConceptPropertyForm
+			schemes={conceptSchemeStore.schemes}
+			initialName={conceptPropertyModal.field?.name}
+			initialSchemeIri={conceptPropertyModal.field?.valueSchemeIri}
+			initialRequired={conceptPropertyModal.field?.required}
+			initialRepeatable={conceptPropertyModal.field?.repeatable}
+			submitLabel={conceptPropertyModal.field ? 'Save' : 'Add concept property'}
+			onCancel={() => (conceptPropertyModal = null)}
+			onSubmit={handleConceptPropertySubmit}
+		/>
+	{/if}
+</Modal>
+
+<Modal isOpen={deleteConceptTarget !== null} title="Delete Concept Property" onClose={() => (deleteConceptTarget = null)}>
+	{#if deleteConceptTarget}
+		{#if deleteConceptTarget.valueCount === null}
+			<p>Delete concept property <strong>{deleteConceptTarget.field.name}</strong>? This cannot be undone.</p>
+		{:else}
+			<p>
+				<strong>{deleteConceptTarget.valueCount}</strong>
+				{deleteConceptTarget.valueCount === 1 ? 'individual holds' : 'individuals hold'} a value for
+				<strong>{deleteConceptTarget.field.name}</strong>. The values stay in the graph without a property definition. Delete anyway?
+			</p>
+		{/if}
+		{#if deleteConceptError}
+			<p class="error">{deleteConceptError}</p>
+		{/if}
+		<div class="confirm-actions">
+			<button class="secondary" onclick={() => (deleteConceptTarget = null)}>Cancel</button>
+			<button class="danger" onclick={() => handleDeleteConceptConfirm(deleteConceptTarget?.valueCount !== null)} disabled={deleteConceptBusy}>
+				{deleteConceptBusy ? 'Deleting…' : deleteConceptTarget.valueCount === null ? 'Delete' : 'Delete anyway'}
+			</button>
+		</div>
+	{/if}
+</Modal>
+
 <Modal isOpen={deleteAttributeTarget !== null} title="Delete Attribute" onClose={() => (deleteAttributeTarget = null)}>
 	{#if deleteAttributeTarget}
 		<p>Delete attribute <strong>{deleteAttributeTarget.attribute.name}</strong>? This cannot be undone.</p>
@@ -4036,7 +4147,7 @@
 			onDeleteAssertion={handleDeleteAssertion}
 			onLoadAttributeValues={(iri) =>
 				sparqlConnector.fetchIndividualAttributeValues(iri, manageMembersNode.data.attributes)}
-			relationFields={manageMembersNode.data.relationFields}
+			relationFields={memberFormFields(manageMembersNode.data)}
 			relationTargetOptions={manageMembersRelationTargetOptions}
 		/>
 	{/if}

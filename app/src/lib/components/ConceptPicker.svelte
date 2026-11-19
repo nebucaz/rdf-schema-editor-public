@@ -18,9 +18,11 @@
 		/** The class name typed so far; matching concepts are suggested while nothing is linked. */
 		suggestFor?: string;
 		onChange: (conceptIri: string) => void;
+		/** Label of the search field while nothing is linked. */
+		label?: string;
 	}
 
-	let { concepts, value, suggestFor = '', onChange }: Props = $props();
+	let { concepts, value, suggestFor = '', onChange, label = 'Defined by concept' }: Props = $props();
 
 	let search = $state('');
 
@@ -80,7 +82,7 @@
 			</div>
 		{/if}
 		<label>
-			Defined by concept
+			{label}
 			<input type="search" bind:value={search} placeholder="Search the vocabulary" autocomplete="off" />
 		</label>
 		{#if search.trim()}

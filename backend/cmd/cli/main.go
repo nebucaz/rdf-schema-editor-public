@@ -38,6 +38,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runSync(rest, stdout, stderr)
 	case "servicenow":
 		return runServiceNow(rest, stdout, stderr)
+	case "glossary":
+		return runGlossary(rest, stdout, stderr)
 	case "raw":
 		return runRaw(rest, stdout, stderr)
 	case "mint-token":
@@ -60,6 +62,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  importctl sync <source> [--apply] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl raw <source> <kind> [--out FILE] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl servicenow sync [--apply] [--backend-url URL] [--token TOKEN]")
+	fmt.Fprintln(w, "  importctl glossary export [--format turtle|json] [--scheme ID] [--lang TAG] [--modified-since DATE] [--out FILE] [--backend-url URL] [--token TOKEN]")
 	fmt.Fprintln(w, "  importctl mint-token --sub <value> [--ttl DURATION]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "  --backend-url URL   Go backend base URL (default: BACKEND_URL env var, or "+defaultBackendURL+")")

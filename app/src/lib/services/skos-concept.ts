@@ -4,6 +4,7 @@
  */
 
 import { isWellFormedIri } from '#lib/utils/iri.js';
+import type { SchemeMetadata } from './scheme-metadata';
 
 export const CONCEPT_STATUSES = ['proposed', 'approved', 'active', 'deprecated', 'retired'] as const;
 export type ConceptStatus = (typeof CONCEPT_STATUSES)[number];
@@ -31,6 +32,12 @@ export interface ConceptDraft {
 	hiddenLabels: LangText[];
 	definition: string;
 	scopeNote: string;
+	/** Legacy or system codes (`skos:notation`); zero or more, plain literals. */
+	notation?: string[];
+	/** `skos:example`: how the term is used; zero or more. */
+	example?: string[];
+	/** `skos:editorialNote`: internal working notes, never shown on read-only pages or in the default export. */
+	editorialNote?: string[];
 	/** Qualifier for homonyms ("finance" for Bank); the preferred label stays free of parentheses. */
 	disambiguation: string;
 	/** Empty when the concept belongs to no scheme yet. */
@@ -56,6 +63,18 @@ export interface ConceptScheme {
 	name: string;
 	description: string;
 	scope: SchemeScope;
+	/** Dublin Core description; absent on a scheme loaded without it. */
+	metadata?: SchemeMetadata;
+}
+
+/** A scheme's readable name: its label, else its Dublin Core title, else the local name of its IRI (after `#`
+ *  or the last `/`). The stored label is never rewritten; this is for display only. */
+export function schemeDisplayName(scheme: Pick<ConceptScheme, 'iri' | 'name' | 'metadata'>): string {
+	const name = scheme.name?.trim();
+	if (name) return name;
+	const title = scheme.metadata?.title?.trim();
+	if (title) return title;
+	return scheme.iri.replace(/[#/]+$/, '').split(/[#/]/).pop() || scheme.iri;
 }
 
 export interface Concept extends ConceptDraft {
@@ -225,7 +244,9 @@ export function filterConcepts(concepts: Concept[], filter: ConceptFilter): Conc
 		if (filter.status && c.status !== filter.status) return false;
 		if (filter.schemeIri && c.schemeIri !== filter.schemeIri) return false;
 		if (!wanted) return true;
-		const haystack = [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels].map((l) => l.text).concat(c.definition);
+		const haystack = [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels]
+			.map((l) => l.text)
+			.concat(c.definition, c.notation ?? []);
 		return haystack.some((text) => normaliseLabel(text).includes(wanted));
 	});
 }

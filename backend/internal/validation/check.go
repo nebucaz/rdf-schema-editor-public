@@ -186,6 +186,21 @@ func checkConstraint(run *checkRun, individual, label, typeIri string, constrain
 		}
 	}
 
+	if constraint.UniqueLang {
+		seen := map[string]bool{}
+		for _, v := range matching {
+			if v.IsIRI || v.IsBlank || v.Lang == "" {
+				continue
+			}
+			lang := strings.ToLower(v.Lang)
+			if seen[lang] {
+				violations = append(violations, newViolation("uniqueLang", fmt.Sprintf("expected at most one value per language for %s, found more than one @%s", constraint.Path, v.Lang), &v.Lang))
+				break
+			}
+			seen[lang] = true
+		}
+	}
+
 	if constraint.Pattern != "" {
 		if re, ok := run.pattern(constraint); ok {
 			for _, v := range matching {

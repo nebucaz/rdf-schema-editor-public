@@ -43,6 +43,19 @@ describe('link consistency gate (STORY-330)', () => {
 		expect(found[0].message).toContain('Plant');
 	});
 
+	it('says the finding is for human judgement and names both hierarchies', () => {
+		const schema = schemaOf([cls('Dog2', 'Dog'), cls('Plant2', 'Plant')], [sub('Dog2', 'Plant2')]);
+		const [finding] = run(schema, concepts);
+		expect(finding.message).toMatch(/for human judgement/i);
+		expect(finding.message).toMatch(/class hierarchy/i);
+		expect(finding.message).toMatch(/concept hierarchy/i);
+	});
+
+	it('reports nothing for a scheme whose concepts are not linked to any class', () => {
+		const unlinked = schemaOf([cls('Dog2'), cls('Plant2'), cls('Thing')], [sub('Dog2', 'Plant2'), sub('Plant2', 'Thing')]);
+		expect(run(unlinked, concepts)).toEqual([]);
+	});
+
 	it('warns when the subclass concept is above the superclass concept', () => {
 		const found = run(schemaOf([cls('A', 'Animal'), cls('B', 'Dog')], [sub('A', 'B')]), concepts);
 		expect(found).toHaveLength(1);

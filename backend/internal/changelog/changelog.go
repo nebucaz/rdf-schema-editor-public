@@ -38,7 +38,7 @@ type Graph interface {
 }
 
 // ChangeKinds are what a change did to the model; STORY-333 derives the version bump from them.
-var ChangeKinds = []string{"label", "comment", "addition", "removal", "rename", "domain-range", "disjointness", "other"}
+var ChangeKinds = []string{"label", "comment", "addition", "removal", "rename", "domain-range", "disjointness", "import", "merge", "other"}
 
 var versionPattern = regexp.MustCompile(`^[0-9A-Za-z.+-]{1,40}$`)
 

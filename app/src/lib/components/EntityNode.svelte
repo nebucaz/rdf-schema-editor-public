@@ -32,6 +32,12 @@
 		inheritedFrom?: { classIri: string; className: string };
 	}
 
+	/** A concept property (concept-valued-properties): a relation field with no target class, whose value is a
+	 *  concept of `valueSchemeIri`. Rendered as a row `name → scheme`, never as an edge. */
+	export interface EntityConceptFieldVM extends EntityRelationFieldVM {
+		valueSchemeIri?: string;
+	}
+
 	/** An enumerated class member (STORY-019) — e.g. `core:RelationType`'s `nutzt`. */
 	export interface EntityMemberVM {
 		iri: string;
@@ -52,6 +58,8 @@
 		attributes: EntityAttributeVM[];
 		/** See `EntityRelationFieldVM` (STORY-114) — this class's own+inherited relation fields. */
 		relationFields: EntityRelationFieldVM[];
+		/** This class's own+inherited concept properties (concept-valued-properties). */
+		conceptFields: EntityConceptFieldVM[];
 		/** Always-available, possibly-empty enumerated members list — no separate "is this an
 		 *  enumeration" toggle, matching how attributes/relations already work (Decision 3). Managed
 		 *  via a dedicated modal (STORY-023), not rendered inline in this node. */
@@ -69,6 +77,9 @@
 		onAddAttribute: () => void;
 		onEditAttribute: (attribute: EntityAttributeVM) => void;
 		onDeleteAttribute: (attribute: EntityAttributeVM) => void;
+		onAddConceptProperty: () => void;
+		onEditConceptProperty: (field: EntityConceptFieldVM) => void;
+		onDeleteConceptProperty: (field: EntityConceptFieldVM) => void;
 		onManageInstances: () => void;
 		/** STORY-043: opens the Triples panel scoped to this entity's own triples. */
 		onViewTriples: () => void;
@@ -96,6 +107,9 @@
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { inheritedAttributesVisibilityStore } from '#lib/stores/inherited-attributes-visibility-store.svelte.js';
 	import { contrastTextColor } from '#lib/utils/contrast.js';
+	import { conceptSchemeStore } from '#lib/stores/concept-scheme-store.svelte.js';
+	import { appUrl } from '#lib/utils/urls.js';
+	import ConceptFieldRow from './ConceptFieldRow.svelte';
 
 	let { data, selected }: NodeProps<EntityNodeType> = $props();
 
@@ -255,7 +269,27 @@
 			{/each}
 		</ul>
 	{/if}
+	{#if data.conceptFields.length > 0}
+		<ul class="attributes concept-fields">
+			{#each data.conceptFields as field (field.iri)}
+				<ConceptFieldRow
+					{field}
+					schemeName={field.valueSchemeIri ? conceptSchemeStore.nameOf(field.valueSchemeIri) : undefined}
+					onEdit={data.onEditConceptProperty}
+					onDelete={data.onDeleteConceptProperty}
+				/>
+			{/each}
+		</ul>
+	{/if}
 	<button class="add-attribute" onclick={data.onAddAttribute}>+ Add attribute</button>
+	{#if conceptSchemeStore.available}
+		<button class="add-attribute" onclick={data.onAddConceptProperty}>+ Add concept property</button>
+	{:else}
+		<p class="add-attribute-disabled">
+			<button class="add-attribute" disabled>+ Add concept property</button>
+			<span class="hint">Create a scheme in <a href={appUrl('/vocabulary')}>Vocabulary</a> first</span>
+		</p>
+	{/if}
 </div>
 
 <style>
@@ -439,7 +473,27 @@
 		background: transparent;
 	}
 
-	.add-attribute:hover {
+	.add-attribute:hover:not(:disabled) {
 		background: var(--color-hover);
+	}
+
+	.add-attribute:disabled {
+		color: var(--color-text-muted);
+		cursor: default;
+	}
+
+	.add-attribute-disabled {
+		margin: 0;
+	}
+
+	.add-attribute-disabled .hint {
+		display: block;
+		padding: 0 10px 5px;
+		font-size: 10px;
+		color: var(--color-text-muted);
+	}
+
+	.add-attribute-disabled .hint a {
+		color: var(--color-accent);
 	}
 </style>

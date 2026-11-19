@@ -32,6 +32,10 @@
 		<dt>Definition</dt>
 		<dd>{concept.definition || '—'}</dd>
 		{#if concept.scopeNote}<dt>Scope note</dt><dd>{concept.scopeNote}</dd>{/if}
+		{#if concept.example?.length}
+			<dt>Examples</dt>
+			<dd>{#each concept.example as e, i (e + i)}{#if i > 0}; {/if}<span>{e}</span>{/each}</dd>
+		{/if}
 		{#if concept.altLabels.length}
 			<dt>Also called</dt>
 			<dd>{#each concept.altLabels as l, i (l.text + l.lang)}{#if i > 0}, {/if}<span>{l.text}</span>{/each}</dd>

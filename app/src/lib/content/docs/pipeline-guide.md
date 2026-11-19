@@ -20,6 +20,30 @@ The stages below are a **recommended order**. Whether your team adopts the metho
 
 The book's six stages and the Pipeline page do not line up one to one. The page has no metadata box (metadata is recorded on the terms and on the Governance page, so its guide is linked from the vocabulary box), and it splits the last stage into validation and application, which the knowledge-graph guide covers together.
 
+## Classes or concepts?
+
+**Classes provide inheritance; concepts identify state.** Two kinds of taxonomy live in the app, and the rule above tells you which to use. There is no global setting: you decide per taxonomy.
+
+- **Use a class** when the members share properties or shapes. Draw it on the canvas; the hierarchy is `rdfs:subClassOf`. *Laptop* and *Server* are subclasses of *Device* because they inherit what a device has.
+- **Use a concept scheme** for classification values and facets, things that say in which state or category something is. The hierarchy is `skos:broader` and membership is `skos:inScheme`. A *Lifecycle* scheme with *Planned*, *In operation* and *Retired* is a scheme, not three classes: a device does not become a different kind of thing when it is retired.
+
+To point a property at a scheme, use **Add concept property** on an entity, for example `lifecycleStage` with the scheme *Lifecycle*. The property then accepts only concepts of that scheme, and the validation report flags any other value. Do not draw a relation to the external class `skos:Concept` for this: a concept is not typed by a declared class, so `sh:class skos:Concept` is not evaluated for concepts and the report shows false violations.
+
+Mirroring a concept hierarchy as classes is optional. It makes sense only where the concepts really are kinds of one thing that share properties, and then the class links to its concept (see [Terms, Classes and Deprecation](terms-and-classes)). A classification scheme needs no matching classes. The line between the two follows the article [SHACL Taxonomy Revisited](https://ontologist.substack.com/p/shacl-taxonomy-revisited), described here in our own words.
+
+## Concept properties
+
+A concept property is a property whose values are the concepts of one scheme, such as `lifecycleStage` with the scheme *Lifecycle*.
+
+- **Where to add one.** On an entity node on the Schema canvas, choose **+ Add concept property**. Give it a **Name**, pick the **Scheme**, and tick **Required** or **Repeatable** if you need them. The node then shows a row with the property and its scheme. The button is disabled until a vocabulary namespace and at least one scheme exist.
+- **What the constraint checks.** The property is stored with no range class. The validation report checks that every value is a concept of the chosen scheme, and reports any other value (a concept of another scheme, or something that is not a concept) with the value, the property and a message naming the scheme. The check is a generated SPARQL constraint on the class, so it runs with the other data checks on the Validation page.
+- **Entering values.** On an individual, the value field offers the concepts of the scheme as you type. Only concepts you can still use are offered; a deprecated or retired concept you already set stays selectable, so it is not lost silently. Free text is not accepted.
+- **The 1000-concept limit.** The list offers at most 1000 concepts of a scheme. When a scheme has more, the list says so, and you narrow it by typing. A scheme that large is usually better split.
+- **Deprecated concepts.** A retired concept is no longer offered for new values. Individuals that already hold it show up in the Gate report and the semantic debt list, with the replacement when the concept names one.
+- **Deleting a concept property** removes the property and its constraint, and leaves the values on the individuals in place.
+- **The hazard of `skos:Concept`.** Do not draw a relation to the external class `skos:Concept` to get the same effect. A concept is not typed by a declared class, so that relation is not evaluated and the report shows false violations. The Gate report flags such a relation as **Relation to skos:Concept**.
+- **Cost.** Each concept property adds one query to the validation run, which runs one constraint at a time. A constraint that hits the row cap or the timeout is listed under "not checked", never skipped silently.
+
 ## Step-by-step guides
 
 | Stage | Guide |

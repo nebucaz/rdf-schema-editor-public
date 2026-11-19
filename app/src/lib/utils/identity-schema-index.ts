@@ -59,7 +59,8 @@ export function resolveEditFormSpec(
 	const node = governingClassIri ? entityNodeByClassIri.get(governingClassIri) : undefined;
 	return {
 		attributes: node?.attributes ?? [],
-		relationFields: node?.relationFields ?? [],
+		// Concept fields are filled through the same typeahead as relation fields (STORY-438).
+		relationFields: [...(node?.relationFields ?? []), ...(node?.conceptFields ?? [])],
 		labelRequired: node?.labelRequired ?? false
 	};
 }

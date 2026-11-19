@@ -3,7 +3,7 @@
 	 *  STORY-328). Dropping a concept on another asks the is-a question, a review prompt and not a rule, and only
 	 *  then reports the single change; the page writes it. Cycles and top-concept moves are refused up front. */
 	import type { GateFinding } from '#lib/services/gates/types.js';
-	import { conceptTitle, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
+	import { conceptTitle, schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
 	import {
 		buildTaxonomy,
 		validateReparent,
@@ -21,9 +21,12 @@
 		/** `toIri` is null when the concept is detached from `fromIri` and left without a broader concept. */
 		onMove: (childIri: string, fromIri: string | null, toIri: string | null) => Promise<void>;
 		onTopChange: (iri: string, top: boolean) => Promise<void>;
+		/** The scheme shown, when the page keeps it in the URL; without it the outline remembers the choice itself. */
+		scheme?: string;
+		onSchemeChange?: (iri: string) => void;
 	}
 
-	let { concepts, schemes, classTree, findings = [], onMove, onTopChange }: Props = $props();
+	let { concepts, schemes, classTree, findings = [], onMove, onTopChange, scheme, onSchemeChange }: Props = $props();
 
 	const about = (iri: string) => findings.filter((f) => f.elementIri === iri);
 
@@ -41,7 +44,7 @@
 	let busy = $state(false);
 
 	/** Falls back to the first scheme, then to the concepts without one. */
-	const schemeIri = $derived(chosenScheme || schemes[0]?.iri || '');
+	const schemeIri = $derived((scheme ?? chosenScheme) || schemes[0]?.iri || '');
 	const tree = $derived(buildTaxonomy(concepts, schemeIri));
 	const byIri = $derived(new Map(concepts.map((c) => [c.iri, c])));
 	const title = (iri: string) => {
@@ -168,9 +171,12 @@
 		<h2>Concepts (skos:broader)</h2>
 		<label class="scheme">
 			Scheme
-			<select value={schemeIri} onchange={(e) => (chosenScheme = e.currentTarget.value)}>
-				{#each schemes as scheme (scheme.iri)}
-					<option value={scheme.iri}>{scheme.name}</option>
+			<select value={schemeIri} onchange={(e) => {
+				chosenScheme = e.currentTarget.value;
+				onSchemeChange?.(e.currentTarget.value);
+			}}>
+				{#each schemes as s (s.iri)}
+					<option value={s.iri}>{schemeDisplayName(s)}</option>
 				{/each}
 				<option value="">(no scheme)</option>
 			</select>

@@ -211,6 +211,12 @@ export const NAMESPACE_LISTED_IN_FILTER_PREDICATE_IRI = `${SCHEMA_NAMESPACE}list
 export const NAMESPACE_VOCABULARY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}vocabularyNamespace`;
 
 /**
+ * Marker on a concept property's `sh:property` node: the IRI of the `skos:ConceptScheme` its values must belong to
+ * (concept-valued-properties). The UI reads this marker and never parses the generated `sh:sparql` text.
+ */
+export const CONCEPT_PROPERTY_SCHEME_PREDICATE_IRI = `${SCHEMA_NAMESPACE}valueScheme`;
+
+/**
  * Predicate marking a namespace as taking part in the ontology pipeline — an `xsd:boolean` literal on the
  * namespace's own base-IRI subject, same shape as `NAMESPACE_LOCKED_PREDICATE_IRI`. Absent means `false`: the
  * Pipeline page lists only the namespaces that carry it. Any number of namespaces may. Not mirrored in Go.
@@ -344,9 +350,18 @@ export const SKOS = {
 	hiddenLabel: `${SKOS_NS}hiddenLabel`,
 	definition: `${SKOS_NS}definition`,
 	scopeNote: `${SKOS_NS}scopeNote`,
+	notation: `${SKOS_NS}notation`,
+	example: `${SKOS_NS}example`,
+	historyNote: `${SKOS_NS}historyNote`,
+	changeNote: `${SKOS_NS}changeNote`,
+	editorialNote: `${SKOS_NS}editorialNote`,
 	inScheme: `${SKOS_NS}inScheme`,
 	topConceptOf: `${SKOS_NS}topConceptOf`,
 	hasTopConcept: `${SKOS_NS}hasTopConcept`,
+	Collection: `${SKOS_NS}Collection`,
+	OrderedCollection: `${SKOS_NS}OrderedCollection`,
+	member: `${SKOS_NS}member`,
+	memberList: `${SKOS_NS}memberList`,
 	broader: `${SKOS_NS}broader`,
 	narrower: `${SKOS_NS}narrower`,
 	related: `${SKOS_NS}related`,
@@ -375,6 +390,12 @@ export const CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}define
 export function conceptIri(label: string, disambiguation: string, coreBaseIri: string): string {
 	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
 	return `${vocab}#${pascalCase(`${label} ${disambiguation}`)}`;
+}
+
+/** e.g. "Facet: region" -> `<core>/vocab#FacetRegionCollection`; the suffix keeps it apart from concept IRIs. */
+export function collectionIri(label: string, coreBaseIri: string): string {
+	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
+	return `${vocab}#${pascalCase(label)}Collection`;
 }
 
 /** e.g. "Business glossary" -> `<core>/vocab#BusinessGlossaryScheme`. */

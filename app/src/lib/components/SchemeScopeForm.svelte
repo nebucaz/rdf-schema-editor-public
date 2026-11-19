@@ -1,14 +1,17 @@
 <script lang="ts">
 	/** Scope record of a concept scheme (ontology-pipeline STORY-323, book p. 22): why the vocabulary
 	 *  exists and where it stops, written down before terms are collected. */
+	import { emptySchemeMetadata, type SchemeMetadata } from '#lib/services/scheme-metadata.js';
 	import type { ConceptScheme, SchemeScope } from '#lib/services/skos-concept.js';
 
 	interface Props {
 		scheme: ConceptScheme;
 		onSave: (scope: SchemeScope) => Promise<void>;
+		/** Saves the Dublin Core description; `modified` is read-only and set by the app. */
+		onSaveMetadata?: (metadata: SchemeMetadata) => Promise<void>;
 	}
 
-	let { scheme, onSave }: Props = $props();
+	let { scheme, onSave, onSaveMetadata }: Props = $props();
 
 	// The form edits a copy: `scheme` seeds it once and later prop changes do not overwrite the input.
 	/* svelte-ignore state_referenced_locally */
@@ -19,6 +22,12 @@
 	let outOfScope = $state(scheme.scope.outOfScope);
 	/* svelte-ignore state_referenced_locally */
 	let stakeholders = $state(scheme.scope.stakeholders);
+	/* svelte-ignore state_referenced_locally */
+	const meta = scheme.metadata ?? emptySchemeMetadata();
+	let title = $state(meta.title);
+	let creator = $state(meta.creator);
+	let publisher = $state(meta.publisher);
+	let rights = $state(meta.rights);
 	let error = $state<string | null>(null);
 	let saved = $state(false);
 	let busy = $state(false);
@@ -34,6 +43,13 @@
 				decisionsSupported: decisionsSupported.trim(),
 				outOfScope: outOfScope.trim(),
 				stakeholders: stakeholders.trim()
+			});
+			await onSaveMetadata?.({
+				title: title.trim(),
+				creator: creator.trim(),
+				publisher: publisher.trim(),
+				rights: rights.trim(),
+				modified: meta.modified
 			});
 			saved = true;
 		} catch (e) {
@@ -61,6 +77,26 @@
 		Stakeholders
 		<textarea bind:value={stakeholders} rows="2" placeholder="Who owns and uses it?"></textarea>
 	</label>
+	<label>
+		Title
+		<input type="text" bind:value={title} placeholder="dct:title" />
+	</label>
+	<label>
+		Creator
+		<input type="text" bind:value={creator} placeholder="dct:creator: a name or an IRI" />
+	</label>
+	<label>
+		Publisher
+		<input type="text" bind:value={publisher} placeholder="dct:publisher: a name or an IRI" />
+	</label>
+	<label>
+		Rights
+		<input type="text" bind:value={rights} placeholder="dct:rights, e.g. CC-BY-4.0" />
+	</label>
+	<label>
+		Last modified
+		<input type="text" value={meta.modified} readonly placeholder="Set when the scheme or its concepts change" />
+	</label>
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}
@@ -87,6 +123,7 @@
 		color: var(--color-text-muted);
 	}
 
+	input,
 	textarea {
 		font-size: 0.95rem;
 		color: var(--color-text);

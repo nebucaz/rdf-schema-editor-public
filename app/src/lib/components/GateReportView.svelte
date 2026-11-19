@@ -8,6 +8,7 @@
 	import { runGates, PIPELINE_STAGES, type GateFinding, type GateFix, type PipelineStage } from '#lib/services/gates/index.js';
 	import { gateFindingLink } from '#lib/services/gates/links.js';
 	import type { Governance } from '#lib/services/governance.js';
+	import type { SkosCollection } from '#lib/services/skos-collection.js';
 	import type { Concept } from '#lib/services/skos-concept.js';
 	import { sparqlConnector, type FetchedSchema } from '#lib/services/sparql-connector.js';
 	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
@@ -20,6 +21,8 @@
 		loadConcepts?: () => Promise<Concept[] | null>;
 		/** The core namespace's governance settings for the governance gate; `null` when there is no core namespace. */
 		loadGovernance?: () => Promise<(Governance & { namespaceIri: string }) | null>;
+		/** The vocabulary's collections and schemes for the type and collection-member gates; empty when there is no vocabulary. */
+		loadStructure?: () => Promise<{ collections: SkosCollection[]; schemes: { iri: string }[] }>;
 		/** Applies a finding's fix (relinking a class to the replacement concept). */
 		onRetarget?: (fix: GateFix) => Promise<void>;
 	}
@@ -27,6 +30,12 @@
 	let {
 		load = () => schemaStore.ensureLoaded('full'),
 		loadConcepts = () => loadAllConcepts(sparqlConnector),
+		loadStructure = async () => {
+			const core = await sparqlConnector.fetchVocabularyNamespace();
+			if (!core) return { collections: [], schemes: [] };
+			const [collections, schemes] = await Promise.all([sparqlConnector.fetchCollections(core), sparqlConnector.fetchConceptSchemes(core)]);
+			return { collections, schemes };
+		},
 		loadGovernance = async () => {
 			const core = await sparqlConnector.fetchVocabularyNamespace();
 			return core ? { namespaceIri: core, ...(await sparqlConnector.fetchNamespaceGovernance(core)) } : null;
@@ -52,11 +61,12 @@
 	/** `undefined` when there is no vocabulary (or it could not be read): the vocabulary and link gates then stay silent. */
 	let concepts = $state<Concept[] | undefined>(undefined);
 	let vocabularyError = $state(false);
+	let structure = $state<{ collections: SkosCollection[]; schemes: { iri: string }[] }>({ collections: [], schemes: [] });
 	let governance = $state<(Governance & { namespaceIri: string }) | null>(null);
 	let retargetError = $state<string | null>(null);
 	let loading = $state(true);
 
-	const findings = $derived(schema ? runGates(schema, { concepts, governance }) : []);
+	const findings = $derived(schema ? runGates(schema, { concepts, governance, ...structure }) : []);
 	const groups = $derived(
 		PIPELINE_STAGES.map((stage) => ({
 			stage,
@@ -84,14 +94,16 @@
 	async function refresh() {
 		try {
 			// The model is reported even when the vocabulary cannot be read.
-			const [loadedSchema, loadedConcepts, loadedGovernance] = await Promise.all([
+			const [loadedSchema, loadedConcepts, loadedGovernance, loadedStructure] = await Promise.all([
 				load(),
 				loadConcepts().catch(() => {
 					vocabularyError = true;
 					return null;
 				}),
-				loadGovernance().catch(() => null)
+				loadGovernance().catch(() => null),
+				loadStructure().catch(() => ({ collections: [], schemes: [] }))
 			]);
+			structure = loadedStructure;
 			schema = loadedSchema;
 			governance = loadedGovernance;
 			concepts = loadedConcepts ?? undefined;

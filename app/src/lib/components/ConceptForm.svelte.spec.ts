@@ -86,6 +86,44 @@ describe('ConceptForm (STORY-323)', () => {
 		expect(screen.getByText(/what kind of thing it is.*what sets it apart/i)).toBeTruthy();
 	});
 
+	it('has a Notation field, one code per line, empty lines dropped (STORY-406)', async () => {
+		const { onSave } = setup({ existing: [] });
+		await type('Preferred label', 'Warehouse');
+		await type('Notation (one per line)', 'WH-01\n\n WH-02 ');
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		const saved = (onSave.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+		expect(saved.notation).toEqual(['WH-01', 'WH-02']);
+	});
+
+	it('shows the stored notation when editing (STORY-406)', () => {
+		setup({ initial: concept({ notation: ['C-7'] }) });
+		expect((screen.getByLabelText('Notation (one per line)') as HTMLTextAreaElement).value).toBe('C-7');
+	});
+
+	it('has Examples and Editorial notes fields, one per line (STORY-407)', async () => {
+		const { onSave } = setup({ existing: [] });
+		await type('Preferred label', 'Warehouse');
+		await type('Examples (one per line)', 'Rotterdam hub\n\nParcel depot');
+		await type('Editorial notes (internal, one per line)', 'Check with logistics');
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		const saved = (onSave.mock.calls[0] as unknown as [Record<string, unknown>])[0];
+		expect(saved.example).toEqual(['Rotterdam hub', 'Parcel depot']);
+		expect(saved.editorialNote).toEqual(['Check with logistics']);
+	});
+
+	it('lists the collections a concept belongs to, read-only (STORY-410)', () => {
+		setup({
+			initial: concept(),
+			collections: [
+				{ iri: 'urn:coll:A', prefLabels: [{ text: 'Regions', lang: 'en' }], ordered: false, members: ['urn:c:1'] },
+				{ iri: 'urn:coll:B', prefLabels: [{ text: 'Other', lang: 'en' }], ordered: false, members: ['urn:c:9'] }
+			]
+		});
+		expect(screen.getByText('In collections')).toBeTruthy();
+		expect(screen.getByText('Regions')).toBeTruthy();
+		expect(screen.queryByText('Other')).toBeNull();
+	});
+
 	it('saves a complete draft with alternative labels one per line', async () => {
 		const { onSave } = setup({ existing: [] });
 		await type('Preferred label', '  Invoice ');

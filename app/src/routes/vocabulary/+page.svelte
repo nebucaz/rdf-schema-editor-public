@@ -2,24 +2,43 @@
 	/** The core vocabulary (ontology-pipeline STORY-323): browse, search and edit SKOS concepts, move
 	 *  them along their lifecycle and keep a scope record per scheme. Stage 1 of the pipeline. */
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import BackfillConceptsModal from '#lib/components/BackfillConceptsModal.svelte';
+	import VocabularyCollectionsTab from '#lib/components/VocabularyCollectionsTab.svelte';
+	import ImportVocabularyModal from '#lib/components/ImportVocabularyModal.svelte';
+	import ExportVocabularyModal from '#lib/components/ExportVocabularyModal.svelte';
 	import ConceptForm from '#lib/components/ConceptForm.svelte';
-	import ConceptList from '#lib/components/ConceptList.svelte';
+	import ConceptNeighborhood from '#lib/components/ConceptNeighborhood.svelte';
+	import ConceptHistory from '#lib/components/ConceptHistory.svelte';
+	import VocabularyConceptsTab from '#lib/components/VocabularyConceptsTab.svelte';
 	import ConceptRelations from '#lib/components/ConceptRelations.svelte';
 	import DeprecateConceptDialog from '#lib/components/DeprecateConceptDialog.svelte';
 	import Modal from '#lib/components/Modal.svelte';
+	import MergeConceptDialog from '#lib/components/MergeConceptDialog.svelte';
 	import PromoteConceptDialog from '#lib/components/PromoteConceptDialog.svelte';
-	import SchemeScopeForm from '#lib/components/SchemeScopeForm.svelte';
+	import type { MergePlan } from '#lib/services/concept-merge.js';
+	import { planEnumeratedClass } from '#lib/services/concept-to-class.js';
+	import VocabularySchemesTab from '#lib/components/VocabularySchemesTab.svelte';
+	import VocabularyTabs from '#lib/components/VocabularyTabs.svelte';
 	import VocabularyNamespacePicker from '#lib/components/VocabularyNamespacePicker.svelte';
 	import { planBackfillWrites, proposeBackfill, type BackfillProposal, type BackfillRow } from '#lib/services/concept-backfill.js';
-	import { changeKindForConceptEdit, conceptChangeSummary, relationEntry, type ChangeLogEntryInput } from '#lib/services/change-log.js';
+	import { changeKindForConceptEdit, conceptChangeSummary, conceptHistory, relationEntry, type ChangeLogEntryInput, type HistoryNote } from '#lib/services/change-log.js';
+	import { fetchChangeLog } from '#lib/services/changelog-client.js';
+	import type { SchemeMetadata } from '#lib/services/scheme-metadata.js';
 	import { recordChange } from '#lib/services/change-log-actions.js';
-	import { reviewConceptUrl } from '#lib/services/review-links.js';
+	import { reviewConceptUrl, reviewSchemeUrl } from '#lib/services/review-links.js';
+	import { schemeIdForIri } from '#lib/services/scheme-id.js';
+	import type { CollectionDraft, SkosCollection } from '#lib/services/skos-collection.js';
+	import { applyImport, type ImportWrites } from '#lib/services/skos-import-apply.js';
+	import type { SkosVocabulary } from '#lib/services/skos-export.js';
+	import { buildExportFiles, type ExportSettings } from '#lib/services/skos-export-actions.js';
+	import { downloadFile } from '#lib/utils/download.js';
 	import { runVocabularyGates } from '#lib/services/gates/vocabulary.js';
 	import {
 		conceptTitle,
 		nextStatuses,
+		schemeDisplayName,
 		type Concept,
 		type ConceptDraft,
 		type ConceptScheme,
@@ -28,64 +47,93 @@
 	} from '#lib/services/skos-concept.js';
 	import { sparqlConnector, type FetchedExternalVocabulary } from '#lib/services/sparql-connector.js';
 	import { addAlternativeToConcept, deprecateConcept, loadAllConcepts } from '#lib/services/vocabulary-actions.js';
+	import { listStateHref, parseListUrlState, patchListState, type ListUrlState, type VocabularyTab } from '#lib/services/list-url-state.js';
+	import { stripBase } from '#lib/utils/urls.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
 
-	const PAGE_SIZE = 200;
+	/** Concepts are read in pages of this size into `concepts`, the context the gates and pickers need. */
+	const CONTEXT_PAGE_SIZE = 1000;
+	const CONTEXT_MAX_PAGES = 10;
+
+	/** The tab lives in the URL (`?tab=`), so a link, the back button and a reload all land on the same tab; the
+	 *  vocabulary itself stays loaded on this page while the tab changes. */
+	const listState = $derived(parseListUrlState(page.url.searchParams));
+	const tab = $derived(listState.tab);
+	function setListState(next: ListUrlState) {
+		void goto(listStateHref(stripBase(page.url.pathname), page.url.searchParams, next), { replace: true, reset: false });
+	}
+	/** A neighbour in the Neighbourhood section becomes the selected concept, and `?concept=` follows. */
+	function selectNeighbour(iri: string) {
+		selectedIri = iri;
+		const params = new URLSearchParams(page.url.searchParams.toString());
+		params.set('concept', iri);
+		void goto(listStateHref(stripBase(page.url.pathname), params, listState), { replace: true, reset: false });
+	}
+	const selectTab = (next: VocabularyTab) => setListState(patchListState(listState, { tab: next }));
+	/** Bumped after every load so the Concepts tab reads its page again after a write. */
+	let reloadKey = $state(0);
 
 	/** `undefined` while loading, `null` when no namespace is marked yet. */
 	let core = $state<string | null | undefined>(undefined);
 	let concepts = $state<Concept[]>([]);
 	let schemes = $state<ConceptScheme[]>([]);
 	let externals = $state<FetchedExternalVocabulary[]>([]);
-	let hasMore = $state(false);
+	let collections = $state<SkosCollection[]>([]);
+	let exporting = $state(false);
+	/** The whole vocabulary while the import wizard is open, for the preview to compare with. */
+	let importing = $state<SkosVocabulary | null>(null);
 	let error = $state<string | null>(null);
 	let selectedIri = $state<string | null>(null);
 	/** `null` = closed, `'new'` = adding, otherwise the concept being edited. */
 	let editing = $state<Concept | 'new' | null>(null);
 	let deprecating = $state<Concept | null>(null);
 	let promoting = $state<Concept | null>(null);
+	/** The duplicate being merged, with the classes that point at it. */
+	let merging = $state<{ concept: Concept; classLinks: { classIri: string; label: string }[] } | null>(null);
 	/** `null` = closed; otherwise the proposals of the open backfill review. */
 	let backfill = $state<{ proposals: BackfillProposal[]; concepts: Concept[] } | null>(null);
-	let confirmingDelete = $state<{ iri: string; linkedClasses: string[]; narrower: string[] } | null>(null);
-	let newScheme = $state('');
+	let confirmingDelete = $state<{ iri: string; linkedClasses: string[]; narrower: string[]; collections: string[] } | null>(null);
 	/** Why the concept or relation is being changed; written to the change log with the change. */
 	let rationale = $state('');
 	let relationRationale = $state('');
-	let scopeSchemeIri = $state('');
 
 	/** Gates run over the concepts already loaded: no query of their own. */
 	const findings = $derived(runVocabularyGates(concepts));
 	const selectedFindings = $derived(findings.filter((f) => f.elementIri === selectedIri));
 	const selected = $derived(concepts.find((c) => c.iri === selectedIri) ?? null);
-	const scopeScheme = $derived(schemes.find((s) => s.iri === scopeSchemeIri) ?? null);
-	const schemeName = $derived(new Map(schemes.map((s) => [s.iri, s.name])));
+	const schemeName = $derived(new Map(schemes.map((s) => [s.iri, schemeDisplayName(s)])));
 	const labelOf = (iri: string) => {
 		const c = concepts.find((x) => x.iri === iri);
 		return c ? conceptTitle(c) : (iri.split(/[#/]/).pop() ?? iri);
 	};
 
-	async function load(more = false) {
+	async function load() {
 		error = null;
 		try {
-			if (!more) {
-				await namespaceStore.refresh();
-				core = await sparqlConnector.fetchVocabularyNamespace();
-			}
+			await namespaceStore.refresh();
+			core = await sparqlConnector.fetchVocabularyNamespace();
+			// Best effort: a failed backfill must not keep the page from loading.
+			if (core) await sparqlConnector.ensureHasTopConcept(core).catch(() => {});
 			if (!core) return;
-			const [loadedSchemes, loaded, loadedExternals] = await Promise.all([
+			const [loadedSchemes, loadedConcepts, loadedExternals, loadedCollections] = await Promise.all([
 				sparqlConnector.fetchConceptSchemes(core),
-				sparqlConnector.fetchConcepts(core, { limit: PAGE_SIZE, offset: more ? concepts.length : 0 }),
-				more ? Promise.resolve(externals) : sparqlConnector.fetchExternalVocabularies()
+				loadAllConcepts(
+					{ fetchVocabularyNamespace: async () => core ?? null, fetchConcepts: (c, o) => sparqlConnector.fetchConcepts(c, o) },
+					CONTEXT_PAGE_SIZE,
+					CONTEXT_MAX_PAGES
+				),
+				sparqlConnector.fetchExternalVocabularies(),
+				sparqlConnector.fetchCollections(core)
 			]);
+			collections = loadedCollections;
 			schemes = loadedSchemes;
 			externals = loadedExternals;
-			concepts = more ? [...concepts, ...loaded.concepts] : loaded.concepts;
-			hasMore = loaded.hasMore;
-			if (!scopeSchemeIri && schemes[0]) scopeSchemeIri = schemes[0].iri;
+			concepts = loadedConcepts ?? [];
+			reloadKey++;
 			// A link from the Gate report: `/vocabulary?concept=<iri>`.
 			const wanted = page.url.searchParams.get('concept');
-			if (!more && wanted && !selectedIri && concepts.some((c) => c.iri === wanted)) selectedIri = wanted;
+			if (wanted && !selectedIri && concepts.some((c) => c.iri === wanted)) selectedIri = wanted;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load the vocabulary';
 		}
@@ -101,6 +149,19 @@
 			error = e instanceof Error ? e.message : 'Something went wrong';
 		}
 	}
+
+	/** The selected concept's generated history (`skos:historyNote`), read from the change log. */
+	let history = $state<HistoryNote[]>([]);
+	$effect(() => {
+		const iri = selectedIri;
+		history = [];
+		if (!iri) return;
+		fetchChangeLog((...args) => fetch(...args), { term: iri })
+			.then((items) => {
+				if (selectedIri === iri) history = conceptHistory(items, iri);
+			})
+			.catch(() => {});
+	});
 
 	/** Records a change after it was made and reloaded; a failing log write is shown, the change stays. */
 	async function log(entry: ChangeLogEntryInput) {
@@ -199,7 +260,7 @@
 				selectedIri = null;
 				deletedEntry = { kind: 'change', summary: conceptChangeSummary('deleted', concept), term: concept.iri, changeKind: 'removal' };
 			} else {
-				confirmingDelete = { iri: concept.iri, linkedClasses: result.linkedClasses, narrower: result.narrower };
+				confirmingDelete = { iri: concept.iri, linkedClasses: result.linkedClasses, narrower: result.narrower, collections: result.collections };
 			}
 		});
 		if (deletedEntry) await log(deletedEntry);
@@ -216,6 +277,34 @@
 			changeKind: 'addition'
 		};
 		promoting = null;
+		await load();
+		await log(entry);
+	}
+
+	async function openMerge(concept: Concept) {
+		await act(async () => {
+			const schema = await schemaStore.ensureLoaded('schema');
+			const classLinks = schema.classes
+				.filter((k) => k.definedByConcept === concept.iri)
+				.map((k) => ({ classIri: k.iri, label: k.label }));
+			merging = { concept, classLinks };
+		});
+	}
+
+	async function confirmMerge(plan: MergePlan) {
+		if (!core || !merging) return;
+		const duplicate = merging.concept;
+		const survivorTitle = labelOf(plan.survivor);
+		await sparqlConnector.mergeConcepts(core, plan);
+		schemaStore.invalidate();
+		const entry: ChangeLogEntryInput = {
+			kind: 'change',
+			summary: `Merged "${conceptTitle(duplicate)}" into "${survivorTitle}"`,
+			term: plan.survivor,
+			changeKind: 'merge'
+		};
+		merging = null;
+		selectedIri = plan.survivor;
 		await load();
 		await log(entry);
 	}
@@ -246,18 +335,121 @@
 		backfill = { ...backfill, concepts: (await loadAllConcepts(sparqlConnector)) ?? [] };
 	}
 
-	async function addScheme(event: SubmitEvent) {
-		event.preventDefault();
-		if (!core || !newScheme.trim()) return;
-		await act(async () => {
-			scopeSchemeIri = await sparqlConnector.insertConceptScheme(core!, { name: newScheme, description: '' });
-			newScheme = '';
-		});
+	/** Creates a scheme and resolves with its IRI; a failure reaches the form, which shows it beside the fields. */
+	async function addScheme(draft: { name: string; description: string }): Promise<string> {
+		const iri = await sparqlConnector.insertConceptScheme(core!, draft);
+		await load();
+		return iri;
 	}
 
-	async function saveScope(scope: SchemeScope) {
-		if (!core || !scopeScheme) return;
-		await sparqlConnector.updateConceptSchemeScope(core, scopeScheme.iri, scope);
+	/** Collection edits: write, reload, and let a failure reach the panel, which shows it beside the control. */
+	async function collectionAction(action: () => Promise<unknown>) {
+		if (!core) return;
+		try {
+			await action();
+		} finally {
+			await load();
+		}
+	}
+	const createCollection = (draft: CollectionDraft) => collectionAction(() => sparqlConnector.insertCollection(core!, draft));
+	const saveCollectionLabels = (iri: string, labels: Parameters<typeof sparqlConnector.updateCollectionLabels>[2]) =>
+		collectionAction(() => sparqlConnector.updateCollectionLabels(core!, iri, labels));
+	const addCollectionMember = (iri: string, member: string) => collectionAction(() => sparqlConnector.addCollectionMember(core!, iri, member));
+	const removeCollectionMember = (iri: string, member: string) => collectionAction(() => sparqlConnector.removeCollectionMember(core!, iri, member));
+	const reorderCollection = (iri: string, members: string[]) => collectionAction(() => sparqlConnector.reorderCollection(core!, iri, members));
+	/** Turns a collection into an enumerated class (labels only, no link back to the concepts), in one write. */
+	async function createEnumeratedClass(collectionIri: string, namespaceBaseIri: string): Promise<string> {
+		const col = collections.find((x) => x.iri === collectionIri);
+		if (!col) throw new Error('Collection not found');
+		const plan = planEnumeratedClass(col, collections, concepts);
+		if (plan.error) throw new Error(plan.error);
+		const result = await sparqlConnector.insertEnumeratedClass(namespaceBaseIri, plan.className, plan.members.map((m) => m.label));
+		schemaStore.invalidate();
+		await log({
+			kind: 'change',
+			summary: `Created the enumerated class "${plan.className}" from a collection with ${result.members.length} members`,
+			term: result.iri,
+			changeKind: 'addition'
+		});
+		return `Created class "${plan.className}" with ${result.members.length} members.`;
+	}
+
+	/** Without `force` a scheme with concepts or references is refused and what blocks it comes back. */
+	async function deleteScheme(iri: string, force: boolean) {
+		const scheme = schemes.find((x) => x.iri === iri);
+		const result = await sparqlConnector.deleteConceptScheme(core!, iri, { force });
+		if (result.deleted) {
+			schemaStore.invalidate();
+			await load();
+			await log({
+				kind: 'change',
+				summary: `Deleted the scheme "${scheme ? schemeDisplayName(scheme) : iri}" with ${result.concepts.length} concepts`,
+				term: iri,
+				changeKind: 'removal'
+			});
+		}
+		return result;
+	}
+
+	async function deleteCollection(iri: string, force: boolean) {
+		let result = { deleted: false, members: [] as string[] };
+		await collectionAction(async () => {
+			result = await sparqlConnector.deleteCollection(core!, iri, { force });
+		});
+		return result;
+	}
+
+	/** Reads everything the export needs (all concepts, class links) and hands the files to the browser. Writes nothing. */
+	async function runExport(settings: ExportSettings) {
+		exporting = false;
+		error = null;
+		try {
+			const all = (await loadAllConcepts(sparqlConnector)) ?? [];
+			const schema = settings.classExactMatch ? await schemaStore.ensureLoaded('schema') : null;
+			const classLinks = (schema?.classes ?? [])
+				.filter((c) => c.definedByConcept)
+				.map((c) => ({ classIri: c.iri, conceptIri: c.definedByConcept! }));
+			for (const file of buildExportFiles({ schemes, concepts: all, collections, classLinks }, settings)) {
+				downloadFile(file.name, file.content, file.mime);
+			}
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'The export failed';
+		}
+	}
+
+	async function openImport() {
+		if (!core) return;
+		error = null;
+		try {
+			importing = { schemes, concepts: (await loadAllConcepts(sparqlConnector)) ?? [], collections };
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'The vocabulary could not be read';
+		}
+	}
+
+	async function runImport(writes: ImportWrites) {
+		const outcome = await applyImport(
+			{
+				applyImportPlan: (base, w) => sparqlConnector.applyImportPlan(base, w),
+				recordChange,
+				loadConcepts: async () => (await loadAllConcepts(sparqlConnector)) ?? []
+			},
+			core!,
+			writes
+		);
+		await load();
+		return outcome;
+	}
+
+	async function saveMetadata(schemeIri: string, metadata: SchemeMetadata) {
+		if (!core) return;
+		await sparqlConnector.updateConceptSchemeMetadata(core, schemeIri, metadata);
+		await load();
+	}
+
+	async function saveScope(schemeIri: string, scope: SchemeScope) {
+		if (!core) return;
+		await sparqlConnector.updateConceptSchemeScope(core, schemeIri, scope);
 		await load();
 	}
 
@@ -275,8 +467,8 @@
 		<h1>Vocabulary</h1>
 		{#if core}
 			<span class="header-actions">
-				<button type="button" onclick={openBackfill} data-testid="backfill-concepts">Create concepts for unlinked classes</button>
-				<button type="button" onclick={() => (editing = 'new')} data-testid="add-concept">Add concept</button>
+				<button type="button" onclick={openImport} data-testid="import-vocabulary">Import</button>
+				<button type="button" onclick={() => (exporting = true)} data-testid="export-vocabulary">Export</button>
 			</span>
 		{/if}
 	</header>
@@ -290,11 +482,25 @@
 	{:else if core === null}
 		<VocabularyNamespacePicker namespaces={namespaceStore.namespaces} onMark={markNamespace} />
 	{:else}
+		<VocabularyTabs {tab} onSelect={selectTab} />
+
+		{#if tab === 'concepts'}
 		<div class="columns">
 			<section class="list">
-				<ConceptList {concepts} {schemes} {selectedIri} {findings} onSelect={(iri) => (selectedIri = iri)} />
-				{#if hasMore}
-					<button type="button" onclick={() => load(true)}>Load more</button>
+				{#if core}
+					<VocabularyConceptsTab
+						{core}
+						connector={sparqlConnector}
+						{schemes}
+						{findings}
+						{selectedIri}
+						{reloadKey}
+						{listState}
+						onStateChange={setListState}
+						onSelect={(iri) => (selectedIri = iri)}
+						onAdd={() => (editing = 'new')}
+						onBackfill={openBackfill}
+					/>
 				{/if}
 			</section>
 
@@ -324,6 +530,18 @@
 							<dt>Hidden <code>skos:hiddenLabel</code></dt>
 							<dd>{selected.hiddenLabels.map((l) => l.text).join(', ')}</dd>
 						{/if}
+						{#if selected.notation?.length}
+							<dt>Notation <code>skos:notation</code></dt>
+							<dd>{selected.notation.join(', ')}</dd>
+						{/if}
+						{#if selected.example?.length}
+							<dt>Examples <code>skos:example</code></dt>
+							<dd>{selected.example.join('; ')}</dd>
+						{/if}
+						{#if selected.editorialNote?.length}
+							<dt>Editorial notes <code>skos:editorialNote</code> (internal)</dt>
+							<dd>{selected.editorialNote.join('; ')}</dd>
+						{/if}
 						{#if selected.source || selected.authority}
 							<dt>Provenance</dt>
 							<dd>{[selected.source, selected.authority].filter(Boolean).join(' · ')}</dd>
@@ -341,6 +559,7 @@
 							<dd>{selected.created} / {selected.modified}</dd>
 						{/if}
 					</dl>
+					<ConceptHistory {history} />
 					{#if selectedFindings.length}
 						<ul class="findings-list" aria-label="Gate findings">
 							{#each selectedFindings as f (f.gateId)}
@@ -348,6 +567,7 @@
 							{/each}
 						</ul>
 					{/if}
+					<ConceptNeighborhood {concepts} iri={selected.iri} onSelect={selectNeighbour} />
 					<ConceptRelations concept={selected} {concepts} {externals} onAdd={addRelation} onRemove={removeRelation} bind:rationale={relationRationale} />
 					<div class="actions">
 						<button type="button" onclick={() => (editing = selected)}>Edit</button>
@@ -359,6 +579,9 @@
 						{:else if nextStatuses(selected.status)[0]}
 							<button type="button" onclick={() => advance(selected)}>Mark {nextStatuses(selected.status)[0]}</button>
 						{/if}
+						{#if selected.status !== 'retired'}
+							<button type="button" onclick={() => openMerge(selected)}>Merge into…</button>
+						{/if}
 						<button type="button" class="danger" onclick={() => remove(selected)}>Delete</button>
 					</div>
 					{#if confirmingDelete && confirmingDelete.iri === selected.iri}
@@ -366,7 +589,8 @@
 							<p>
 								This concept is still in use:
 								{confirmingDelete.linkedClasses.length} linked class{confirmingDelete.linkedClasses.length === 1 ? '' : 'es'},
-								{confirmingDelete.narrower.length} narrower concept{confirmingDelete.narrower.length === 1 ? '' : 's'}.
+								{confirmingDelete.narrower.length} narrower concept{confirmingDelete.narrower.length === 1 ? '' : 's'},
+								{confirmingDelete.collections.length} collection{confirmingDelete.collections.length === 1 ? '' : 's'}.
 								Deleting it removes those links. Deprecating keeps them.
 							</p>
 							<button type="button" class="danger" onclick={() => remove(selected, true)}>Delete anyway</button>
@@ -378,36 +602,46 @@
 				{/if}
 			</section>
 		</div>
+		{/if}
 
-		<section class="schemes">
-			<h2>Schemes</h2>
-			<form class="inline" onsubmit={addScheme}>
-				<label>
-					New scheme
-					<input type="text" bind:value={newScheme} placeholder="e.g. Business glossary" />
-				</label>
-				<button type="submit" disabled={!newScheme.trim()}>Add scheme</button>
-			</form>
-			{#if schemes.length}
-				<label>
-					Scope of
-					<select bind:value={scopeSchemeIri}>
-						{#each schemes as scheme (scheme.iri)}
-							<option value={scheme.iri}>{scheme.name}</option>
-						{/each}
-					</select>
-				</label>
-				{#if scopeScheme}
-					{#key scopeScheme.iri}
-						<SchemeScopeForm scheme={scopeScheme} onSave={saveScope} />
-					{/key}
-				{/if}
-			{:else}
-				<p class="empty">No scheme yet. A scheme groups concepts and records why the vocabulary exists.</p>
-			{/if}
-		</section>
+		{#if tab === 'collections'}
+		<VocabularyCollectionsTab
+			{collections}
+			{concepts}
+			namespaces={namespaceStore.namespaces.filter((n) => !n.vocabulary)}
+			{listState}
+			onStateChange={setListState}
+			onCreate={createCollection}
+			onSaveLabels={saveCollectionLabels}
+			onAddMember={addCollectionMember}
+			onRemoveMember={removeCollectionMember}
+			onReorder={reorderCollection}
+			onDelete={deleteCollection}
+			onCreateEnumeration={createEnumeratedClass}
+		/>
+		{/if}
+
+		{#if tab === 'schemes'}
+		<VocabularySchemesTab
+			core={core}
+			{schemes}
+			{concepts}
+			{listState}
+			onStateChange={setListState}
+			onAdd={addScheme}
+			onSaveScope={saveScope}
+			onSaveMetadata={saveMetadata}
+			onDelete={deleteScheme}
+		/>
+		{/if}
 	{/if}
 </div>
+
+{#if importing}
+	<ImportVocabularyModal isOpen existing={importing} coreBaseIri={core ?? undefined} onApply={runImport} onClose={() => (importing = null)} />
+{/if}
+
+<ExportVocabularyModal isOpen={exporting} {schemes} onExport={runExport} onClose={() => (exporting = false)} />
 
 <Modal
 	isOpen={editing !== null}
@@ -424,6 +658,7 @@
 			onSave={save}
 			onCancel={() => (editing = null)}
 			onAddAlternative={addAlternative}
+			{collections}
 			bind:rationale
 		/>
 	{/if}
@@ -433,9 +668,23 @@
 	{#if promoting}
 		<PromoteConceptDialog
 			conceptTitle={conceptTitle(promoting)}
+			concept={promoting}
 			namespaces={namespaceStore.namespaces}
 			onConfirm={confirmPromote}
 			onCancel={() => (promoting = null)}
+		/>
+	{/if}
+</Modal>
+
+<Modal isOpen={merging !== null} title="Merge concept" onClose={() => (merging = null)} maxWidth="620px" dismissible={false}>
+	{#if merging}
+		<MergeConceptDialog
+			duplicate={merging.concept}
+			{concepts}
+			{collections}
+			classLinks={merging.classLinks}
+			onConfirm={confirmMerge}
+			onCancel={() => (merging = null)}
 		/>
 	{/if}
 </Modal>
@@ -484,6 +733,25 @@
 	.header-actions {
 		display: flex;
 		gap: 0.5rem;
+	}
+
+	.header-actions button {
+		padding: 0.3rem 0.8rem;
+		border: 1px solid var(--color-accent);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-accent);
+		font-size: 0.85rem;
+	}
+
+	.header-actions button:hover:not(:disabled) {
+		background: var(--color-accent);
+		color: var(--color-bg);
+	}
+
+	.header-actions button:disabled {
+		opacity: 0.5;
+		cursor: default;
 	}
 
 	.columns {
@@ -537,6 +805,7 @@
 	}
 
 	.actions {
+		margin-top: 1rem;
 		display: flex;
 		gap: 0.5rem;
 		flex-wrap: wrap;
@@ -561,36 +830,9 @@
 		font-size: 0.85rem;
 	}
 
-	.inline {
-		display: flex;
-		gap: 0.5rem;
-		align-items: flex-end;
-	}
 
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		font-size: 0.8rem;
-		color: var(--color-text-muted);
-	}
 
-	input,
-	select {
-		font-size: 0.9rem;
-		color: var(--color-text);
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		padding: 0.4rem 0.55rem;
-	}
 
-	.schemes {
-		display: flex;
-		flex-direction: column;
-		gap: 0.75rem;
-		max-width: 36rem;
-	}
 
 	.link {
 		background: none;
@@ -609,6 +851,30 @@
 
 	.error {
 		color: var(--color-error);
+	}
+
+	.actions button {
+		padding: 0.3rem 0.8rem;
+		border: 1px solid var(--color-accent);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-accent);
+		font-size: 0.85rem;
+	}
+
+	.actions button:hover:not(:disabled) {
+		background: var(--color-accent);
+		color: var(--color-bg);
+	}
+
+	.actions button.danger {
+		border-color: var(--color-error);
+		color: var(--color-error);
+	}
+
+	.actions button.danger:hover:not(:disabled) {
+		background: var(--color-error);
+		color: var(--color-bg);
 	}
 
 	.danger {

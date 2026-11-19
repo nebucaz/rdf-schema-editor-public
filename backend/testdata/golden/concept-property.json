@@ -1,0 +1,74 @@
+{
+  "vectors": [
+    {
+      "name": "plain",
+      "propertyIri": "http://example.org/ns/schema#lifecycleStage",
+      "schemeIri": "http://example.org/ns/vocab#Lifecycle",
+      "select": "SELECT $this ?value (<http://example.org/ns/schema#lifecycleStage> AS ?path)\nWHERE {\n  $this <http://example.org/ns/schema#lifecycleStage> ?value .\n  FILTER NOT EXISTS { ?value a <http://www.w3.org/2004/02/skos/core#Concept> ; <http://www.w3.org/2004/02/skos/core#inScheme> <http://example.org/ns/vocab#Lifecycle> }\n}"
+    },
+    {
+      "name": "hash and path",
+      "propertyIri": "http://example.org/ns#hasStatus",
+      "schemeIri": "http://example.org/ns/vocab/scheme/lifecycle",
+      "select": "SELECT $this ?value (<http://example.org/ns#hasStatus> AS ?path)\nWHERE {\n  $this <http://example.org/ns#hasStatus> ?value .\n  FILTER NOT EXISTS { ?value a <http://www.w3.org/2004/02/skos/core#Concept> ; <http://www.w3.org/2004/02/skos/core#inScheme> <http://example.org/ns/vocab/scheme/lifecycle> }\n}"
+    },
+    {
+      "name": "non-ascii",
+      "propertyIri": "http://example.org/ns#größe",
+      "schemeIri": "http://example.org/Zürich#Scheme",
+      "select": "SELECT $this ?value (<http://example.org/ns#größe> AS ?path)\nWHERE {\n  $this <http://example.org/ns#größe> ?value .\n  FILTER NOT EXISTS { ?value a <http://www.w3.org/2004/02/skos/core#Concept> ; <http://www.w3.org/2004/02/skos/core#inScheme> <http://example.org/Zürich#Scheme> }\n}"
+    }
+  ],
+  "unsafe": [
+    {
+      "name": "property with greater-than",
+      "propertyIri": "http://example.org/a>b",
+      "schemeIri": "http://example.org/s"
+    },
+    {
+      "name": "scheme with greater-than",
+      "propertyIri": "http://example.org/p",
+      "schemeIri": "http://example.org/a>b"
+    },
+    {
+      "name": "property with space",
+      "propertyIri": "http://example.org/a b",
+      "schemeIri": "http://example.org/s"
+    },
+    {
+      "name": "scheme with space",
+      "propertyIri": "http://example.org/p",
+      "schemeIri": "http://example.org/a b"
+    },
+    {
+      "name": "property with open brace",
+      "propertyIri": "http://example.org/a{b",
+      "schemeIri": "http://example.org/s"
+    },
+    {
+      "name": "scheme with open brace",
+      "propertyIri": "http://example.org/p",
+      "schemeIri": "http://example.org/a{b"
+    },
+    {
+      "name": "property with double quote",
+      "propertyIri": "http://example.org/a\"b",
+      "schemeIri": "http://example.org/s"
+    },
+    {
+      "name": "scheme with double quote",
+      "propertyIri": "http://example.org/p",
+      "schemeIri": "http://example.org/a\"b"
+    },
+    {
+      "name": "property with backslash",
+      "propertyIri": "http://example.org/a\\b",
+      "schemeIri": "http://example.org/s"
+    },
+    {
+      "name": "scheme with backslash",
+      "propertyIri": "http://example.org/p",
+      "schemeIri": "http://example.org/a\\b"
+    }
+  ]
+}

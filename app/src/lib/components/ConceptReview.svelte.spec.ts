@@ -51,4 +51,14 @@ describe('ConceptReview (STORY-335)', () => {
 		expect(screen.queryAllByRole('checkbox')).toHaveLength(0);
 		expect(screen.queryAllByRole('combobox')).toHaveLength(0);
 	});
+
+	it('shows examples but never editorial notes or a history (STORY-407)', () => {
+		const { container } = render(ConceptReview, {
+			props: { concept: concept('Hub', { example: ['Rotterdam hub'], editorialNote: ['SECRET-NOTE'] }), concepts: all }
+		});
+		expect(screen.getByText('Rotterdam hub')).toBeTruthy();
+		expect(container.textContent).not.toContain('SECRET-NOTE');
+		expect(container.textContent).not.toMatch(/Editorial/i);
+		expect(container.textContent).not.toMatch(/History/);
+	});
 });

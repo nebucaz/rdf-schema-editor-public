@@ -13,6 +13,12 @@ export function gateFindingLink(finding: GateFinding, schema: FetchedSchema): st
 	if (finding.stage === 'governance') return appUrl('/governance');
 	// Taxonomy and thesaurus findings are about a concept, except the ones about a class (link consistency).
 	if ((finding.stage === 'taxonomy' || finding.stage === 'thesaurus') && !schema.classes.some((c) => c.iri === iri)) return conceptLink;
+	// A finding about a property (concept property or relation): open the class that carries it.
+	const propertyOwner =
+		schema.conceptProperties?.find((p) => p.iri === iri)?.domain ?? schema.objectProperties.find((p) => p.iri === iri)?.domain;
+	if (propertyOwner && (finding.gateId.startsWith('concept-property-') || finding.gateId === 'relation-to-skos-concept')) {
+		return appUrl(`/?focus=${encodeURIComponent(propertyOwner)}`);
+	}
 	const isIndividual =
 		schema.individuals.some((i) => i.iri === iri) || (schema.untypedIndividuals ?? []).some((u) => u.iri === iri);
 	if (isIndividual) return buildIdentitySearchUrl({ node: iri });

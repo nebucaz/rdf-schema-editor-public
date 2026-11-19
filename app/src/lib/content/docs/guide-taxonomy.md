@@ -14,7 +14,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 
 ## Steps
 
-1. **Open the outline.** Choose **Taxonomy** in the Pipeline navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
+1. **Open the outline.** Choose **Taxonomy** in the Pipeline navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. Use the **Outline** / **Graph** toggle at the top to switch to a read-only picture of the scheme; changes are still made in the outline. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
 2. **Choose the top-level categories.** Aim for a few broad headings that do not overlap. In the example: *Software*, *Offering*, *Data* and *Role*. For each, open the concept in Vocabulary and tick **Top concept**. A top concept has no broader concept. *Why:* a term with no home is a sign of a gap in the top level (book, p. 114).
 3. **Place one term at a time.** Take a term and ask where it belongs. Choose the preferred label that your users would use, then find its parent (book, p. 112).
 4. **Apply the is-a test.** Drag the concept onto its broader concept. The outline asks *Is every Web application a kind of Application?* Answer it honestly. If the answer is "not always", the parent is wrong. Choose **Move** only when the answer is yes (book, p. 113).
@@ -23,8 +23,8 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 7. **Keep acronyms and jargon out of the preferred labels.** The preferred label should make sense to a new colleague. Keep the abbreviation or the project name as an alternative label (book, p. 115).
 8. **Check the definitions.** A definition says what kind of thing the term is, then what sets it apart. It never uses the term itself. Rewrite those that do (book, p. 115).
 9. **Take a term out of a branch.** Drag it to **Drop here to remove the broader concept**. Nothing is deleted; the term simply has no parent until you place it again.
-10. **Compare with the classes.** Read the class hierarchy next to the concept hierarchy. If a class is a subclass of another and both are linked to concepts (use **Defined by concept** on the class, or **Promote to class** on an approved concept), the concept of the subclass should sit under the concept of the superclass.
-11. **Run the checks.** Open **Validation**, then the **Gate report** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors.
+10. **Compare with the classes, only where concepts and classes are linked.** A concept hierarchy does not have to mirror a class hierarchy; a scheme of classification values needs no matching classes. This step applies only where a concept is the definition of a class (use **Defined by concept** on the class, or **Promote to class** on an approved concept). For such a pair, where one class is a subclass of another and both are linked to concepts, read the two hierarchies side by side and decide whether the concept of the subclass should sit under the concept of the superclass.
+11. **Run the checks.** Open **Validation**, then the **Gate report** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors. Then open **Pipeline** and read **Scheme health**: concepts with no relation at all, groups of concepts cut off from the rest, concepts with more than one broader concept, and the average depth and branching of each scheme. Each concept in the lists has a link that opens it.
 12. **Retire, don't delete.** When a term is superseded, **Deprecate** it with a reason and its replacement, so that old tagging still finds the new term (see [Terms, Classes and Deprecation](terms-and-classes)).
 
 ## Done when
@@ -32,6 +32,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 - [ ] Every term has a parent or is a top concept of its scheme
 - [ ] For every parent and child, "every child is a kind of the parent" is true
 - [ ] Siblings do not overlap
+- [ ] Where a concept is linked to a class, you have compared the two hierarchies and decided whether they should agree
 - [ ] Branches are about equally deep, or the difference is explained
 - [ ] Acronyms and project names are alternative labels, not preferred labels
 - [ ] No definition uses the term itself

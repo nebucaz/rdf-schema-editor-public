@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { changeKindForConceptEdit, classCreatedEntry, classDeletedEntry, classEditEntries, conceptChangeSummary, relationEntry } from './change-log';
+import type { ChangeLogItem } from './change-log';
+import { conceptHistory, changeKindForConceptEdit, classCreatedEntry, classDeletedEntry, classEditEntries, conceptChangeSummary, relationEntry } from './change-log';
 import type { Concept } from './skos-concept';
 
 const concept = (over: Partial<Concept> = {}): Concept => ({
@@ -67,5 +68,32 @@ describe('relationEntry', () => {
 			kind: 'change', summary: 'Added exactMatch from concept "Bank" to http://x/Bank', rationale: 'r', term: c.iri, changeKind: 'addition'
 		});
 		expect(relationEntry('removed', c, 'related', 'urn:c:Lender', '').changeKind).toBe('removal');
+	});
+});
+
+describe('conceptHistory (STORY-407)', () => {
+	const item = (over: Partial<ChangeLogItem>): ChangeLogItem => ({
+		iri: 'urn:e', kind: 'change', summary: 's', rationale: '', term: 'urn:c:Bank', question: '', changeKind: '',
+		version: '1.0.0', changedBy: 'ann', changedAt: '2026-11-01T10:00:00Z', ...over
+	});
+
+	it('keeps the entries about the concept, newest first, as who, when, version and summary', () => {
+		const history = conceptHistory(
+			[
+				item({ iri: 'a', summary: 'Added concept "Bank"', changedAt: '2026-11-01T10:00:00Z' }),
+				item({ iri: 'b', summary: 'Edited concept "Bank"', changedBy: 'bo', changedAt: '2026-11-05T09:00:00Z', version: '1.1.0' }),
+				item({ iri: 'c', term: 'urn:c:Other', summary: 'other' }),
+				item({ iri: 'd', term: '', kind: 'release', summary: 'Release 1.1.0' })
+			],
+			'urn:c:Bank'
+		);
+		expect(history).toEqual([
+			{ summary: 'Edited concept "Bank"', changedBy: 'bo', changedAt: '2026-11-05T09:00:00Z', version: '1.1.0' },
+			{ summary: 'Added concept "Bank"', changedBy: 'ann', changedAt: '2026-11-01T10:00:00Z', version: '1.0.0' }
+		]);
+	});
+
+	it('is empty when nothing was logged', () => {
+		expect(conceptHistory([], 'urn:c:Bank')).toEqual([]);
 	});
 });

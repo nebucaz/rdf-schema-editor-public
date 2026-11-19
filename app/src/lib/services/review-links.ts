@@ -7,4 +7,6 @@ import { appUrl } from '#lib/utils/urls.js';
 
 export const reviewQuestionsUrl = () => appUrl('/review/questions');
 export const reviewPipelineUrl = () => appUrl('/review/pipeline');
+export const reviewGlossaryUrl = () => appUrl('/review/glossary');
 export const reviewConceptUrl = (conceptIri: string) => appUrl(`/review/concept?iri=${encodeURIComponent(conceptIri)}`);
+export const reviewSchemeUrl = (schemeId: string) => appUrl(`/review/scheme?scheme=${encodeURIComponent(schemeId)}`);

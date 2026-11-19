@@ -4,6 +4,7 @@ import {
 	addAlternativeLabel,
 	conceptTitle,
 	filterConcepts,
+	schemeDisplayName,
 	moveLabelToReplacement,
 	type Concept,
 	canTransition,
@@ -108,6 +109,13 @@ describe('validateConceptDraft (STORY-322)', () => {
 		expect(validateConceptDraft(draft({ status: 'proposed', definition: '' }))).toEqual([]);
 	});
 
+	it('does not touch the one-preferred-label rule when notations are present (STORY-406)', () => {
+		expect(validateConceptDraft(draft({ notation: ['A1', 'B2'] }))).toEqual([]);
+		expect(validateConceptDraft(draft({ notation: ['A1'], prefLabels: [{ text: 'Customer', lang: 'en' }, { text: 'Client', lang: 'en' }] }))).toContain(
+			'Only one preferred label per language (en)'
+		);
+	});
+
 	it('a top concept needs a scheme', () => {
 		expect(validateConceptDraft(draft({ topConcept: true, schemeIri: '' }))).toContain('A top concept needs a scheme');
 	});
@@ -182,6 +190,11 @@ describe('concept list helpers (STORY-323)', () => {
 		expect(filterConcepts(list, { search: 'cafe' }).map((c) => c.iri)).toEqual(['urn:3']);
 	});
 
+	it('finds a concept by its notation (STORY-406)', () => {
+		const coded = [...list, base({ iri: 'urn:4', prefLabels: [{ text: 'Warehouse', lang: 'en' }], notation: ['WH-01'] })];
+		expect(filterConcepts(coded, { search: 'wh-01' }).map((c) => c.iri)).toEqual(['urn:4']);
+	});
+
 	it('filters by status and scheme and combines the filters', () => {
 		expect(filterConcepts(list, { status: 'active' }).map((c) => c.iri)).toEqual(['urn:1', 'urn:3']);
 		expect(filterConcepts(list, { schemeIri: 'urn:s2' }).map((c) => c.iri)).toEqual(['urn:2', 'urn:3']);
@@ -213,5 +226,26 @@ describe('concept list helpers (STORY-323)', () => {
 		const c = base({ altLabels: [{ text: 'Client', lang: 'en' }] });
 		expect(addAlternativeLabel(c, 'Buyer', 'en').altLabels).toEqual([{ text: 'Client', lang: 'en' }, { text: 'Buyer', lang: 'en' }]);
 		expect(addAlternativeLabel(c, ' client ', 'en').altLabels).toEqual(c.altLabels);
+	});
+});
+
+describe('schemeDisplayName (STORY-444)', () => {
+	const scheme = (over: object) => ({ iri: 'http://x.org/core/vocab#Glossary', name: '', description: '', scope: { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' }, ...over });
+	it('prefers the name', () => {
+		expect(schemeDisplayName(scheme({ name: 'Glossary' }))).toBe('Glossary');
+	});
+	it('falls back to the Dublin Core title', () => {
+		const metadata = { title: 'Business glossary', creator: '', publisher: '', rights: '', modified: '' };
+		expect(schemeDisplayName(scheme({ metadata }))).toBe('Business glossary');
+	});
+	it('falls back to the local name after # or the last /', () => {
+		expect(schemeDisplayName(scheme({}))).toBe('Glossary');
+		expect(schemeDisplayName(scheme({ iri: 'http://x.org/schemes/Products' }))).toBe('Products');
+		expect(schemeDisplayName(scheme({ iri: 'http://x.org/schemes/Products/' }))).toBe('Products');
+	});
+	it('treats whitespace as empty and never returns an empty string for an IRI', () => {
+		expect(schemeDisplayName(scheme({ name: '  ' }))).toBe('Glossary');
+		expect(schemeDisplayName(scheme({ iri: '' }))).toBe('');
+		expect(schemeDisplayName(scheme({ iri: 'urn:scheme' }))).toBe('urn:scheme');
 	});
 });

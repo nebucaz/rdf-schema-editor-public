@@ -21,6 +21,7 @@ import (
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/backstage"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/changelog"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/config"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/glossary"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/handler"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/issues"
@@ -92,8 +93,9 @@ func main() {
 		issuesHandler.EnableSync(snRunner)
 	}
 	meHandler := handler.MeHandler{Users: issues.NewDirectory(issueStore)}
+	glossaryHandler := handler.NewGlossaryHandler(glossary.New(gdbClient, cfg.DefaultNamespaceBaseIRI(), cfg.SchemaNamespace))
 
-	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler, changeLogHandler, issuesHandler, meHandler, handler.ServiceNowPublic{Enabled: snSettings.Enabled(), Name: "ServiceNow", BulkCap: snSettings.BulkCap, SyncEnabled: snSettings.Enabled() && snSettings.SyncEnabled})
+	r := newRouter(cfg, healthHandler, sparqlHandler, sourceHandler, validationHandler, sharedQueryHandler, annotationHandler, changeLogHandler, issuesHandler, meHandler, handler.ServiceNowPublic{Enabled: snSettings.Enabled(), Name: "ServiceNow", BulkCap: snSettings.BulkCap, SyncEnabled: snSettings.Enabled() && snSettings.SyncEnabled}, glossaryHandler)
 
 	rootCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -136,7 +138,7 @@ func main() {
 // healthcheck can't attach a header, and the route discloses nothing sensitive), every other route except
 // the session routes below requires a validly-signed, unexpired bearer JWT (STORY-002) verified against cfg.AuthJWTSecret.
 // Extracted from main() so it's testable without starting a real listener.
-func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler, changeLogHandler *handler.ChangeLogHandler, issuesHandler *handler.IssuesHandler, meHandler handler.MeHandler, serviceNow handler.ServiceNowPublic) chi.Router {
+func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHandler *handler.SparqlHandler, sourceHandler *handler.SourceHandler, validationHandler *handler.ValidationHandler, sharedQueryHandler *handler.SharedQueryHandler, annotationHandler *handler.AnnotationHandler, changeLogHandler *handler.ChangeLogHandler, issuesHandler *handler.IssuesHandler, meHandler handler.MeHandler, serviceNow handler.ServiceNowPublic, glossaryHandler *handler.GlossaryHandler) chi.Router {
 	r := chi.NewRouter()
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
@@ -168,6 +170,10 @@ func newRouter(cfg config.Config, healthHandler *handler.HealthHandler, sparqlHa
 		r.Get("/sources/{source}/raw/{kind}", sourceHandler.Raw)
 		r.Post("/sources/{source}/sync", sourceHandler.Sync)
 		r.Post("/issues/tickets/sync", issuesHandler.SyncTickets)
+		// The glossary API for other tools (STORY-428): read only, service token only, never a cookie alone.
+		r.Get("/glossary/schemes", glossaryHandler.Schemes)
+		r.Get("/glossary/concepts", glossaryHandler.Concepts)
+		r.Get("/glossary/concepts/{id}", glossaryHandler.Concept)
 
 		// Everything the app itself reads or writes needs a signed-in user as well.
 		r.Group(func(r chi.Router) {

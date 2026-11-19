@@ -12,48 +12,30 @@ const c = (iri: string, label: string, over: Partial<Concept> = {}): Concept => 
 	...over
 });
 
+const scope = { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' };
 const schemes = [
-	{ iri: 'urn:s1', name: 'Glossary', description: '', scope: { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' } },
-	{ iri: 'urn:s2', name: 'Products', description: '', scope: { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' } }
+	{ iri: 'urn:s1', name: 'Glossary', description: '', scope },
+	{ iri: 'urn:s2', name: 'Products', description: '', scope }
 ];
 const concepts = [
-	c('urn:1', 'Customer', { altLabels: [{ text: 'Client', lang: 'en' }] }),
+	c('urn:1', 'Customer'),
 	c('urn:2', 'Invoice', { status: 'proposed', schemeIri: 'urn:s2' }),
-	c('urn:3', 'Bank', { disambiguation: 'finance', status: 'deprecated' })
+	c('urn:3', 'Bank', { disambiguation: 'finance', status: 'deprecated', schemeIri: '' })
 ];
 
-const titles = () => screen.getAllByRole('button', { name: /^(Customer|Invoice|Bank)/ }).map((b) => b.textContent?.trim());
+const rows = () => screen.getAllByRole('button').map((b) => b.textContent?.replace(/\s+/g, ' ').trim());
 
-describe('ConceptList (STORY-323)', () => {
-	it('lists every concept with its title and status', () => {
+describe('ConceptList (STORY-448)', () => {
+	it('lists the concepts in the given order with title, status and scheme name, without group headings', () => {
 		render(ConceptList, { props: { concepts, schemes, onSelect: () => {} } });
-		expect(titles()).toEqual(['Customer active', 'Invoice proposed', 'Bank (finance) deprecated']);
+		expect(rows()).toEqual(['Customer active Glossary', 'Invoice proposed Products', 'Bank (finance) deprecated No scheme']);
+		expect(screen.queryAllByRole('heading')).toHaveLength(0);
 	});
 
-	it('searches labels and alternative labels', async () => {
-		render(ConceptList, { props: { concepts, schemes, onSelect: () => {} } });
-		await fireEvent.input(screen.getByLabelText('Search'), { target: { value: 'client' } });
-		expect(titles()).toEqual(['Customer active']);
-	});
-
-	it('filters by status and by scheme', async () => {
-		render(ConceptList, { props: { concepts, schemes, onSelect: () => {} } });
-		await fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'proposed' } });
-		expect(titles()).toEqual(['Invoice proposed']);
-		await fireEvent.change(screen.getByLabelText('Status'), { target: { value: '' } });
-		await fireEvent.change(screen.getByLabelText('Scheme'), { target: { value: 'urn:s1' } });
-		expect(titles()).toEqual(['Customer active', 'Bank (finance) deprecated']);
-	});
-
-	it('says so when nothing matches', async () => {
-		render(ConceptList, { props: { concepts, schemes, onSelect: () => {} } });
-		await fireEvent.input(screen.getByLabelText('Search'), { target: { value: 'zzz' } });
-		expect(screen.getByText('No concepts match.')).toBeTruthy();
-	});
-
-	it('says so when the vocabulary is empty', () => {
-		render(ConceptList, { props: { concepts: [], schemes, onSelect: () => {} } });
-		expect(screen.getByText(/No concepts yet/)).toBeTruthy();
+	it('shows the local name for a scheme without a label (STORY-444)', () => {
+		const unnamed = [{ ...schemes[0], iri: 'http://x.org/core/vocab#Glossary', name: '' }];
+		render(ConceptList, { props: { concepts: [c('urn:1', 'Customer', { schemeIri: unnamed[0].iri })], schemes: unnamed, onSelect: () => {} } });
+		expect(rows()).toEqual(['Customer active Glossary']);
 	});
 
 	it('selects a concept on click and marks the selected one', async () => {
@@ -70,8 +52,7 @@ describe('ConceptList (STORY-323)', () => {
 			{ gateId: 'label-too-long', stage: 'vocabulary' as const, severity: 'info' as const, elementIri: 'urn:2', message: 'm' }
 		];
 		render(ConceptList, { props: { concepts, schemes, findings, onSelect: () => {} } });
-		const badge = screen.getByLabelText('2 findings');
-		expect(badge.textContent).toBe('2');
+		expect(screen.getByLabelText('2 findings').textContent).toBe('2');
 		expect(screen.queryAllByLabelText(/finding/)).toHaveLength(1);
 	});
 });

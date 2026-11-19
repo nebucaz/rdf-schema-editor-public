@@ -19,6 +19,8 @@ type AssertedValue struct {
 	IsBlank   bool
 	Value     string
 	Datatype  string
+	// Lang is the language tag of a literal, empty for a plain or typed one.
+	Lang string
 }
 
 // ValidationSnapshot bundles everything STORY-129's CheckSnapshot needs to check every identity in
@@ -132,7 +134,7 @@ func fetchSubClassOf(ctx context.Context, gdb *graphdb.Client) (map[string][]str
 // annotations were kept with the shape may have them in the schema graph.
 func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][]PropertyConstraint, error) {
 	generalQuery := fmt.Sprintf(`
-		SELECT ?class ?shape ?path ?minCount ?maxCount ?datatype ?targetClass ?ruleId ?dimension ?message ?pattern ?flags ?minLength WHERE {
+		SELECT ?class ?shape ?path ?minCount ?maxCount ?datatype ?targetClass ?ruleId ?dimension ?message ?pattern ?flags ?minLength ?uniqueLang WHERE {
 			GRAPH ?g {
 				?shape a <%s> ; <%s> ?class ; <%s> ?ps .
 				?ps <%s> ?path .
@@ -144,12 +146,13 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 				OPTIONAL { ?ps <%s> ?pattern }
 				OPTIONAL { ?ps <%s> ?flags }
 				OPTIONAL { ?ps <%s> ?minLength }
+				OPTIONAL { ?ps <%s> ?uniqueLang }
 			}
 			OPTIONAL { GRAPH ?g2 { ?shape <%s> ?ruleId } }
 			OPTIONAL { GRAPH ?g3 { ?shape <%s> ?dimension } }
 		}`,
 		shNodeShape, shTargetClass, shProperty, shPath, shMinCount, shMaxCount, shDatatype, shClass, shMessage,
-		shPattern, shFlags, shMinLength,
+		shPattern, shFlags, shMinLength, shUniqueLang,
 		armID, armQualityDimension,
 	)
 	generalResult, err := gdb.Select(ctx, generalQuery)
@@ -223,6 +226,9 @@ func fetchOwnConstraints(ctx context.Context, gdb *graphdb.Client) (map[string][
 		if minLength, ok := binding["minLength"]; ok {
 			n := parseIntBinding(minLength.Value)
 			c.MinLength = &n
+		}
+		if uniqueLang, ok := binding["uniqueLang"]; ok && uniqueLang.Value == "true" {
+			c.UniqueLang = true
 		}
 		if targetClass, ok := binding["targetClass"]; ok {
 			c.TargetClasses = appendUnique(c.TargetClasses, targetClass.Value)
@@ -342,7 +348,7 @@ func fetchIndividualValues(ctx context.Context, gdb *graphdb.Client) (map[string
 			continue
 		}
 
-		value := AssertedValue{Predicate: predicate.Value, IsIRI: object.Type == "uri", IsBlank: object.Type == "bnode", Value: object.Value}
+		value := AssertedValue{Predicate: predicate.Value, IsIRI: object.Type == "uri", IsBlank: object.Type == "bnode", Value: object.Value, Lang: object.Lang}
 		if !value.IsIRI {
 			value.Datatype = object.Datatype
 			if value.Datatype == "" {
@@ -478,8 +484,18 @@ func fetchSparqlConstraints(ctx context.Context, gdb *graphdb.Client) ([]SparqlC
 var ignoredPropertyKeys = map[string]bool{
 	rdfType: true, rdfsLabel: true, rdfsComment: true,
 	shPath: true, shMinCount: true, shMaxCount: true, shDatatype: true, shClass: true, shOr: true,
-	shPattern: true, shFlags: true, shMinLength: true, shMessage: true,
+	shPattern: true, shFlags: true, shMinLength: true, shUniqueLang: true, shMessage: true,
 	shNS + "name": true, shNS + "description": true, shNS + "order": true, shNS + "group": true, shNS + "severity": true,
+}
+
+// valueSchemeLocalName is `rse:valueScheme` (concept-valued-properties): the marker on a concept property's
+// `sh:property` node naming its scheme. The generated `sh:sparql` constraint does the checking, so the marker only
+// annotates. Its namespace is configurable (`PUBLIC_SCHEMA_NAMESPACE`) and this package holds no config, so it is
+// recognised by local name.
+const valueSchemeLocalName = "#valueScheme"
+
+func isIgnoredPropertyKey(key string) bool {
+	return ignoredPropertyKeys[key] || strings.HasSuffix(key, valueSchemeLocalName)
 }
 
 // fetchIgnoredPropertyKeys lists, once per shape and key, the property-shape keys the engine does
@@ -502,7 +518,7 @@ func fetchIgnoredPropertyKeys(ctx context.Context, gdb *graphdb.Client) ([]NotCh
 	for _, b := range result.Results.Bindings {
 		shape, hasShape := b["shape"]
 		key, hasKey := b["key"]
-		if !hasShape || !hasKey || ignoredPropertyKeys[key.Value] || seen[[2]string{shape.Value, key.Value}] {
+		if !hasShape || !hasKey || isIgnoredPropertyKey(key.Value) || seen[[2]string{shape.Value, key.Value}] {
 			continue
 		}
 		seen[[2]string{shape.Value, key.Value}] = true

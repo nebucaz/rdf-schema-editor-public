@@ -8,7 +8,13 @@ import { describe, expect, it } from 'vitest';
  * change log write. (The shared read-only components are covered by their own specs.)
  */
 const SRC = join(__dirname, '..', '..');
-const roots = [join(SRC, 'routes', 'review'), join(SRC, 'lib', 'components', 'ConceptReview.svelte')];
+const roots = [
+	join(SRC, 'routes', 'review'),
+	join(SRC, 'lib', 'components', 'ConceptReview.svelte'),
+	join(SRC, 'lib', 'components', 'GlossaryBrowser.svelte'),
+	join(SRC, 'lib', 'components', 'SchemePrintView.svelte'),
+	join(SRC, 'lib', 'components', 'TaxonomyGraph.svelte')
+];
 
 function files(path: string): string[] {
 	if (statSync(path).isFile()) return [path];

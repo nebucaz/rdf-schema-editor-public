@@ -6,7 +6,7 @@
 import { conceptTitle, type Concept, type ConceptDraft, type LangText } from './skos-concept';
 
 /** What a change did to the model; the release dialog derives the version bump from it (STORY-333). Mirrors the backend. */
-export const CHANGE_KINDS = ['label', 'comment', 'addition', 'removal', 'rename', 'domain-range', 'disjointness', 'other'] as const;
+export const CHANGE_KINDS = ['label', 'comment', 'addition', 'removal', 'rename', 'domain-range', 'disjointness', 'import', 'merge', 'other'] as const;
 export type ChangeKind = (typeof CHANGE_KINDS)[number];
 
 /** What a client may send: no author, no time. */
@@ -67,6 +67,22 @@ export function changeKindForConceptEdit(before: Editable, after: Editable): Cha
 		labelKey(before.altLabels) !== labelKey(after.altLabels) ||
 		labelKey(before.hiddenLabels) !== labelKey(after.hiddenLabels);
 	return labels ? 'label' : 'other';
+}
+
+export interface HistoryNote {
+	summary: string;
+	changedBy: string;
+	changedAt: string;
+	version: string;
+}
+
+/** The generated `skos:historyNote`/`changeNote` view of a concept: its change-log entries, newest first.
+ *  Derived on demand and never stored, so the log stays the one source. */
+export function conceptHistory(items: ChangeLogItem[], conceptIri: string): HistoryNote[] {
+	return items
+		.filter((i) => i.term === conceptIri)
+		.sort((a, b) => (a.changedAt < b.changedAt ? 1 : a.changedAt > b.changedAt ? -1 : 0))
+		.map(({ summary, changedBy, changedAt, version }) => ({ summary, changedBy, changedAt, version }));
 }
 
 export function conceptChangeSummary(action: 'added' | 'edited' | 'deprecated' | 'deleted' | 'promoted', concept: Pick<Concept, 'prefLabels' | 'disambiguation'>): string {

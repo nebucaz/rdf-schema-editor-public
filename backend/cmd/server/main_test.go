@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/config"
+	"github.com/nebucaz/rdf-schema-editor/backend/internal/glossary"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/graphdb"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/handler"
 	"github.com/nebucaz/rdf-schema-editor/backend/internal/jwtauth"
@@ -18,7 +20,7 @@ import (
 // with no Authorization header at all, matching docker-compose.yml's wget-based healthcheck.
 func TestNewRouter_HealthExemptFromAuth(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "test-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	w := httptest.NewRecorder()
@@ -35,7 +37,7 @@ func TestNewRouter_HealthExemptFromAuth(t *testing.T) {
 func TestNewRouter_ProtectedRoutesRequireAuth(t *testing.T) {
 	secret := "test-secret"
 	cfg := config.Config{AuthJWTSecret: secret, UserJWTSecret: "user-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 
 	routes := []struct {
 		method string
@@ -87,7 +89,7 @@ func TestNewRouter_ProtectedRoutesRequireAuth(t *testing.T) {
 // and, on top of it, refuses a request that carries no verified user (STORY-009).
 func TestNewRouter_AnnotationsNeedServiceTokenAndUser(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "svc-secret", UserJWTSecret: "user-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 	svc, _ := jwtauth.Mint("svc-secret", "frontend-app", time.Hour)
 	userTok, _ := jwtauth.Mint("user-secret", "alice", time.Hour)
 
@@ -122,7 +124,7 @@ func TestNewRouter_AnnotationsNeedServiceTokenAndUser(t *testing.T) {
 func TestNewRouter_CSRFGuardWired(t *testing.T) {
 	secret := "test-secret"
 	cfg := config.Config{AuthJWTSecret: secret}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 	token, _ := jwtauth.Mint(secret, "frontend-app", time.Hour)
 
 	req := httptest.NewRequest(http.MethodPost, "/sparql/update", nil)
@@ -176,7 +178,7 @@ func TestNewRouter_CSRFGuardWired(t *testing.T) {
 // from a valid `Oglala` cookie (STORY-003).
 func TestNewRouter_MeReturnsUser(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "svc-secret", UserJWTSecret: "user-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 
 	req := httptest.NewRequest(http.MethodGet, "/me", nil)
 	w := httptest.NewRecorder()
@@ -201,7 +203,7 @@ func TestNewRouter_MeReturnsUser(t *testing.T) {
 func TestNewRouter_DevLoginRoutes(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		cfg := config.Config{AuthJWTSecret: "svc-secret", UserJWTSecret: "user-secret", DevLoginEnabled: enabled}
-		r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+		r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 
 		// No service token: the button must work before any token is configured in dev.
 		for _, path := range []string{"/auth/dev-login", "/auth/logout"} {
@@ -222,7 +224,7 @@ func TestNewRouter_DevLoginRoutes(t *testing.T) {
 // the frontend loads it before anything else.
 func TestNewRouter_ConfigIsPublic(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "svc-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/config", nil))
@@ -236,7 +238,7 @@ func TestNewRouter_ConfigIsPublic(t *testing.T) {
 // sources routes are the exception — the sync worker and importctl have no user.
 func TestNewRouter_DataRoutesNeedSignedInUser(t *testing.T) {
 	cfg := config.Config{AuthJWTSecret: "svc-secret", UserJWTSecret: "user-secret"}
-	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{})
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, handler.NewGlossaryHandler(nil))
 	svc, _ := jwtauth.Mint("svc-secret", "frontend-app", time.Hour)
 
 	gated := []struct{ method, path string }{
@@ -284,5 +286,66 @@ func TestNewRouter_DataRoutesNeedSignedInUser(t *testing.T) {
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("POST /issues/tickets/sync without a service token = %d, want 401", w.Code)
+	}
+}
+
+type noRowsGraph struct{}
+
+func (noRowsGraph) Select(context.Context, string) (graphdb.SelectResult, error) {
+	return graphdb.SelectResult{}, nil
+}
+
+// TestNewRouter_GlossaryIsServiceTokenOnly confirms the glossary API (STORY-428) needs the service token, is not
+// reachable with a user cookie alone, needs no signed-in user, and has no write route.
+func TestNewRouter_GlossaryIsServiceTokenOnly(t *testing.T) {
+	cfg := config.Config{AuthJWTSecret: "svc-secret", UserJWTSecret: "user-secret"}
+	g := handler.NewGlossaryHandler(glossary.New(noRowsGraph{}, "https://example.com/o", "https://example.com/o/schema#"))
+	r := newRouter(cfg, &handler.HealthHandler{}, handler.NewSparqlHandler(cfg), handler.NewSourceHandler(sync.NewRegistry(), nil, "", nil), handler.NewValidationHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"})), handler.NewSharedQueryHandler(graphdb.NewClient(config.Config{GraphDBEndpointURL: "http://unused"}), "https://example.com/o"), handler.NewAnnotationHandler(nil), handler.NewChangeLogHandler(nil), handler.NewIssuesHandler(nil, nil), handler.MeHandler{}, handler.ServiceNowPublic{}, g)
+
+	svc, _ := jwtauth.Mint("svc-secret", "importctl", time.Hour)
+	userTok, _ := jwtauth.Mint("user-secret", "alice", time.Hour)
+	paths := []string{"/glossary/schemes", "/glossary/concepts", "/glossary/concepts/Nurse"}
+
+	var first string
+	for i, path := range paths {
+		for name, mod := range map[string]func(*http.Request){
+			"no credentials": func(*http.Request) {},
+			"cookie only":    func(req *http.Request) { req.AddCookie(&http.Cookie{Name: "Oglala", Value: userTok}) },
+			"bad token":      func(req *http.Request) { req.Header.Set("Authorization", "Bearer nonsense") },
+		} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			mod(req)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Errorf("%s (%s) = %d, want 401", path, name, w.Code)
+			}
+			if i == 0 && first == "" {
+				first = w.Body.String()
+			} else if w.Body.String() != first {
+				t.Errorf("%s (%s) body %q differs from the usual 401 %q", path, name, w.Body.String(), first)
+			}
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "Bearer "+svc)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		want := http.StatusOK
+		if path == "/glossary/concepts/Nurse" {
+			want = http.StatusNotFound
+		}
+		if w.Code != want {
+			t.Errorf("%s with the service token = %d (%s), want %d without any user", path, w.Code, w.Body.String(), want)
+		}
+	}
+
+	for _, m := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		req := httptest.NewRequest(m, "/glossary/concepts", nil)
+		req.Header.Set("Authorization", "Bearer "+svc)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusMethodNotAllowed && w.Code != http.StatusNotFound {
+			t.Errorf("%s /glossary/concepts = %d, want no write route", m, w.Code)
+		}
 	}
 }

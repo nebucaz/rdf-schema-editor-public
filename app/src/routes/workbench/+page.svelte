@@ -49,6 +49,10 @@
 	import { documentationStore } from '#lib/stores/documentation-store.js';
 	import { readSplMode, writeSplMode, type SplMode } from '#lib/services/spl-mode-preference.js';
 	import type { QueryModel } from '#lib/services/query-model.js';
+	import ExpansionChips from '#lib/components/ExpansionChips.svelte';
+	import { expandQuery, searchTerms, type Expansion } from '#lib/services/query-expansion.js';
+	import type { Concept } from '#lib/services/skos-concept.js';
+	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
 
 	// Builder schema is discovered from the graph on every visit (STORY-188). `queryBuilderStore` is a
 	// module singleton that outlives this page, so a schema (or load error) cached from an earlier
@@ -345,14 +349,36 @@
 	let searchError = $state<string | null>(null);
 	let hits = $state<IndividualSearchResult[] | null>(null);
 
-	async function runSearch(event: Event) {
-		event.preventDefault();
+	// Thesaurus expansion (skos-support STORY-426): loaded once, on the first search; without a vocabulary, or when
+	// loading fails, the search behaves as before.
+	let vocabulary: Concept[] | null = null;
+	let expandNarrower = $state(true);
+	let expandBroader = $state(false);
+	let switchedOff = $state<Set<string>>(new Set());
+	let expansion = $state<Expansion | null>(null);
+
+	async function loadVocabulary(): Promise<Concept[]> {
+		if (vocabulary) return vocabulary;
+		try {
+			vocabulary = (await loadAllConcepts(sparqlConnector)) ?? [];
+		} catch {
+			vocabulary = [];
+		}
+		return vocabulary;
+	}
+
+	async function runSearch(event?: Event, keepSwitches = false) {
+		event?.preventDefault();
 		searching = true;
 		searchError = null;
 		try {
+			const query = searchTerm.trim();
+			if (!keepSwitches) switchedOff = new Set();
+			expansion = query ? expandQuery(await loadVocabulary(), query, { narrower: expandNarrower, broader: expandBroader }) : null;
 			const page = await sparqlConnector.searchIndividuals({
-				query: searchTerm.trim(),
+				query,
 				matchAllStringProperties: true,
+				extraTerms: expansion ? searchTerms(expansion, switchedOff) : [],
 				limit: 20
 			});
 			hits = page.results;
@@ -361,6 +387,19 @@
 		} finally {
 			searching = false;
 		}
+	}
+
+	function toggleExpansionTerm(key: string) {
+		const next = new Set(switchedOff);
+		if (!next.delete(key)) next.add(key);
+		switchedOff = next;
+		void runSearch(undefined, true);
+	}
+
+	function setExpansionOptions(options: { narrower: boolean; broader: boolean }) {
+		expandNarrower = options.narrower;
+		expandBroader = options.broader;
+		void runSearch(undefined, true);
 	}
 
 	// Seeds the workbench's own selection (all namespaces except `defaultHidden` ones) once the
@@ -447,6 +486,16 @@
 				/>
 				<button type="submit" disabled={searching}>Search</button>
 			</form>
+			{#if expansion}
+				<ExpansionChips
+					{expansion}
+					{switchedOff}
+					narrower={expandNarrower}
+					broader={expandBroader}
+					onToggleTerm={toggleExpansionTerm}
+					onOptions={setExpansionOptions}
+				/>
+			{/if}
 			{#if shouldOfferSplMode(searchTerm)}
 				<p class="spl-hint" role="status" data-testid="spl-hint">
 					This looks like SPL.

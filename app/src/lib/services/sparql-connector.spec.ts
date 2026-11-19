@@ -9085,6 +9085,51 @@ describe('SparqlConnector — searchIndividuals all-strings mode (STORY-186)', (
 		expect(page).toEqual({ results: [], hasMore: false });
 	});
 
+	it('ORs extra terms into the all-strings match, each escaped (STORY-426)', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		await new SparqlConnector('/api/sparql').searchIndividuals({
+			query: 'staff',
+			matchAllStringProperties: true,
+			extraTerms: ['Personnel', 'a"b']
+		});
+
+		expect(queries[0]).toContain(
+			'(CONTAINS(LCASE(STR(?mv)), LCASE("staff")) || CONTAINS(LCASE(STR(?mv)), LCASE("Personnel")) || CONTAINS(LCASE(STR(?mv)), LCASE("a\\"b")))'
+		);
+	});
+
+	it('ORs extra terms into the label match, and caps them', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		const many = Array.from({ length: 50 }, (_, i) => `term${i}`);
+		await new SparqlConnector('/api/sparql').searchIndividuals({ query: 'staff', extraTerms: many });
+
+		expect(queries[0]).toContain('CONTAINS(LCASE(STR(?label)), LCASE("term0"))');
+		expect(queries[0]).toContain('LCASE("term19")');
+		expect(queries[0]).not.toContain('LCASE("term20")');
+	});
+
+	it('without extra terms the query is unchanged', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		await new SparqlConnector('/api/sparql').searchIndividuals({ query: 'staff', extraTerms: [] });
+
+		expect(queries[0]).toContain('FILTER(BOUND(?label) && CONTAINS(LCASE(STR(?label)), LCASE("staff")))');
+	});
+
+	it('facet counts match the same extra terms', async () => {
+		const { fn, queries } = mockSearchIndividualsFetch([]);
+		vi.stubGlobal('fetch', fn);
+
+		await new SparqlConnector('/api/sparql').searchIndividualFacetCounts({ query: 'staff', extraTerms: ['Personnel'] });
+
+		expect(queries[0]).toContain('CONTAINS(LCASE(STR(?mv)), LCASE("staff")) || CONTAINS(LCASE(STR(?mv)), LCASE("Personnel"))');
+	});
+
 	it('default (label-only) mode is unchanged: no matched-property pattern', async () => {
 		const { fn, queries } = mockSearchIndividualsFetch([]);
 		vi.stubGlobal('fetch', fn);

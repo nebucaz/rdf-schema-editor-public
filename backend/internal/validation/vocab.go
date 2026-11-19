@@ -21,6 +21,7 @@ const (
 	rdfsSubClassOf = "http://www.w3.org/2000/01/rdf-schema#subClassOf"
 	owlClass       = "http://www.w3.org/2002/07/owl#Class"
 	xsdString      = "http://www.w3.org/2001/XMLSchema#string"
+	rdfLangString  = "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString"
 
 	shNodeShape   = "http://www.w3.org/ns/shacl#NodeShape"
 	shTargetClass = "http://www.w3.org/ns/shacl#targetClass"
@@ -41,6 +42,7 @@ const (
 	shPattern     = "http://www.w3.org/ns/shacl#pattern"
 	shFlags       = "http://www.w3.org/ns/shacl#flags"
 	shMinLength   = "http://www.w3.org/ns/shacl#minLength"
+	shUniqueLang  = "http://www.w3.org/ns/shacl#uniqueLang"
 
 	// armID and armQualityDimension are annotations on a NodeShape in the ITAM namespace
 	// (examples/itam-shapes): the rule id a finding is filed under and its quality dimension.

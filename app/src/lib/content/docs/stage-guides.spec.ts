@@ -40,12 +40,19 @@ const GUIDES: Guide[] = [
 		title: 'Stage Guide: Vocabulary',
 		ui: [
 			{ text: 'Use as vocabulary namespace', file: 'lib/components/VocabularyNamespacePicker.svelte' },
-			{ text: 'Add scheme', file: 'routes/vocabulary/+page.svelte' },
-			{ text: 'Add concept', file: 'routes/vocabulary/+page.svelte' },
+			{ text: 'Add scheme', file: 'lib/components/VocabularySchemesTab.svelte' },
+			{ text: 'Add concept', file: 'lib/components/VocabularyConceptsTab.svelte' },
+			{ text: 'Import', file: 'routes/vocabulary/+page.svelte' },
+			{ text: 'Preview import', file: 'lib/components/ImportVocabularyModal.svelte' },
+			{ text: 'Apply import', file: 'lib/components/ImportVocabularyModal.svelte' },
 			{ text: 'Preferred label', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Add as alternative label', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Alternative labels', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Hidden labels', file: 'lib/components/ConceptForm.svelte' },
+			{ text: 'Examples', file: 'lib/components/ConceptForm.svelte' },
+			{ text: 'Editorial notes', file: 'lib/components/ConceptForm.svelte' },
+			{ text: 'Notation', file: 'lib/components/ConceptForm.svelte' },
+			{ text: 'History', file: 'lib/components/ConceptHistory.svelte' },
 			{ text: 'Definition', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Disambiguation', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Scope note', file: 'lib/components/ConceptForm.svelte' },
@@ -56,7 +63,8 @@ const GUIDES: Guide[] = [
 			{ text: 'Out of scope', file: 'lib/components/SchemeScopeForm.svelte' },
 			{ text: 'Stakeholders', file: 'lib/components/SchemeScopeForm.svelte' },
 			{ text: 'Mark approved', file: 'routes/vocabulary/+page.svelte', inSource: 'Mark {nextStatuses' },
-			{ text: 'Deprecate', file: 'routes/vocabulary/+page.svelte' }
+			{ text: 'Deprecate', file: 'routes/vocabulary/+page.svelte' },
+			{ text: 'Merge into', file: 'routes/vocabulary/+page.svelte' }
 		],
 		links: ['vocabulary', 'gate-report', 'terms-and-classes', 'pipeline-governance', 'pipeline-example']
 	},
@@ -86,12 +94,15 @@ const GUIDES: Guide[] = [
 		ui: [
 			{ text: 'Concepts (skos:broader)', file: 'lib/components/TaxonomyOutline.svelte' },
 			{ text: 'Classes (rdfs:subClassOf)', file: 'lib/components/TaxonomyOutline.svelte' },
+			{ text: 'Outline', file: 'lib/components/TaxonomyViews.svelte' },
+			{ text: 'Graph', file: 'lib/components/TaxonomyViews.svelte' },
 			{ text: 'Drop here to remove the broader concept', file: 'lib/components/TaxonomyOutline.svelte' },
 			{ text: 'Top concept', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Defined by concept', file: 'lib/components/ConceptPicker.svelte' },
 			{ text: 'Promote to class', file: 'routes/vocabulary/+page.svelte' },
 			{ text: 'Gate report', file: 'routes/validation/+page.svelte' },
-			{ text: 'Deprecate', file: 'routes/vocabulary/+page.svelte' }
+			{ text: 'Deprecate', file: 'routes/vocabulary/+page.svelte' },
+			{ text: 'Scheme health', file: 'lib/components/SchemeHealthPanel.svelte' }
 		],
 		links: ['terms-and-classes', 'gate-report', 'vocabulary', 'pipeline-governance', 'pipeline-example']
 	},
@@ -107,7 +118,12 @@ const GUIDES: Guide[] = [
 			{ text: 'External Vocabularies', file: 'routes/+layout.svelte' },
 			{ text: 'Gate report', file: 'routes/validation/+page.svelte' },
 			{ text: 'Alternative labels', file: 'lib/components/ConceptForm.svelte' },
-			{ text: 'Hidden labels', file: 'lib/components/ConceptForm.svelte' }
+			{ text: 'Hidden labels', file: 'lib/components/ConceptForm.svelte' },
+			{ text: 'Collections', file: 'routes/vocabulary/+page.svelte' },
+			{ text: 'Create collection', file: 'lib/components/VocabularyCollectionsTab.svelte' },
+			{ text: 'Ordered collection', file: 'lib/components/VocabularyCollectionsTab.svelte' },
+			{ text: 'Add collection', file: 'lib/components/VocabularyCollectionsTab.svelte' },
+			{ text: 'Also searching for:', file: 'lib/components/ExpansionChips.svelte' }
 		],
 		links: ['terms-and-classes', 'gate-report', 'external-vocabulary-management-view', 'pipeline-governance', 'pipeline-example']
 	},
@@ -125,6 +141,7 @@ const GUIDES: Guide[] = [
 			{ text: '+ Add Entity', file: 'routes/+page.svelte' },
 			{ text: 'Add attribute', file: 'lib/components/EntityNode.svelte' },
 			{ text: 'Defined by concept', file: 'lib/components/ConceptPicker.svelte' },
+			{ text: 'Create enumerated class', file: 'lib/components/CollectionPanel.svelte' },
 			{ text: 'Promote to class', file: 'routes/vocabulary/+page.svelte' },
 			{ text: 'New request', file: 'routes/governance/+page.svelte' },
 			{ text: 'Start review', file: 'lib/components/ChangeRequestList.svelte' },

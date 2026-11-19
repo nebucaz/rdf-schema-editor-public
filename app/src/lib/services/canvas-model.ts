@@ -42,6 +42,9 @@ export interface CanvasRelationFieldSpec {
 	targetClassName: string;
 	required: boolean;
 	repeatable: boolean;
+	/** Set on a concept field (concept-valued-properties): the scheme the value must belong to. Such a field has no
+	 *  target class (`targetClassIri` and `targetClassName` are `''`) and never an edge. */
+	valueSchemeIri?: string;
 	/** See `CanvasAttributeSpec.inheritedFrom` (STORY-108) — same ancestor-merge concept, reused here
 	 *  by `mergeAncestorRelations`. */
 	inheritedFrom?: { classIri: string; className: string };
@@ -63,6 +66,9 @@ export interface EntityNodeSpec {
 	 *  instance form's "pick an instance of the range class" fields, computed the same
 	 *  own+inherited-nearest-first-shadowed way as `attributes` via `mergeAncestorRelations`. */
 	relationFields: CanvasRelationFieldSpec[];
+	/** This class's own+inherited concept properties (concept-valued-properties), merged like `relationFields`.
+	 *  Absent when there are none. */
+	conceptFields?: CanvasRelationFieldSpec[];
 	/** Always-available, possibly-empty list of this class's enumerated members — no separate
 	 *  "is this an enumeration" flag, consistent with how attributes/relations work (Decision 3). */
 	members: CanvasMemberSpec[];
@@ -333,6 +339,17 @@ export function mergeAncestorRelations(
 	return [...own, ...inherited];
 }
 
+function conceptFieldsOf(
+	classIriValue: string,
+	conceptByClass: Map<string, CanvasRelationFieldSpec[]>,
+	subClassOf: FetchedSubClassOf[],
+	classLabelByIri: Map<string, string>
+): { conceptFields?: CanvasRelationFieldSpec[] } {
+	if (conceptByClass.size === 0) return {};
+	const merged = mergeAncestorRelations(classIriValue, conceptByClass, subClassOf, classLabelByIri);
+	return merged.length > 0 ? { conceptFields: merged } : {};
+}
+
 /** An attribute a direct superclass of the edited class marks "required for subclasses"
  *  (`REQUIRED_FOR_SUBCLASSES_PREDICATE_IRI`) — a class-level value `EntityForm` must collect, not
  *  an instance-facing `CanvasAttributeSpec` field. */
@@ -481,6 +498,24 @@ export function buildCanvasModel(
 		relationsByClass.set(op.domain, list);
 	}
 
+	// -- Concept fields (concept-valued-properties) — from the `rse:valueScheme` marker, never an edge; merged
+	// with ancestors exactly like relation fields.
+	const conceptByClass = new Map<string, CanvasRelationFieldSpec[]>();
+	for (const cp of schema.conceptProperties ?? []) {
+		const list = conceptByClass.get(cp.domain) ?? [];
+		if (list.some((r) => r.iri === cp.iri)) continue;
+		list.push({
+			iri: cp.iri,
+			name: cp.label,
+			targetClassIri: '',
+			targetClassName: '',
+			valueSchemeIri: cp.valueSchemeIri,
+			required: cp.required,
+			repeatable: cp.repeatable
+		});
+		conceptByClass.set(cp.domain, list);
+	}
+
 	// -- Shape-required rdfs:label (STORY-112) — resolved per class here (own or ancestor) so
 	// EntityNodeSpec carries a flat boolean, same shape as attributes' own required flag.
 	const ownLabelRequiredClassIris = new Set(schema.labelRequiredClassIris ?? []);
@@ -497,6 +532,7 @@ export function buildCanvasModel(
 		description: c.comment ?? '',
 		attributes: mergeAncestorAttributes(c.iri, attributesByClass, inheritanceTriples, classLabelByIri),
 		relationFields: mergeAncestorRelations(c.iri, relationsByClass, inheritanceTriples, classLabelByIri),
+		...conceptFieldsOf(c.iri, conceptByClass, inheritanceTriples, classLabelByIri),
 		members: membersByClass.get(c.iri) ?? [],
 		namespace: c.namespaceBaseIri,
 		labelRequired: labelRequiredClassIris.has(c.iri),

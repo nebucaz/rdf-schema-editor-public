@@ -3,17 +3,19 @@
 	 *  class hierarchy of one namespace. Stage 3 of the pipeline. Each drop or top-concept change is one write,
 	 *  followed by a reload of the concepts. */
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import TaxonomyOutline from '#lib/components/TaxonomyOutline.svelte';
+	import TaxonomyViews from '#lib/components/TaxonomyViews.svelte';
 	import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
 	import type { Concept, ConceptScheme } from '#lib/services/skos-concept.js';
 	import { runGates } from '#lib/services/gates/index.js';
 	import { sparqlConnector, type FetchedSchema } from '#lib/services/sparql-connector.js';
 	import { buildClassTree, type TaxonomyNode } from '#lib/services/taxonomy-tree.js';
+	import { conceptInVocabularyHref, parseTaxonomyUrlState, taxonomyHref, type TaxonomyUrlState } from '#lib/services/taxonomy-url-state.js';
 	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
-	import { appUrl } from '#lib/utils/urls.js';
+	import { appUrl, stripBase } from '#lib/utils/urls.js';
 
 	/** `undefined` while loading, `null` when no namespace is marked as the vocabulary yet. */
 	let core = $state<string | null | undefined>(undefined);
@@ -23,6 +25,12 @@
 	let schema = $state<FetchedSchema | null>(null);
 	let classNamespace = $state(DEFAULT_NAMESPACE_BASE_IRI);
 	let error = $state<string | null>(null);
+
+	/** The view and the scheme live in the URL (`?view=`, `?scheme=`), so a link or a reload lands on the same picture. */
+	const urlState = $derived(parseTaxonomyUrlState(page.url.searchParams));
+	function setUrlState(next: TaxonomyUrlState) {
+		void goto(taxonomyHref(stripBase(page.url.pathname), page.url.searchParams, next), { replace: true, reset: false });
+	}
 
 	/** Taxonomy findings over what is already loaded: no query of their own. */
 	const findings = $derived(schema ? runGates(schema, { concepts, stages: ['taxonomy'] }) : []);
@@ -96,7 +104,19 @@
 	{:else if core === null}
 		<p>No namespace is marked as the core vocabulary yet. <a href={appUrl('/vocabulary')}>Set it up in Vocabulary</a>.</p>
 	{:else}
-		<TaxonomyOutline {concepts} {schemes} {classTree} {findings} onMove={move} onTopChange={setTop} />
+		<TaxonomyViews
+			{concepts}
+			{schemes}
+			{classTree}
+			{findings}
+			view={urlState.view}
+			scheme={urlState.scheme}
+			onViewChange={(view) => setUrlState({ ...urlState, view })}
+			onSchemeChange={(scheme) => setUrlState({ ...urlState, scheme })}
+			onOpenConcept={(iri) => void goto(conceptInVocabularyHref(iri))}
+			onMove={move}
+			onTopChange={setTop}
+		/>
 	{/if}
 </div>
 

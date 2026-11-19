@@ -19,6 +19,7 @@
 		type RelationValueSubmission
 	} from '#lib/utils/relation-values.js';
 
+	import { CONCEPT_OPTION_LIMIT, conceptOptionsMoreKey, mergeKeptValues } from '#lib/services/concept-value-options.js';
 	import { planClassChange, type ClassChangeField } from '#lib/services/class-change.js';
 
 	interface PredicateOption {
@@ -157,6 +158,16 @@
 		originalRelationObjectIris[rel.iri] = matches.map((a) => a.objectIri);
 		relationAssertedLabels[rel.iri] = matches.map((a) => objectDisplayLabel(a));
 	}
+	// A concept field keeps the values the individual already holds selectable under the label shown for them, even
+	// when the concept is no longer offered (deprecated, retired), so editing never drops one (STORY-438).
+	const keptConceptValues: Record<string, RelationTargetOption[]> = {};
+	for (const rel of relationFields) {
+		if (!rel.valueSchemeIri) continue;
+		keptConceptValues[rel.iri] = assertions
+			.filter((a) => a.predicateIri === rel.iri)
+			.map((a) => ({ iri: a.objectIri, label: objectDisplayLabel(a) }));
+	}
+	const effectiveRelationTargetOptions = $derived(mergeKeptValues(relationTargetOptions, keptConceptValues));
 	const originalRelationFormValues: RelationFormValues = mergeRelationFormValues(relationFields, relationAssertedLabels);
 	let relationFormValues = $state<RelationFormValues>(structuredClone(originalRelationFormValues));
 	let missingRelationFields = $state<Set<string>>(new Set());
@@ -254,7 +265,7 @@
 		const { missing: missingRelations, invalid: invalidRelations } = validateRelationSelections(
 			relationFields,
 			relationFormValues,
-			relationTargetOptions
+			effectiveRelationTargetOptions
 		);
 		if (missingRelations.length > 0 || invalidRelations.length > 0) {
 			missingRelationFields = new Set(missingRelations);
@@ -279,7 +290,7 @@
 				relationFields,
 				originalRelationObjectIris,
 				relationFormValues,
-				relationTargetOptions
+				effectiveRelationTargetOptions
 			);
 			await onSubmit(
 				label.trim(),
@@ -383,14 +394,17 @@
 		type="text"
 		value={rawValue ?? ''}
 		list={listId}
-		placeholder={`Select a ${rel.targetClassName}…`}
+		placeholder={rel.valueSchemeIri ? 'Select a concept…' : `Select a ${rel.targetClassName}…`}
 		oninput={(e) => setRelationValue(rel.iri, rowIndex, (e.currentTarget as HTMLInputElement).value)}
 	/>
 	<datalist id={listId}>
-		{#each relationTargetOptions[rel.iri] ?? [] as option (option.iri)}
+		{#each effectiveRelationTargetOptions[rel.iri] ?? [] as option (option.label)}
 			<option value={option.label}></option>
 		{/each}
 	</datalist>
+	{#if rel.valueSchemeIri && relationTargetOptions[conceptOptionsMoreKey(rel.iri)]}
+		<p class="hint">Showing the first {CONCEPT_OPTION_LIMIT} concepts</p>
+	{/if}
 {/snippet}
 
 {#if !hideNameForm}

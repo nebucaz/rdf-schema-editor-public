@@ -9,6 +9,7 @@
 	 * split as the ported original).
 	 */
 	import { appUrl } from '#lib/utils/urls.js';
+	import { conceptOptionEntries, memberFormFields } from '#lib/services/concept-value-options.js';
 	import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -213,15 +214,15 @@
 		relationFields: CanvasRelationFieldSpec[]
 	): Promise<Record<string, RelationTargetOption[]>> {
 		const entries = await Promise.all(
-			relationFields.map(async (rel) => {
+			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
+				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
 				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
 				return [
-					rel.iri,
-					options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))
-				] as const;
+					[rel.iri, options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))]
+				];
 			})
 		);
-		return Object.fromEntries(entries);
+		return Object.fromEntries(entries.flat());
 	}
 
 	async function openAddIdentityModal() {
@@ -230,7 +231,7 @@
 		addIdentityClassIri = classIriValue;
 		addIdentityReady = false;
 		addIdentityOpen = true;
-		const relationFields = entityNodeByClassIri.get(classIriValue)?.relationFields ?? [];
+		const relationFields = memberFormFields(entityNodeByClassIri.get(classIriValue));
 		const [namespaceBaseIri, relationTargetOptions] = await Promise.all([
 			resolveDefaultNamespace(classIriValue, entityNodeByClassIri),
 			loadRelationTargetOptions(relationFields)
@@ -661,7 +662,7 @@
 			onSubmit={handleAddIdentitySubmit}
 			attributes={entityNodeByClassIri.get(addIdentityClassIri)?.attributes ?? []}
 			labelRequired={entityNodeByClassIri.get(addIdentityClassIri)?.labelRequired ?? false}
-			relationFields={entityNodeByClassIri.get(addIdentityClassIri)?.relationFields ?? []}
+			relationFields={memberFormFields(entityNodeByClassIri.get(addIdentityClassIri))}
 			relationTargetOptions={addIdentityRelationTargetOptions}
 		/>
 	{:else}

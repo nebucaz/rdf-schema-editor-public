@@ -1,7 +1,7 @@
 <script lang="ts">
 	/** Entry to the read-only review pages for domain experts (ontology-pipeline STORY-335). Reading is open to
 	 *  everyone who is signed in; editing stays with the other areas. Nothing here writes. */
-	import { reviewPipelineUrl, reviewQuestionsUrl } from '#lib/services/review-links.js';
+	import { reviewGlossaryUrl, reviewPipelineUrl, reviewQuestionsUrl } from '#lib/services/review-links.js';
 	import { appUrl } from '#lib/utils/urls.js';
 </script>
 
@@ -15,6 +15,8 @@
 	<ul>
 		<li><a href={reviewQuestionsUrl()}>Competency questions</a> and their latest results</li>
 		<li><a href={reviewPipelineUrl()}>Pipeline status</a> of each namespace</li>
+		<li><a href={reviewGlossaryUrl()}>Glossary</a>: search and browse the terms and their definitions</li>
+		<li>A printable scheme: open it from the <a href={appUrl('/vocabulary')}>Vocabulary</a> area or share <code>/review/scheme?scheme=&lt;id&gt;</code></li>
 		<li>A concept: open it from the <a href={appUrl('/vocabulary')}>Vocabulary</a> area with "Read-only page"</li>
 	</ul>
 </div>

@@ -1,0 +1,99 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix ex:   <http://example.org/asset-classification#> .
+
+# One scheme of classification values for IT assets, for trying the Taxonomy graph view.
+#
+# It follows the rule "classes provide inheritance, concepts identify state": a concept says in which state or
+# category an asset is (lifecycle stage, criticality, hosting, sensitivity), never what kind of thing it is. Kinds of
+# things (Application, Database, Server) are classes with properties; draw them on the Schema canvas and point a
+# property at a branch of this scheme with "Add concept property" (for example lifecycleStage -> Lifecycle stage).
+# A Web application does not become a different kind of thing when it is retired.
+#
+# Every link the graph can draw:
+#   broader      each facet has values grouped under broader values
+#   same concept ex:HybridHosting has two broader concepts (On premises and Cloud), so it is drawn twice and joined
+#   related      skos:related between values that often go together (an associative hint, not a hierarchy)
+#   mapping      the legacy glossary maps onto the preferred values (exactMatch, closeMatch, relatedMatch)
+# Import on the Vocabulary page: Import, choose this file, Preview import, Apply import.
+# Then open Taxonomy, choose "Asset classification" and switch to Graph.
+
+ex:AssetClassification a skos:ConceptScheme ;
+    skos:prefLabel "Asset classification"@en ;
+    dct:title "Values that say in which state or category an IT asset is." ;
+    skos:hasTopConcept ex:LifecycleStage, ex:Criticality, ex:Hosting, ex:Sensitivity, ex:LegacyTerms .
+
+# --- Lifecycle stage ---
+ex:LifecycleStage a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:topConceptOf ex:AssetClassification ;
+    skos:prefLabel "Lifecycle stage"@en ; skos:definition "Where an asset is between being planned and being taken out of use."@en .
+ex:Planned a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LifecycleStage ;
+    skos:prefLabel "Planned"@en ; skos:definition "Approved, but not yet in operation."@en .
+ex:InService a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LifecycleStage ;
+    skos:prefLabel "In service"@en ; skos:definition "Running and used by people or other systems."@en .
+ex:Pilot a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:InService ;
+    skos:prefLabel "Pilot"@en ; skos:definition "In service for a small group, to find out whether it works."@en ;
+    skos:related ex:Planned .
+ex:Production a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:InService ;
+    skos:prefLabel "Production"@en ; skos:definition "In service for everyone it is meant for."@en .
+ex:OutOfService a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LifecycleStage ;
+    skos:prefLabel "Out of service"@en ; skos:definition "No longer used for its purpose, or about to stop."@en .
+ex:PhasingOut a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:OutOfService ;
+    skos:prefLabel "Phasing out"@en ; skos:definition "Still running, with a date after which it stops."@en .
+ex:Retired a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:OutOfService ;
+    skos:prefLabel "Retired"@en ; skos:definition "Taken out of use."@en .
+
+# --- Criticality ---
+ex:Criticality a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:topConceptOf ex:AssetClassification ;
+    skos:prefLabel "Criticality"@en ; skos:definition "How much the business suffers when an asset is unavailable."@en .
+ex:BusinessCritical a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Criticality ;
+    skos:prefLabel "Business critical"@en ; skos:definition "An outage stops a core business process."@en .
+ex:MissionCritical a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:BusinessCritical ;
+    skos:prefLabel "Mission critical"@en ; skos:definition "An outage stops the whole organisation or endangers people."@en ;
+    skos:related ex:Production .
+ex:Supporting a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Criticality ;
+    skos:prefLabel "Supporting"@en ; skos:definition "An outage is a nuisance; work continues by other means."@en .
+
+# --- Hosting ---
+ex:Hosting a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:topConceptOf ex:AssetClassification ;
+    skos:prefLabel "Hosting"@en ; skos:definition "Where an asset runs."@en .
+ex:OnPremises a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Hosting ;
+    skos:prefLabel "On premises"@en ; skos:definition "Runs in the organisation's own data centre."@en .
+ex:Cloud a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Hosting ;
+    skos:prefLabel "Cloud"@en ; skos:definition "Runs on infrastructure rented from a provider."@en .
+ex:PublicCloud a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Cloud ;
+    skos:prefLabel "Public cloud"@en ; skos:definition "Runs on infrastructure shared with other customers of the provider."@en .
+ex:PrivateCloud a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Cloud ;
+    skos:prefLabel "Private cloud"@en ; skos:definition "Runs on cloud infrastructure reserved for the organisation."@en .
+# Two broader concepts: shown twice in the graph, the copies joined by a "same concept" link.
+ex:HybridHosting a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:OnPremises, ex:Cloud ;
+    skos:prefLabel "Hybrid hosting"@en ; skos:definition "Runs partly in the own data centre and partly in the cloud."@en ;
+    skos:related ex:PrivateCloud .
+
+# --- Sensitivity ---
+ex:Sensitivity a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:topConceptOf ex:AssetClassification ;
+    skos:prefLabel "Sensitivity"@en ; skos:definition "How harmful it is when the data of an asset becomes known to others."@en .
+ex:Public a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Sensitivity ;
+    skos:prefLabel "Public"@en ; skos:definition "Meant for anyone to read."@en .
+ex:Internal a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Sensitivity ;
+    skos:prefLabel "Internal"@en ; skos:definition "Meant for staff only; harm is limited if it leaks."@en .
+ex:Confidential a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Sensitivity ;
+    skos:prefLabel "Confidential"@en ; skos:definition "A leak harms the organisation or other people."@en ;
+    skos:related ex:MissionCritical .
+ex:PersonalData a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:Confidential ;
+    skos:prefLabel "Personal data"@en ; skos:definition "Concerns an identifiable person and falls under data protection law."@en .
+
+# --- Legacy terms: the old glossary, mapped onto the preferred values ---
+ex:LegacyTerms a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:topConceptOf ex:AssetClassification ;
+    skos:prefLabel "Legacy terms"@en ; skos:definition "Words of the old glossary, kept so old tagging still finds the new values."@en .
+ex:Live a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LegacyTerms ;
+    skos:prefLabel "Live"@en ; skos:definition "Old word for an asset in production."@en ;
+    skos:exactMatch ex:Production .
+ex:EndOfLife a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LegacyTerms ;
+    skos:prefLabel "End of life"@en ; skos:definition "Old word for an asset that is being phased out."@en ;
+    skos:closeMatch ex:PhasingOut .
+ex:TierOne a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LegacyTerms ;
+    skos:prefLabel "Tier 1"@en ; skos:definition "Old word for the most critical assets."@en ;
+    skos:closeMatch ex:MissionCritical .
+ex:InternalUseOnly a skos:Concept ; skos:inScheme ex:AssetClassification ; skos:broader ex:LegacyTerms ;
+    skos:prefLabel "Internal use only"@en ; skos:definition "Old stamp for documents that staff may read."@en ;
+    skos:relatedMatch ex:Internal .

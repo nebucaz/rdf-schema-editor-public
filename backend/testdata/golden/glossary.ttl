@@ -1,0 +1,56 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<http://example.org/core/vocab#Workforce>
+    a skos:ConceptScheme ;
+    rdfs:label "Workforce" ;
+    rdfs:comment "Roles in the hospital" ;
+    dct:title "Workforce thesaurus" ;
+    dct:creator <https://example.org/people/hr> ;
+    dct:publisher "Hospital \"Mercy\"" ;
+    dct:rights "CC-BY 4.0" ;
+    dct:modified "2026-11-01T10:00:00Z"^^xsd:dateTime ;
+    skos:hasTopConcept <http://example.org/core/vocab#Staff> .
+
+<http://example.org/core/vocab#Doctor>
+    a skos:Concept ;
+    skos:prefLabel "Doctor"@en ;
+    skos:definition "A physician." ;
+    dct:created "2026-01-04"^^xsd:date ;
+    dct:modified "2026-01-04"^^xsd:date ;
+    skos:inScheme <http://example.org/core/vocab#Workforce> ;
+    skos:broader <http://example.org/core/vocab#Staff> ;
+    skos:related <http://example.org/core/vocab#Nurse> .
+
+<http://example.org/core/vocab#Nurse>
+    a skos:Concept ;
+    skos:prefLabel "Nurse"@en ;
+    skos:altLabel "Pflegekraft"@de ;
+    skos:altLabel "Carer"@en ;
+    skos:definition "A registered nurse." ;
+    dct:created "2026-01-03"^^xsd:date ;
+    dct:modified "2026-11-02"^^xsd:date ;
+    skos:inScheme <http://example.org/core/vocab#Workforce> ;
+    skos:broader <http://example.org/core/vocab#Staff> ;
+    skos:related <http://example.org/core/vocab#Doctor> ;
+    skos:closeMatch <http://other.example/Nurse> .
+
+<http://example.org/core/vocab#Staff>
+    a skos:Concept ;
+    skos:prefLabel "Personal"@de ;
+    skos:prefLabel "Staff"@en ;
+    skos:altLabel "Personnel"@en ;
+    skos:definition "People employed by the hospital." ;
+    skos:scopeNote "Includes contractors.\nExcludes volunteers." ;
+    skos:notation "S-1" ;
+    skos:example "Ward staff" ;
+    dct:created "2026-01-02"^^xsd:date ;
+    dct:modified "2026-10-30"^^xsd:date ;
+    skos:inScheme <http://example.org/core/vocab#Workforce> ;
+    skos:topConceptOf <http://example.org/core/vocab#Workforce> ;
+    skos:narrower <http://example.org/core/vocab#Doctor> ;
+    skos:narrower <http://example.org/core/vocab#Nurse> ;
+    skos:exactMatch <http://other.example/Staff> .
+

@@ -22,9 +22,12 @@ type PropertyConstraint struct {
 	Datatype         string
 	// Pattern, Flags and MinLength are `sh:pattern`, `sh:flags` and `sh:minLength`, applied to the
 	// lexical form of each value (an IRI's string, a literal's text); a blank node always fails.
-	Pattern       string
-	Flags         string
-	MinLength     *int
+	Pattern   string
+	Flags     string
+	MinLength *int
+	// UniqueLang is `sh:uniqueLang true`: no two values of the path may share a language tag. Untagged
+	// values are not compared.
+	UniqueLang    bool
 	TargetClasses []string
 }
 

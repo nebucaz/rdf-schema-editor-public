@@ -2,10 +2,12 @@
 	/** Add/edit form for one SKOS concept (ontology-pipeline STORY-323). Validation is the pure
 	 *  `validateConceptDraft`; while the preferred label is typed, `findSimilarConcepts` suggests an
 	 *  existing concept and offers to record the typed term as its alternative label instead. */
+	import { collectionsOfConcept, type SkosCollection } from '#lib/services/skos-collection.js';
 	import RationaleField from './RationaleField.svelte';
 	import {
 		conceptTitle,
 		findSimilarConcepts,
+		schemeDisplayName,
 		validateConceptDraft,
 		type Concept,
 		type ConceptDraft,
@@ -23,9 +25,13 @@
 		onAddAlternative: (conceptIri: string, text: string, lang: string) => Promise<void>;
 		/** Why the change is made; the page writes it to the change log. */
 		rationale?: string;
+		/** The vocabulary's collections; the ones holding this concept are listed read-only. */
+		collections?: SkosCollection[];
 	}
 
-	let { initial, schemes, existing, onSave, onCancel, onAddAlternative, rationale = $bindable('') }: Props = $props();
+	let { initial, schemes, existing, onSave, onCancel, onAddAlternative, rationale = $bindable(''), collections = [] }: Props = $props();
+
+	const memberOf = $derived(initial ? collectionsOfConcept(collections, initial.iri) : []);
 
 	const linesOf = (labels: LangText[]) => labels.map((l) => l.text).join('\n');
 
@@ -44,6 +50,12 @@
 	let scopeNote = $state(initial?.scopeNote ?? '');
 	/* svelte-ignore state_referenced_locally */
 	let disambiguation = $state(initial?.disambiguation ?? '');
+	/* svelte-ignore state_referenced_locally */
+	let exampleText = $state((initial?.example ?? []).join('\n'));
+	/* svelte-ignore state_referenced_locally */
+	let editorialText = $state((initial?.editorialNote ?? []).join('\n'));
+	/* svelte-ignore state_referenced_locally */
+	let notationText = $state((initial?.notation ?? []).join('\n'));
 	/* svelte-ignore state_referenced_locally */
 	let schemeIri = $state(initial?.schemeIri ?? '');
 	/* svelte-ignore state_referenced_locally */
@@ -76,6 +88,9 @@
 			hiddenLabels: parseLines(hiddenText),
 			definition: definition.trim(),
 			scopeNote: scopeNote.trim(),
+			notation: notationText.split('\n').map((n) => n.trim()).filter(Boolean),
+			example: exampleText.split('\n').map((n) => n.trim()).filter(Boolean),
+			editorialNote: editorialText.split('\n').map((n) => n.trim()).filter(Boolean),
 			disambiguation: disambiguation.trim(),
 			schemeIri,
 			topConcept,
@@ -170,11 +185,32 @@
 		{/if}
 	</div>
 	<label>
+		Examples (one per line)
+		<textarea bind:value={exampleText} rows="2" placeholder="How the term is used in practice"></textarea>
+	</label>
+	<div class="field">
+		<label>
+			Editorial notes (internal, one per line)
+			<textarea bind:value={editorialText} rows="2"></textarea>
+		</label>
+		<span class="hint">Working notes for editors. They are not shown on read-only pages and are left out of exports unless you choose to include them.</span>
+	</div>
+	{#if memberOf.length}
+		<p class="hint">
+			<strong>In collections</strong>
+			{#each memberOf as c, i (c.iri)}{#if i > 0}, {/if}<span>{c.prefLabels[0]?.text ?? c.iri}</span>{/each}
+		</p>
+	{/if}
+	<label>
+		Notation (one per line)
+		<textarea bind:value={notationText} rows="2" placeholder="Legacy or system codes, e.g. a spreadsheet ID"></textarea>
+	</label>
+	<label>
 		Scheme
 		<select bind:value={schemeIri}>
 			<option value="">(none)</option>
 			{#each schemes as scheme (scheme.iri)}
-				<option value={scheme.iri}>{scheme.name}</option>
+				<option value={scheme.iri}>{schemeDisplayName(scheme)}</option>
 			{/each}
 		</select>
 	</label>

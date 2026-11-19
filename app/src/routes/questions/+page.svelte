@@ -215,6 +215,40 @@
 		margin: 0;
 		font-size: 1.25rem;
 	}
+	.review-link {
+		margin-left: auto;
+		margin-right: 1rem;
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	header > button {
+		padding: 0.3rem 0.8rem;
+		border: 1px solid var(--color-accent);
+		border-radius: 6px;
+		background: transparent;
+		color: var(--color-accent);
+		font-size: 0.85rem;
+	}
+
+	header > button:hover:not(:disabled) {
+		background: var(--color-accent);
+		color: var(--color-bg);
+	}
+
+	header > button:disabled {
+		opacity: 0.5;
+		cursor: default;
+	}
+
+	header > button[data-testid='add-question'] {
+		background: var(--color-accent);
+		color: var(--color-bg);
+	}
+
+	header > button[data-testid='add-question']:hover:not(:disabled) {
+		background: var(--color-accent-hover);
+	}
 	table {
 		border-collapse: collapse;
 		font-size: 0.9rem;

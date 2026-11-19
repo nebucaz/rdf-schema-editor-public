@@ -36,4 +36,25 @@ describe('PromoteConceptDialog (STORY-326)', () => {
 		render(PromoteConceptDialog, { props: { conceptTitle: 'Customer', namespaces: [namespaces[0]], onConfirm: async () => {}, onCancel: () => {} } });
 		expect((screen.getByRole('button', { name: 'Promote' }) as HTMLButtonElement).disabled).toBe(true);
 	});
+
+	describe('guidance (STORY-424)', () => {
+		const concept = {
+			iri: 'urn:c:status', prefLabels: [{ text: 'Order status', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'Where an order is.', scopeNote: '',
+			disambiguation: '', schemeIri: 's', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '',
+			created: '', modified: '', deprecatedOn: ''
+		} as never;
+
+		it('shows when to keep a concept and when to promote it, with an example, and still lets the user promote', async () => {
+			const onConfirm = vi.fn(async () => {});
+			render(PromoteConceptDialog, { props: { conceptTitle: 'Order status', concept, namespaces, onConfirm, onCancel: () => {} } });
+			expect(screen.getByText(/Keep it as a concept when/i)).toBeTruthy();
+			expect(screen.getByText(/Promote it to a class when/i)).toBeTruthy();
+			expect(screen.getByText(/It is a status value/)).toBeTruthy();
+			expect(screen.getByText(/needs its own properties/i)).toBeTruthy();
+			expect(screen.getByText(/Example:/)).toBeTruthy();
+			expect(screen.getByRole('note').textContent).toMatch(/can stay a concept/i);
+			await fireEvent.click(screen.getByRole('button', { name: 'Promote' }));
+			expect(onConfirm).toHaveBeenCalled();
+		});
+	});
 });

@@ -15,6 +15,8 @@ Once a class is mapped to a `kind`, entities of that kind sync into GraphDB as i
 background on a fixed interval — there's no manual "sync now" button to press; mapping the class is
 the only step needed.
 
+The sync never creates or changes vocabulary concepts. In this section a *Concept Namespace* is the namespace a synced class writes its individuals into; it is not a SKOS concept, and concepts of a scheme stay manual work (see the [Pipeline Guide](pipeline-guide)).
+
 ## Regenerate
 
 For a catalog-authoritative class, the [Triples Panel](triples-panel)'s Catalog tab can regenerate

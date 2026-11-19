@@ -27,6 +27,13 @@
 	--nav-height: 60px;
 	--transition: 0.2s ease;
 
+	/* Vocabulary graph (vocabulary-graph-and-tabs STORY-452) */
+	--graph-node-fill: #ffffff;
+	--graph-link-broader: #5f6b7a;
+	--graph-link-related: #2e7d32;
+	--graph-link-mapping: #c25e00;
+	--graph-link-same: #6a3fb5;
+
 	/* Issue status chips and the "new issue created" tag (validation-issues-tracker STORY-387) */
 	--issue-open-fg: #b3261e;
 	--issue-open-bg: rgba(179, 38, 30, 0.1);
@@ -94,6 +101,11 @@
 	--color-success-bg: rgba(76, 175, 80, 0.15);
 	--color-warning: #ffb74d;
 	--color-warning-bg: rgba(255, 183, 77, 0.15);
+	--graph-node-fill: #2d2d2d;
+	--graph-link-broader: #9aa5b4;
+	--graph-link-related: #4caf50;
+	--graph-link-mapping: #ffa94d;
+	--graph-link-same: #b794f6;
 	--issue-open-fg: #ff8a80;
 	--issue-open-bg: rgba(244, 67, 54, 0.18);
 	--issue-progress-fg: #ffb74d;

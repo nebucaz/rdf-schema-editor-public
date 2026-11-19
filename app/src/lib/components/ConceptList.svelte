@@ -1,15 +1,9 @@
 <script lang="ts">
-	/** Searchable, filterable list of concepts (ontology-pipeline STORY-323). Filtering is the pure
-	 *  `filterConcepts`; the list only holds the filter inputs. */
+	/** The rows of one page of concepts (ontology-pipeline STORY-323, reshaped by vocabulary-graph-and-tabs STORY-448).
+	 *  Searching, filtering and paging happen on the server and in `VocabularyConceptsTab`; the list only shows the
+	 *  rows it is given, each with its status and scheme name. */
 	import type { GateFinding } from '#lib/services/gates/types.js';
-	import {
-		CONCEPT_STATUSES,
-		conceptTitle,
-		filterConcepts,
-		type Concept,
-		type ConceptScheme,
-		type ConceptStatus
-	} from '#lib/services/skos-concept.js';
+	import { conceptTitle, schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
 
 	interface Props {
 		concepts: Concept[];
@@ -22,96 +16,36 @@
 
 	let { concepts, schemes, selectedIri = null, findings = [], onSelect }: Props = $props();
 
-	let search = $state('');
-	let status = $state<ConceptStatus | ''>('');
-	let schemeIri = $state('');
-
 	const findingCount = $derived(
 		findings.reduce((m, f) => m.set(f.elementIri, (m.get(f.elementIri) ?? 0) + 1), new Map<string, number>())
 	);
-
-	const shown = $derived(
-		filterConcepts(concepts, { search, status: status || undefined, schemeIri: schemeIri || undefined })
-	);
+	const schemeName = $derived(new Map(schemes.map((sc) => [sc.iri, schemeDisplayName(sc)])));
 </script>
 
-<div class="filters">
-	<label>
-		Search
-		<input type="search" bind:value={search} placeholder="Label, synonym or definition" />
-	</label>
-	<label>
-		Status
-		<select bind:value={status}>
-			<option value="">All</option>
-			{#each CONCEPT_STATUSES as s (s)}
-				<option value={s}>{s}</option>
-			{/each}
-		</select>
-	</label>
-	<label>
-		Scheme
-		<select bind:value={schemeIri}>
-			<option value="">All</option>
-			{#each schemes as scheme (scheme.iri)}
-				<option value={scheme.iri}>{scheme.name}</option>
-			{/each}
-		</select>
-	</label>
-</div>
-
-{#if concepts.length === 0}
-	<p class="empty">No concepts yet. Add the first term of the vocabulary.</p>
-{:else if shown.length === 0}
-	<p class="empty">No concepts match.</p>
-{:else}
-	<ul class="concepts">
-		{#each shown as concept (concept.iri)}
-			<li>
-				<button
-					type="button"
-					class:selected={concept.iri === selectedIri}
-					aria-current={concept.iri === selectedIri ? 'true' : undefined}
-					onclick={() => onSelect(concept.iri)}
-				>
-					<span class="title" class:muted={concept.status === 'deprecated' || concept.status === 'retired'}>{conceptTitle(concept)}</span>
+<ul class="concepts">
+	{#each concepts as concept (concept.iri)}
+		<li>
+			<button
+				type="button"
+				class:selected={concept.iri === selectedIri}
+				aria-current={concept.iri === selectedIri ? 'true' : undefined}
+				onclick={() => onSelect(concept.iri)}
+			>
+				<span class="title" class:muted={concept.status === 'deprecated' || concept.status === 'retired'}>{conceptTitle(concept)}</span>
+				<span class="meta">
 					<span class="status status-{concept.status}">{concept.status}</span>
+					<span class="scheme">{concept.schemeIri ? (schemeName.get(concept.schemeIri) ?? schemeDisplayName({ iri: concept.schemeIri, name: '' })) : 'No scheme'}</span>
 					{#if findingCount.get(concept.iri)}
 						{@const n = findingCount.get(concept.iri)}
 						<span class="findings" aria-label="{n} finding{n === 1 ? '' : 's'}">{n}</span>
 					{/if}
-				</button>
-			</li>
-		{/each}
-	</ul>
-{/if}
+				</span>
+			</button>
+		</li>
+	{/each}
+</ul>
 
 <style>
-	.filters {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.75rem;
-		margin-bottom: 0.75rem;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		font-size: 0.8rem;
-		color: var(--color-text-muted);
-	}
-
-	input,
-	select {
-		font-size: 0.9rem;
-		color: var(--color-text);
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		padding: 0.4rem 0.55rem;
-	}
-
 	.concepts {
 		list-style: none;
 		margin: 0;
@@ -144,6 +78,18 @@
 		font-weight: 600;
 	}
 
+	.meta {
+		display: flex;
+		gap: 0.6rem;
+		align-items: center;
+		white-space: nowrap;
+	}
+
+	.scheme {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
 	.muted {
 		color: var(--color-text-muted);
 		text-decoration: line-through;
@@ -162,10 +108,5 @@
 	.status {
 		font-size: 0.75rem;
 		color: var(--color-text-muted);
-	}
-
-	.empty {
-		color: var(--color-text-muted);
-		font-size: 0.9rem;
 	}
 </style>

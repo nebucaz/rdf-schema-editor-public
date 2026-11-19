@@ -1,0 +1,64 @@
+{
+  "note": "Shared by backend/internal/glossary (go test) and app/src/lib/services/skos-export-golden.spec.ts. `schemes` and `concepts` use the app's own model; `turtle` is what the Go serializer writes for them (regenerate with UPDATE_GOLDEN=1 go test ./internal/glossary). The TS export of the same data must give the same triples apart from hidden labels, which the API never serves.",
+  "schemes": [
+    {
+      "iri": "http://example.org/core/vocab#Workforce",
+      "name": "Workforce",
+      "description": "Roles in the hospital",
+      "scope": { "purpose": "internal", "decisionsSupported": "", "outOfScope": "", "stakeholders": "" },
+      "metadata": { "title": "Workforce thesaurus", "creator": "https://example.org/people/hr", "publisher": "Hospital \"Mercy\"", "rights": "CC-BY 4.0", "modified": "2026-11-01T10:00:00Z" }
+    }
+  ],
+  "concepts": [
+    {
+      "iri": "http://example.org/core/vocab#Staff",
+      "prefLabels": [{ "text": "Staff", "lang": "en" }, { "text": "Personal", "lang": "de" }],
+      "altLabels": [{ "text": "Personnel", "lang": "en" }],
+      "hiddenLabels": [{ "text": "Headcount", "lang": "en" }],
+      "definition": "People employed by the hospital.",
+      "scopeNote": "Includes contractors.\nExcludes volunteers.",
+      "notation": ["S-1"],
+      "example": ["Ward staff"],
+      "editorialNote": ["ask HR before changing"],
+      "disambiguation": "",
+      "schemeIri": "http://example.org/core/vocab#Workforce",
+      "topConcept": true,
+      "status": "active",
+      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
+      "created": "2026-01-02", "modified": "2026-10-30", "deprecatedOn": "",
+      "broader": [], "related": [], "mappings": [{ "kind": "exactMatch", "target": "http://other.example/Staff" }]
+    },
+    {
+      "iri": "http://example.org/core/vocab#Nurse",
+      "prefLabels": [{ "text": "Nurse", "lang": "en" }],
+      "altLabels": [{ "text": "Carer", "lang": "en" }, { "text": "Pflegekraft", "lang": "de" }],
+      "hiddenLabels": [{ "text": "Sister", "lang": "en" }],
+      "definition": "A registered nurse.",
+      "scopeNote": "", "notation": [], "example": [],
+      "editorialNote": ["internal remark"],
+      "disambiguation": "",
+      "schemeIri": "http://example.org/core/vocab#Workforce",
+      "topConcept": false,
+      "status": "approved",
+      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
+      "created": "2026-01-03", "modified": "2026-11-02", "deprecatedOn": "",
+      "broader": ["http://example.org/core/vocab#Staff"],
+      "related": ["http://example.org/core/vocab#Doctor"],
+      "mappings": [{ "kind": "closeMatch", "target": "http://other.example/Nurse" }]
+    },
+    {
+      "iri": "http://example.org/core/vocab#Doctor",
+      "prefLabels": [{ "text": "Doctor", "lang": "en" }],
+      "altLabels": [], "hiddenLabels": [],
+      "definition": "A physician.",
+      "scopeNote": "", "notation": [], "example": [], "editorialNote": [],
+      "disambiguation": "",
+      "schemeIri": "http://example.org/core/vocab#Workforce",
+      "topConcept": false,
+      "status": "proposed",
+      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
+      "created": "2026-01-04", "modified": "2026-01-04", "deprecatedOn": "",
+      "broader": ["http://example.org/core/vocab#Staff"], "related": [], "mappings": []
+    }
+  ]
+}

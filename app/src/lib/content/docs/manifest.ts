@@ -295,6 +295,13 @@ const sectionMetas: DocSectionMeta[] = [
 		file: 'vocabulary.md'
 	},
 	{
+		id: 'skos-support',
+		title: 'SKOS: Import, Export and API',
+		category: 'Ontology Pipeline',
+		order: 115,
+		file: 'skos-support.md'
+	},
+	{
 		id: 'competency-questions',
 		title: 'Competency Questions',
 		category: 'Ontology Pipeline',

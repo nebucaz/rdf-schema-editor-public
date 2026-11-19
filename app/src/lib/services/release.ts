@@ -12,7 +12,7 @@ export type Bump = 'patch' | 'minor' | 'major';
 const MAJOR: readonly string[] = ['removal', 'rename', 'domain-range', 'disjointness'];
 const RANK: Record<Bump, number> = { patch: 0, minor: 1, major: 2 };
 
-const bumpOf = (kind: ChangeKind | ''): Bump => (MAJOR.includes(kind) ? 'major' : kind === 'addition' ? 'minor' : 'patch');
+const bumpOf = (kind: ChangeKind | ''): Bump => (MAJOR.includes(kind) ? 'major' : kind === 'addition' || kind === 'import' ? 'minor' : 'patch');
 
 /** The highest bump any entry calls for, and the summaries of the entries at that level. `bump` is null when
  *  there are no entries: nothing to release. */

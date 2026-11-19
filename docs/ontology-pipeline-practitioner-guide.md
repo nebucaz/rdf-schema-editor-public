@@ -251,18 +251,20 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 ### Steps
 
 1. **Choose the vocabulary namespace.** On the Vocabulary page, if the page says *No vocabulary namespace yet*, pick the namespace that will hold the terms and choose **Use as vocabulary namespace**. Only one namespace can carry the mark. *Why:* the terms live in their own graph of that namespace, apart from the classes.
-2. **Create a scheme.** In the Schemes panel, type a name (*IT landscape*) and choose **Add scheme**. A scheme groups concepts that belong together.
+2. **Create a scheme.** On the **Schemes** tab, choose **Add scheme** above the list, type a name (*IT landscape*) and choose **Create scheme**. A scheme groups concepts that belong together.
 3. **Write the scope record before you collect terms.** Select the scheme and fill in **Purpose**, **Decisions supported**, **Out of scope** and **Stakeholders**, then save. *Why:* the scope record is what stops a vocabulary from growing without limit; the example's is in section 1 of the worked example.
-4. **Collect candidate terms.** List every word in use, with duplicates and variants. Do not enter them yet. Decide which are one concept under several names (*Application*, *App*, *Software system*), which are one name for two concepts (*Service*) and which cannot be defined (*Other systems*): drop those.
-5. **Add a concept.** Choose **Add concept**. Type the **Preferred label** first. The form compares it with every label already in the vocabulary, ignoring case, accents, plurals and small typos. If it shows a similar concept, reuse it: choose **Add as alternative label** instead of creating a second one.
+4. **Collect candidate terms.** If the terms already exist in a spreadsheet or another SKOS file, choose **Import** on the Vocabulary page, **Preview import**, check the lists and choose **Apply import**: the terms arrive as proposed concepts you can then refine. Otherwise list every word in use, with duplicates and variants. Do not enter them yet. Decide which are one concept under several names (*Application*, *App*, *Software system*), which are one name for two concepts (*Service*) and which cannot be defined (*Other systems*): drop those.
+5. **Add a concept.** On the **Concepts** tab, choose **Add concept** above the list. Type the **Preferred label** first. The form compares it with every label already in the vocabulary, ignoring case, accents, plurals and small typos. If it shows a similar concept, reuse it: choose **Add as alternative label** instead of creating a second one.
 6. **Pick the preferred label.** Use the plain name your users would search for, without parentheses or colons, and without an acronym. Four words are the most you should need (book, p. 50). Keep the abbreviation (*API*) as an alternative label.
 7. **Record the other names.** In **Alternative labels** (one per line) put synonyms and abbreviations. In **Hidden labels** put misspellings and retired terms: they are found by search but never shown.
 8. **Write the definition.** In **Definition**, say what kind of thing it is, then what sets it apart. Do not use the term itself in the definition. Two sentences are enough (kind, then difference: book, p. 33).
 9. **Tell homonyms apart.** When two meanings share a name, fill **Disambiguation** with a short qualifier (*technical*, *business*) and write a **Scope note** that says where each meaning applies. Do not put the qualifier in brackets in the label.
-10. **Record where it comes from.** Fill **Source** (where the definition comes from) and **Authority** (who answers for the meaning). Choose the **Scheme** and tick **Top concept** for the broadest terms of a branch. Choose **Save**.
-11. **Approve.** A new concept starts as *proposed*. When the authority agrees, select the concept and choose **Mark approved**. An approved concept needs a definition. A concept moves one step at a time: proposed, approved, active, deprecated, retired.
-12. **Run the checks.** Open **Validation**, then the **Gate report** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
-13. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only.
+10. **Add examples and working notes.** In **Examples** (one per line) show how the term is used. In **Editorial notes** write internal remarks for editors: they never appear on read-only pages. If the term has a legacy code, put it in **Notation**. The concept's **History** below its details is generated from the change log; you do not write it.
+11. **Record where it comes from.** Fill **Source** (where the definition comes from) and **Authority** (who answers for the meaning). Choose the **Scheme** and tick **Top concept** for the broadest terms of a branch. Choose **Save**.
+12. **Approve.** A new concept starts as *proposed*. When the authority agrees, select the concept and choose **Mark approved**. An approved concept needs a definition. A concept moves one step at a time: proposed, approved, active, deprecated, retired.
+13. **Run the checks.** Open **Validation**, then the **Gate report** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
+14. **Merge a duplicate you find later.** If two concepts turn out to be one idea, open the one that should go and choose **Merge into…**, then pick the concept to keep. The preview lists everything that moves (labels, relations, collections, the classes that point at it) and what it leaves out; decide any conflict between two definitions or two notations, then choose **Merge**. The old concept stays as a retired entry that points to the one you kept.
+15. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only. A retired concept is no longer offered as a value of a concept property, and the Gate report lists individuals that still hold it (see "Concept properties" in the Pipeline Guide).
 
 ### Done when
 
@@ -381,7 +383,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 
 ### Steps
 
-1. **Open the outline.** Choose **Taxonomy** in the Pipeline navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
+1. **Open the outline.** Choose **Taxonomy** in the Pipeline navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. Use the **Outline** / **Graph** toggle at the top to switch to a read-only picture of the scheme; changes are still made in the outline. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
 2. **Choose the top-level categories.** Aim for a few broad headings that do not overlap. In the example: *Software*, *Offering*, *Data* and *Role*. For each, open the concept in Vocabulary and tick **Top concept**. A top concept has no broader concept. *Why:* a term with no home is a sign of a gap in the top level (book, p. 114).
 3. **Place one term at a time.** Take a term and ask where it belongs. Choose the preferred label that your users would use, then find its parent (book, p. 112).
 4. **Apply the is-a test.** Drag the concept onto its broader concept. The outline asks *Is every Web application a kind of Application?* Answer it honestly. If the answer is "not always", the parent is wrong. Choose **Move** only when the answer is yes (book, p. 113).
@@ -390,8 +392,8 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 7. **Keep acronyms and jargon out of the preferred labels.** The preferred label should make sense to a new colleague. Keep the abbreviation or the project name as an alternative label (book, p. 115).
 8. **Check the definitions.** A definition says what kind of thing the term is, then what sets it apart. It never uses the term itself. Rewrite those that do (book, p. 115).
 9. **Take a term out of a branch.** Drag it to **Drop here to remove the broader concept**. Nothing is deleted; the term simply has no parent until you place it again.
-10. **Compare with the classes.** Read the class hierarchy next to the concept hierarchy. If a class is a subclass of another and both are linked to concepts (use **Defined by concept** on the class, or **Promote to class** on an approved concept), the concept of the subclass should sit under the concept of the superclass.
-11. **Run the checks.** Open **Validation**, then the **Gate report** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors.
+10. **Compare with the classes, only where concepts and classes are linked.** A concept hierarchy does not have to mirror a class hierarchy; a scheme of classification values needs no matching classes. This step applies only where a concept is the definition of a class (use **Defined by concept** on the class, or **Promote to class** on an approved concept). For such a pair, where one class is a subclass of another and both are linked to concepts, read the two hierarchies side by side and decide whether the concept of the subclass should sit under the concept of the superclass.
+11. **Run the checks.** Open **Validation**, then the **Gate report** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors. Then open **Pipeline** and read **Scheme health**: concepts with no relation at all, groups of concepts cut off from the rest, concepts with more than one broader concept, and the average depth and branching of each scheme. Each concept in the lists has a link that opens it.
 12. **Retire, don't delete.** When a term is superseded, **Deprecate** it with a reason and its replacement, so that old tagging still finds the new term (see Terms, Classes and Deprecation).
 
 ### Done when
@@ -399,6 +401,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 - [ ] Every term has a parent or is a top concept of its scheme
 - [ ] For every parent and child, "every child is a kind of the parent" is true
 - [ ] Siblings do not overlap
+- [ ] Where a concept is linked to a class, you have compared the two hierarchies and decided whether they should agree
 - [ ] Branches are about equally deep, or the difference is explained
 - [ ] Acronyms and project names are alternative labels, not preferred labels
 - [ ] No definition uses the term itself
@@ -456,7 +459,9 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 9. **Add the link.** Choose **Add relation**. Repeat for each mapping.
 10. **Run the checks.** Open **Validation**, then the **Gate report** tab. Read the thesaurus findings (a mapping inside one scheme, a related link along a concept's own ancestry) together with the label and definition findings from the earlier stages.
 11. **Use the other names.** Make sure synonyms live in **Alternative labels** and misspellings in **Hidden labels** of the concept. Search and query expansion rely on them, so that one concept answers to all of its names.
-12. **Schedule the mapping review.** Put a date in the calendar to look at the mappings again, together with the next taxonomy review (book, p. 128).
+12. **Group concepts with a collection when they belong together but are not a hierarchy.** In **Vocabulary**, open the **Collections** tab, choose **Add collection** above the list, type a **Label**, tick **Ordered collection** only when the order matters (steps, a ranking), and choose **Create collection**. Add members by searching for a concept or by choosing another collection. *When to use a collection, not a hierarchy:* use broader and narrower when a member *is a kind of* the parent (a dog is an animal). Use a collection when you only want a named set for a menu, a facet or a reading list (*European countries*, *Steps of onboarding*): nothing is implied about the members, and the app never flags a collection as an orphan. Deleting a collection removes only the grouping; the concepts stay.
+13. **See what your thesaurus does for search.** In the Query Workbench, the search adds the alternative and hidden labels, and the narrower concepts, of a term you type. The line **Also searching for:** shows them as chips you can switch off; broader concepts are off until you switch them on.
+14. **Schedule the mapping review.** Put a date in the calendar to look at the mappings again, together with the next taxonomy review (book, p. 128).
 
 ### Done when
 
@@ -477,9 +482,9 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 
 ### What the app does not do
 
-- It does not check for related links between siblings; its gate only looks at a concept and its own ancestors, so step 5 stays with you.
-- It does not flag concepts that have no relations at all.
-- It does not model SKOS collections (named groups used for navigation) or `skos:notation` (a code from another classification system).
+- It reports a related link between siblings and a related link to an own ancestor, but it cannot tell whether a related link is useful: step 5 stays with you.
+- It lists concepts that have no relation at all under **Scheme health** on the Pipeline page, but does not decide which of them should have one.
+- It does not treat a collection as part of the hierarchy: collections never appear in the taxonomy outline and no gate reports them.
 - It does not schedule or remind you of a mapping review.
 
 ### Governance for this stage
@@ -515,8 +520,8 @@ An ontology is the model: what kinds of things exist, how they relate, and what 
 3. **Say what a good answer looks like.** In the form, describe the expected result (at least some rows, or a yes or no) and how to check it: your own SPARQL query or a saved query. Fill in **Owner**, so that someone looks after the question.
 4. **Work out what each question needs.** For each question, list the classes, properties and rules it implies. *Which applications process personal data?* needs a class *Application*, a class *Data category* and a relation *processes* between them (book, pp. 201-202). Every class and property should trace back to a question.
 5. **Look for existing standards first.** Before you invent a term, check what exists: Dublin Core, DCAT, PROV-O, Schema.org, FOAF. Register an outside vocabulary and use its terms where they fit (book, p. 202).
-6. **Draw the classes.** On the Schema canvas, use **+ Add Entity** (the toolbar split button, or Option/Alt+click on the canvas). Link each class to the concept that defines it with **Defined by concept**, or start from an approved concept with **Promote to class** in the Vocabulary area. The definition stays with the concept.
-7. **Add attributes and relations.** On a class, choose **+ Add attribute** for facts such as a date, with a datatype and required or repeatable. Drag from one class to another to draw a relation. Attributes and relations bring their SHACL shape constraint with them, which is the rule your data is validated against later (see Attribute Form and Relation Form).
+6. **Draw the classes.** On the Schema canvas, use **+ Add Entity** (the toolbar split button, or Option/Alt+click on the canvas). Link each class to the concept that defines it with **Defined by concept**, or start from an approved concept with **Promote to class** in the Vocabulary area. The dialog first asks whether the term should stay a concept (a status value, a tag, a capability label) or become a class (it needs properties, restrictions or subclasses); the advice never blocks you. To turn a fixed list of values into a class, use **Create enumerated class…** on its collection. The definition stays with the concept.
+7. **Add attributes and relations.** On a class, choose **+ Add attribute** for facts such as a date, with a datatype and required or repeatable. Drag from one class to another to draw a relation. For a property whose values come from a concept scheme (a lifecycle stage, a category), choose **+ Add concept property** instead (see "Concept properties" in the Pipeline Guide). Attributes and relations bring their SHACL shape constraint with them, which is the rule your data is validated against later (see Attribute Form and Relation Form).
 8. **Link the questions to the model.** Edit each question and, under **Linked classes and properties**, tick what it needs. A question with nothing linked is a question the model cannot yet answer.
 9. **Run all the questions.** On the Questions page, choose **Run all**. A question that used to pass and now fails is marked **Regression**. A model that still answers its original questions is healthy; one that cannot has regressed (book, p. 240).
 10. **Handle a failing question.** Decide: is the model missing something (change the model), is the question wrong or out of date (change or deprecate the question), or is the question right and the answer wrong (a defect, fix it first).
@@ -684,6 +689,7 @@ When a change request arrives:
 - [ ] Every term has a parent or is a top concept of its scheme
 - [ ] For every parent and child, "every child is a kind of the parent" is true
 - [ ] Siblings do not overlap
+- [ ] Where a concept is linked to a class, you have compared the two hierarchies and decided whether they should agree
 - [ ] Branches are about equally deep, or the difference is explained
 - [ ] Acronyms and project names are alternative labels, not preferred labels
 - [ ] No definition uses the term itself
