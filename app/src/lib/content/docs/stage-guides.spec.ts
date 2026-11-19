@@ -100,9 +100,9 @@ const GUIDES: Guide[] = [
 			{ text: 'Top concept', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Defined by concept', file: 'lib/components/ConceptPicker.svelte' },
 			{ text: 'Promote to class', file: 'routes/vocabulary/+page.svelte' },
-			{ text: 'Gate report', file: 'routes/validation/+page.svelte' },
+			{ text: 'Model checks', file: 'lib/components/OntologyTabs.svelte' },
 			{ text: 'Deprecate', file: 'routes/vocabulary/+page.svelte' },
-			{ text: 'Scheme health', file: 'lib/components/SchemeHealthPanel.svelte' }
+			{ text: 'Scheme health', file: 'lib/components/SchemeHealthTile.svelte' }
 		],
 		links: ['terms-and-classes', 'gate-report', 'vocabulary', 'pipeline-governance', 'pipeline-example']
 	},
@@ -116,7 +116,7 @@ const GUIDES: Guide[] = [
 			{ text: 'skos:related', file: 'lib/components/ConceptRelations.svelte' },
 			{ text: '(enter a full IRI)', file: 'lib/components/ConceptRelations.svelte' },
 			{ text: 'External Vocabularies', file: 'routes/+layout.svelte' },
-			{ text: 'Gate report', file: 'routes/validation/+page.svelte' },
+			{ text: 'Model checks', file: 'lib/components/OntologyTabs.svelte' },
 			{ text: 'Alternative labels', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Hidden labels', file: 'lib/components/ConceptForm.svelte' },
 			{ text: 'Collections', file: 'routes/vocabulary/+page.svelte' },
@@ -158,8 +158,8 @@ const GUIDES: Guide[] = [
 		title: 'Stage Guide: Validation and Knowledge Graph',
 		ui: [
 			{ text: 'Run Validation', file: 'lib/components/ValidationReportView.svelte' },
-			{ text: 'Gate report', file: 'routes/validation/+page.svelte' },
-			{ text: 'Semantic debt', file: 'routes/pipeline/+page.svelte' },
+			{ text: 'Model checks', file: 'lib/components/OntologyTabs.svelte' },
+			{ text: 'Model checks', file: 'lib/components/OntologyTabs.svelte' },
 			{ text: 'Run all', file: 'lib/components/CompetencyQuestionReport.svelte' },
 			{ text: 'Unclassified (no class)', file: 'lib/components/IdentitySearchBar.svelte' },
 			{ text: '+ Add', file: 'lib/components/ManageMembersModal.svelte' },

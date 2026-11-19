@@ -4,7 +4,7 @@ The **Governance** area keeps the accountability of the core vocabulary and onto
 
 ## Owners and version
 
-On the Governance page, name the **steward** and the **authority**, pick a **maturity** (POC, pilot or production) and set the **version**. These are recorded, not enforced. The [Gate Report](gate-report) warns when the core namespace has no steward, authority or version.
+On the Governance page, name the **steward** and the **authority**, pick a **maturity** (POC, pilot or production) and set the **version**. These are recorded, not enforced. The [Model Checks](gate-report) warns when the core namespace has no steward, authority or version.
 
 ## The change log
 
@@ -26,4 +26,4 @@ You can override the suggestion and edit the generated notes. Confirming writes 
 
 ## Keeping an eye on quality
 
-The **semantic debt** list on the [Pipeline View](pipeline-view) page gathers the known quality debts: undefined terms, concepts not reviewed for a while, concepts without an authority, drifted definitions, classes without a shape or without a question, failing questions, and questions whose review is overdue. The question review period (quarterly by default) and the staleness threshold are settings on that list, kept in your browser.
+The [Model Checks](gate-report) gathers the known quality problems: concepts without a definition, concepts not reviewed for a while, concepts without a source or authority, drifted definitions, classes without a shape or without a question, failing questions, and questions whose review is overdue. The question review period (quarterly by default) and the staleness threshold are thresholds kept in your browser.

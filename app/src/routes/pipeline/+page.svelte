@@ -1,152 +1,85 @@
 <script lang="ts">
-	/** Where each namespace stands in the ontology pipeline (ontology-pipeline STORY-320). Read-only: the
-	 *  stages are a recommended order, nothing here disables anything. Requests: the shared schema load plus
-	 *  the competency question results. */
+	/** The Ontology page (ontology-pipeline STORY-320, spec/ontology-dashboard): an Overview dashboard of arrangeable tiles
+	 *  and the Model checks tab. Read-only toward the model: the stages are a recommended order, nothing here disables
+	 *  anything. The arrangement is stored per user; the schema and the other data load in phases, see
+	 *  `ontology-dashboard-state`. */
 	import { onMount } from 'svelte';
-	import { appUrl } from '#lib/utils/urls.js';
+	import { appUrl, stripBase } from '#lib/utils/urls.js';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import ModelChecksView from '#lib/components/ModelChecksView.svelte';
+	import OntologyDashboard from '#lib/components/OntologyDashboard.svelte';
+	import OntologyTabs from '#lib/components/OntologyTabs.svelte';
+	import { DEFAULT_LAYOUT, type DashboardLayout } from '#lib/services/dashboard-layout.js';
+	import { parseModelChecksState, withModelChecksState, type ModelChecksState } from '#lib/services/model-checks-model.js';
+	import { parseOntologyTab, withOntologyTab, type OntologyTab } from '#lib/services/ontology-tabs.js';
 	import { reviewPipelineUrl } from '#lib/services/review-links.js';
-	import SemanticDebtList from '#lib/components/SemanticDebtList.svelte';
-	import PipelineGettingStarted from '#lib/components/PipelineGettingStarted.svelte';
-	import SchemeHealthPanel from '#lib/components/SchemeHealthPanel.svelte';
-	import StageStrip from '#lib/components/StageStrip.svelte';
-	import type { DebtSettings } from '#lib/services/debt-settings.js';
-	import { analyseSchemeHealth } from '#lib/services/scheme-health.js';
-	import { collectDebt, countDebt } from '#lib/services/semantic-debt.js';
-	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
-	import { debtSettingsStore } from '#lib/stores/debt-settings-store.js';
-	import { runGates } from '#lib/services/gates/index.js';
-	import { pipelineNamespaces, pipelineSummary, unlinkedQuestionCount, type NamespaceSummary, type StageId } from '#lib/services/pipeline-summary.js';
-	import { sparqlConnector } from '#lib/services/sparql-connector.js';
-	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
-	import { schemaStore } from '#lib/stores/schema-store.js';
+	import { ApiDashboardLayoutStore } from '#lib/stores/dashboard-layout-store.js';
+	import { ontologyDashboardDeps } from '#lib/stores/ontology-dashboard-deps.js';
+	import { createOntologyDashboardState } from '#lib/stores/ontology-dashboard-state.svelte.js';
 	import { useOpenDocumentation } from '#lib/utils/documentation-context.js';
 
 	const openDocumentation = useOpenDocumentation();
 
-	let summaries = $state<NamespaceSummary[]>([]);
-	let questionCount = $state(0);
-	let unlinkedQuestions = $state(0);
-	let debtSettings = $state<DebtSettings>(debtSettingsStore.get());
-	let debtInput = $state<Omit<Parameters<typeof collectDebt>[0], 'settings' | 'now'> | null>(null);
+	/** `?tab=checks` shows the Model checks list; its filters live in the same query string. */
+	const tab = $derived(parseOntologyTab(page.url.searchParams));
+	const checksTab = $derived(tab === 'checks');
+	const checksState = $derived(parseModelChecksState(page.url.searchParams));
 
-	/** Only the namespaces flagged as part of the pipeline are listed. */
-	const flagged = $derived(pipelineNamespaces(namespaceStore.namespaces));
-
-	/** Computed over what is already loaded: changing a setting costs no request. */
-	const debt = $derived(debtInput ? collectDebt({ ...debtInput, settings: debtSettings, now: new Date() }) : []);
-
-	const health = $derived(debtInput ? analyseSchemeHealth(debtInput.concepts) : []);
-
-	function changeSettings(next: DebtSettings) {
-		debtSettingsStore.set(next);
-		debtSettings = next;
+	function navigate(params: URLSearchParams) {
+		const search = params.toString();
+		void goto(appUrl(stripBase(page.url.pathname)) + (search ? `?${search}` : ''), { replace: true, reset: false });
 	}
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	const selectTab = (next: OntologyTab) => navigate(withOntologyTab(page.url.searchParams, next));
+	const changeChecks = (next: ModelChecksState) => navigate(withModelChecksState(page.url.searchParams, next));
 
-	/** Stages whose numbers still wait for the slow instance queries. */
-	const PENDING_STAGES: StageId[] = ['application'];
-	let detailsLoaded = $state(false);
+	const dashboard = createOntologyDashboardState(ontologyDashboardDeps());
 
-	/** Two phases. The schema (cheap) renders the strips at once; the instance queries and the concepts, which
-	 *  take seconds on a large repository, then fill in the Application stage and the semantic debt. */
-	async function load() {
-		try {
-			// Started together, but `schema` is requested first so it gets its own cheap load instead of
-			// waiting for the `full` one.
-			const schemaPromise = schemaStore.ensureLoaded('schema');
-			const fullPromise = schemaStore.ensureLoaded('full');
-			// A repository without a vocabulary simply has no concept debt.
-			const conceptsPromise = loadAllConcepts(sparqlConnector).catch(() => null);
-			// Unhandled-rejection guard: failures are reported where they are awaited below.
-			fullPromise.catch(() => {});
-			const [schema, questions, runs] = await Promise.all([
-				schemaPromise,
-				sparqlConnector.fetchCompetencyQuestions(),
-				sparqlConnector.fetchCompetencyQuestionRuns(),
-				namespaceStore.ensureLoaded()
-			]);
-			const namespaces = pipelineNamespaces(namespaceStore.namespaces);
-			questionCount = questions.length;
-			unlinkedQuestions = unlinkedQuestionCount(questions);
-			summaries = pipelineSummary({ schema, namespaces, findings: runGates(schema), questions, runs });
-			loading = false;
+	// The default order renders at once; the stored one replaces it when it arrives, unless the user has already moved something.
+	let layout = $state<DashboardLayout>(DEFAULT_LAYOUT);
+	let arranged = false;
+	let saveNotice = $state<string | null>(null);
+	const layoutStore = new ApiDashboardLayoutStore({ onSaveError: (message) => (saveNotice = message) });
 
-			const [full, concepts] = await Promise.all([fullPromise, conceptsPromise]);
-			debtInput = { schema: full, concepts: concepts ?? [], questions, runs };
-			summaries = pipelineSummary({
-				schema: full,
-				namespaces: pipelineNamespaces(namespaceStore.namespaces),
-				findings: runGates(full),
-				questions,
-				runs
-			});
-			detailsLoaded = true;
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load the pipeline view';
-		} finally {
-			loading = false;
-		}
+	function arrange(next: DashboardLayout) {
+		arranged = true;
+		layout = next;
+		layoutStore.save(next);
+	}
+
+	/** A changed term can be looked at in the Vocabulary area (a concept) or on the canvas (a class). */
+	function linkFor(termIri: string): string | null {
+		if (dashboard.concepts?.some((c) => c.iri === termIri)) return appUrl(`/vocabulary?concept=${encodeURIComponent(termIri)}`);
+		if (dashboard.schema?.classes.some((c) => c.iri === termIri)) return appUrl(`/?focus=${encodeURIComponent(termIri)}`);
+		return null;
 	}
 
 	onMount(() => {
-		if (page.data.user) void load();
+		if (!page.data.user) return;
+		void dashboard.load();
+		void layoutStore.load().then((stored) => {
+			if (!arranged) layout = stored;
+		});
 	});
 </script>
 
 <svelte:head>
-	<title>Pipeline — RDF Schema Editor</title>
+	<title>Ontology — RDF Schema Editor</title>
 </svelte:head>
 
 <div class="pipeline-page">
-	<h1>Ontology Pipeline</h1>
+	<h1>Ontology</h1>
 	<a class="review-link" href={reviewPipelineUrl()} data-testid="review-link">Read-only view to share</a>
-	<p class="note" data-testid="pipeline-note">
-		Recommended order: vocabulary, taxonomy, thesaurus, ontology, validation, application. It is a guide, not a
-		rule. Work on any stage at any time, return to earlier ones, and skip what you do not need. Nothing here
-		blocks anything.
-	</p>
 
-	<PipelineGettingStarted hasPipelineNamespace={flagged.length > 0} />
+	<OntologyTabs {tab} onSelect={selectTab} />
 
-	{#if error}
-		<p class="error" role="alert">{error}</p>
-	{:else if loading}
-		<p>Loading…</p>
-	{:else if summaries.length === 0}
-		<p data-testid="no-pipeline-namespaces">
-			No namespace is part of the pipeline yet. Tick <em>Part of the ontology pipeline</em> in a namespace's form to list it here.
-		</p>
+	{#if checksTab}
+		<ModelChecksView query={checksState} onStateChange={changeChecks} />
 	{:else}
-		{#if questionCount === 0 || unlinkedQuestions > 0}
-		<p class="questions-note" data-testid="questions-note">
-			{#if questionCount === 0}
-				No competency questions yet. Write them before modelling: they define the scope of the ontology.
-				<a href={appUrl('/questions')}>Questions</a>
-			{:else if unlinkedQuestions > 0}
-				{unlinkedQuestions} of {questionCount} competency {questionCount === 1 ? 'question is' : 'questions are'} not linked to the model yet.
-				<a href={appUrl('/questions')}>Questions</a>
-			{/if}
-		</p>
+		{#if saveNotice}
+			<p class="error" role="status" data-testid="layout-save-error">{saveNotice}</p>
 		{/if}
-		{#each summaries as summary (summary.namespaceBaseIri)}
-			<StageStrip {summary} pending={detailsLoaded ? [] : PENDING_STAGES} onOpenGuide={openDocumentation} />
-		{/each}
-		<section id="debt" aria-label="Semantic debt">
-			<h2>Semantic debt {#if detailsLoaded}<span class="debt-count" data-testid="debt-count">{countDebt(debt)}</span>{/if}</h2>
-			{#if detailsLoaded}
-				<SemanticDebtList items={debt} settings={debtSettings} onSettingsChange={changeSettings} />
-			{:else}
-				<p class="pending" data-testid="debt-loading">Loading…</p>
-			{/if}
-		</section>
-		{#if detailsLoaded && debtInput && debtInput.concepts.length > 0}
-			<section id="scheme-health" aria-label="Scheme health overview">
-				<h2>Scheme health</h2>
-				<SchemeHealthPanel reports={health} concepts={debtInput.concepts} />
-			</section>
-		{/if}
+		<OntologyDashboard state={dashboard} {layout} onchange={arrange} onOpenGuide={openDocumentation} {linkFor} />
 	{/if}
 </div>
 
@@ -164,33 +97,8 @@
 		margin: 0;
 		font-size: 1.25rem;
 	}
-	.note {
-		margin: 0;
-		max-width: 60rem;
-		font-size: 0.9rem;
-	}
-	.questions-note {
-		margin: 0;
-		max-width: 60rem;
-		font-size: 0.9rem;
-	}
-	.pending {
-		margin: 0;
-		color: var(--color-text-muted);
-	}
 	.error {
 		color: var(--color-error);
 		margin: 0;
-	}
-	h2 {
-		margin: 0 0 0.5rem;
-		font-size: 1.05rem;
-	}
-	.debt-count {
-		font-size: 0.8rem;
-		border: 1px solid var(--color-border);
-		border-radius: 999px;
-		padding: 0 0.5rem;
-		color: var(--color-text-muted);
 	}
 </style>

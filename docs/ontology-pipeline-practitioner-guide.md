@@ -28,7 +28,7 @@ Governance here is a **recommended practice**. The app records owners, requests,
 
 | Stage | What the book asks for | What the app gives you |
 |---|---|---|
-| **Vocabulary** | Treat the vocabulary as a living system (p. 47). Decide how a new term gets in *before* rollout, and base that on evidence such as how often the term is used, a regulation, a business priority or visible user confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how you version and retire terms (p. 50). A request names the requester, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Retire terms by marking them, with a reason, a date and a replacement, and keep them for old data (p. 51). Before each release check for cycles, missing definitions, duplicate labels and labels that clash (p. 51). | Status steps from proposed to retired; **Deprecate** with reason, date and replacement; duplicate check that offers *Add as alternative label*; the vocabulary gates in the Gate Report; change requests and the change log on the Governance page. |
+| **Vocabulary** | Treat the vocabulary as a living system (p. 47). Decide how a new term gets in *before* rollout, and base that on evidence such as how often the term is used, a regulation, a business priority or visible user confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how you version and retire terms (p. 50). A request names the requester, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Retire terms by marking them, with a reason, a date and a replacement, and keep them for old data (p. 51). Before each release check for cycles, missing definitions, duplicate labels and labels that clash (p. 51). | Status steps from proposed to retired; **Deprecate** with reason, date and replacement; duplicate check that offers *Add as alternative label*; the vocabulary gates in the Model Checks; change requests and the change log on the Governance page. |
 | **Metadata** | Design governance and meaning together, not in separate teams (p. 68). A metadata application profile (MAP) keeps meaning steady in three ways: every element has a precise definition, a new meaning gets a new element through a formal process, and rules enforce the profile (pp. 76-77). Version the profile and track changes (p. 79). Let domain experts own their metadata while one place coordinates the standards, and automate the checks (p. 79). | Source, authority and status on each concept; steward, authority, maturity and version on the Governance page. The profile itself is not modelled in the app. |
 | **Taxonomy** | Keep the hierarchy under change control, so every change is deliberate, reviewed and reversible (p. 134). Validate on every change: one preferred label per language, no label used in two roles, no cycles, top concepts without a broader concept (pp. 134-135). Give each concept a lifecycle from proposed to retired, with notes that say what changed and why, and keep the old label findable on the replacement (p. 135). Use the quality checklists (pp. 115, 137). | The same five statuses; the change log; deprecation that can copy the old label to the replacement as a hidden label; taxonomy gates for cycles, top concepts, uneven depth, overlapping siblings and circular definitions. |
 | **Thesaurus** | Collapse and refine candidate terms into one reconciled, defined vocabulary and resist pressure to keep vague catch-alls (pp. 149-150). Build the review of mappings into the taxonomy review cycle (p. 128). Run a quality check for hierarchy cycles, labels that collide, concepts without definition and related links that only repeat the tree (pp. 165-166). | Mapping gate (no mapping inside one scheme), a prompt when a related link joins a concept and its own ancestor, and the label and definition gates. |
@@ -60,7 +60,7 @@ Suggested split, recorded in the app as names and not enforced. *R* does it, *A*
 | With every release | Read the log since the last release, accept or change the suggested version, check the gates first |
 | Every quarter, at least | Review the competency questions: a new question the model cannot answer is a scope change, an obsolete one a candidate for deprecation, a wrong answer a defect (p. 240) |
 | With each taxonomy review | Review mappings to other vocabularies |
-| When the debt list grows | Work the semantic debt list on the Pipeline Overview |
+| When the problem list grows | Work the Model checks |
 
 ### The minimum to start with
 
@@ -91,7 +91,7 @@ Print this from the standalone guide; the in-app page is for reading.
 
 Before a release:
 
-- [ ] Gate report read; no warning left without a decision
+- [ ] Model checks read; no warning left without a decision
 - [ ] Every approved change request has a rationale and a change log entry
 - [ ] Failing competency questions explained or fixed
 - [ ] Suggested version checked (major, minor or patch)
@@ -99,7 +99,7 @@ Before a release:
 Every quarter:
 
 - [ ] Competency questions reviewed and their *Last reviewed* date updated
-- [ ] Semantic debt list worked through
+- [ ] Model checks worked through
 - [ ] Mappings to other vocabularies reviewed
 - [ ] Steward, authority and maturity still correct
 
@@ -109,7 +109,7 @@ When a change request arrives:
 - [ ] Impact assessed
 - [ ] Decision and rationale recorded
 
-See Changes, Requests and Releases, Competency Questions and the Gate Report for how each step works in the app.
+See Changes, Requests and Releases, Competency Questions and the Model Checks for how each step works in the app.
 
 ---
 
@@ -198,6 +198,7 @@ Related links join concepts of different branches:
 |---|---|
 | Application | Personal data |
 | Application | Application owner |
+| Application | Offering |
 
 Mappings point to concepts of another scheme. The target scheme here is an invented partner glossary:
 
@@ -244,7 +245,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 
 ### Before you start
 
-- You can sign in and open **Vocabulary** in the Pipeline navigation.
+- You can sign in and open **Vocabulary** in the Ontology navigation.
 - You know who will answer for the meaning of the terms (an authority) and where definitions come from (a source). If you do not know yet, you can still start and fill both in later.
 - You have a rough list of the words people use. A service desk's ticket categories or an application inventory is a good source.
 
@@ -262,9 +263,9 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 10. **Add examples and working notes.** In **Examples** (one per line) show how the term is used. In **Editorial notes** write internal remarks for editors: they never appear on read-only pages. If the term has a legacy code, put it in **Notation**. The concept's **History** below its details is generated from the change log; you do not write it.
 11. **Record where it comes from.** Fill **Source** (where the definition comes from) and **Authority** (who answers for the meaning). Choose the **Scheme** and tick **Top concept** for the broadest terms of a branch. Choose **Save**.
 12. **Approve.** A new concept starts as *proposed*. When the authority agrees, select the concept and choose **Mark approved**. An approved concept needs a definition. A concept moves one step at a time: proposed, approved, active, deprecated, retired.
-13. **Run the checks.** Open **Validation**, then the **Gate report** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
+13. **Run the checks.** Open the **Ontology** page, then the **Model checks** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
 14. **Merge a duplicate you find later.** If two concepts turn out to be one idea, open the one that should go and choose **Merge into…**, then pick the concept to keep. The preview lists everything that moves (labels, relations, collections, the classes that point at it) and what it leaves out; decide any conflict between two definitions or two notations, then choose **Merge**. The old concept stays as a retired entry that points to the one you kept.
-15. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only. A retired concept is no longer offered as a value of a concept property, and the Gate report lists individuals that still hold it (see "Concept properties" in the Pipeline Guide).
+15. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only. A retired concept is no longer offered as a value of a concept property, and the Model checks lists individuals that still hold it (see "Concept properties" in the Pipeline Guide).
 
 ### Done when
 
@@ -274,7 +275,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 - [ ] No two terms share a preferred label unless a qualifier tells them apart
 - [ ] Synonyms and abbreviations are alternative labels, and no alternative label equals another term's preferred label
 - [ ] Every term has a source and an authority
-- [ ] The Gate report shows no vocabulary warning that you have not decided about
+- [ ] The Model checks shows no vocabulary warning that you have not decided about
 
 ### Watch out for
 
@@ -293,7 +294,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 
 Decide *before* the vocabulary is shared how a new term gets in, and write the rule down. The book suggests grounding acceptance in evidence: how often people use the term, a regulatory need, a business priority, or visible confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how terms are versioned and retired (p. 50). A request names who asks, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Before each release, check that there are no cycles, every preferred term has a definition, no labels are duplicated and no alternative label clashes with another term (p. 51).
 
-In the app, use a change request for a term that needs a decision, and read the change log to see who changed what. The roles, the cadence and the minimum to start with are on the [Governance Sheet](#governance-sheet). Every check named above is a gate in the Gate Report; fields and statuses are described in Vocabulary, and homonyms and deprecation in Terms, Classes and Deprecation.
+In the app, use a change request for a term that needs a decision, and read the change log to see who changed what. The roles, the cadence and the minimum to start with are on the [Governance Sheet](#governance-sheet). Every check named above is a gate in the Model Checks; fields and statuses are described in Vocabulary, and homonyms and deprecation in Terms, Classes and Deprecation.
 
 ### Next stage
 
@@ -325,7 +326,7 @@ Metadata is data about data: who owns an application, when it was last confirmed
 4. **On paper: describe how each system uses the elements.** The inventory may call it *Owner*, the ticket tool *Assignee group*. Write down, per system, which field holds which element and what format it uses (book, pp. 73-74).
 5. **On paper: write the crosswalks.** For each pair of systems, the mapping between their fields, including the cases that are not one to one (book, p. 78).
 6. **On paper: choose the allowed values.** Where an element takes a value from a list, such as *data processed*, use a scheme from your vocabulary as that list (book, p. 78).
-7. **In the app: record source and authority on every term.** Open each concept in **Vocabulary**, choose **Edit** and fill **Source** and **Authority**. The Gate report warns about terms without them.
+7. **In the app: record source and authority on every term.** Open each concept in **Vocabulary**, choose **Edit** and fill **Source** and **Authority**. The Model checks warns about terms without them.
 8. **In the app: name the owners of the model.** On the **Governance** page, in *Owners and version*, fill **Steward**, **Authority**, **Maturity** (POC, pilot or production) and **Version**, and save.
 9. **In the app: model the elements as attributes.** On the Schema canvas, choose **+ Add attribute** on the class, give it a **Name** and a **Datatype**, and tick **Required** or **Repeatable** as the definition says. The attribute becomes a property with a shape constraint, which is how the rules of your profile are enforced when data is validated.
 10. **In the app: describe the catalog entry.** For classes you publish in a data catalog, open the **Catalog** tab of the Triples Panel and fill the fields such as **Publisher override**; leave a field empty to use the namespace's default.
@@ -352,7 +353,7 @@ Metadata is data about data: who owns an application, when it was last confirmed
 
 - It has no metadata application profile: you cannot declare a profile, version it or compare it with another one in the app. Steps 1 to 6 stay on paper.
 - It has no crosswalk editor and no per-system profile view.
-- It has no metadata gates. The Gate report checks terms, classes and shapes, not the completeness of a profile.
+- It has no metadata gates. The Model checks checks terms, classes and shapes, not the completeness of a profile.
 - It does not enforce who may add an element.
 
 ### Governance for this stage
@@ -383,7 +384,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 
 ### Steps
 
-1. **Open the outline.** Choose **Taxonomy** in the Pipeline navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. Use the **Outline** / **Graph** toggle at the top to switch to a read-only picture of the scheme; changes are still made in the outline. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
+1. **Open the outline.** Choose **Taxonomy** in the Ontology navigation and pick the scheme. The left side shows **Concepts (skos:broader)**, the right side the read-only class hierarchy, **Classes (rdfs:subClassOf)**. Use the **Outline** / **Graph** toggle at the top to switch to a read-only picture of the scheme; changes are still made in the outline. If the page says no namespace is the core vocabulary, set it up in Vocabulary first.
 2. **Choose the top-level categories.** Aim for a few broad headings that do not overlap. In the example: *Software*, *Offering*, *Data* and *Role*. For each, open the concept in Vocabulary and tick **Top concept**. A top concept has no broader concept. *Why:* a term with no home is a sign of a gap in the top level (book, p. 114).
 3. **Place one term at a time.** Take a term and ask where it belongs. Choose the preferred label that your users would use, then find its parent (book, p. 112).
 4. **Apply the is-a test.** Drag the concept onto its broader concept. The outline asks *Is every Web application a kind of Application?* Answer it honestly. If the answer is "not always", the parent is wrong. Choose **Move** only when the answer is yes (book, p. 113).
@@ -393,7 +394,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 8. **Check the definitions.** A definition says what kind of thing the term is, then what sets it apart. It never uses the term itself. Rewrite those that do (book, p. 115).
 9. **Take a term out of a branch.** Drag it to **Drop here to remove the broader concept**. Nothing is deleted; the term simply has no parent until you place it again.
 10. **Compare with the classes, only where concepts and classes are linked.** A concept hierarchy does not have to mirror a class hierarchy; a scheme of classification values needs no matching classes. This step applies only where a concept is the definition of a class (use **Defined by concept** on the class, or **Promote to class** on an approved concept). For such a pair, where one class is a subclass of another and both are linked to concepts, read the two hierarchies side by side and decide whether the concept of the subclass should sit under the concept of the superclass.
-11. **Run the checks.** Open **Validation**, then the **Gate report** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors. Then open **Pipeline** and read **Scheme health**: concepts with no relation at all, groups of concepts cut off from the rest, concepts with more than one broader concept, and the average depth and branching of each scheme. Each concept in the lists has a link that opens it.
+11. **Run the checks.** Open the **Ontology** page, then the **Model checks** tab. Work through cycles, a top concept that still has a broader concept, concepts in no scheme, uneven depth, overlapping siblings, circular and overlong definitions, and class hierarchies that disagree with the concept hierarchy. Findings marked *for human judgement* are prompts to look, not errors. Then open **Pipeline** and read **Scheme health**: concepts with no relation at all, groups of concepts cut off from the rest, concepts with more than one broader concept, and the average depth and branching of each scheme. Each concept in the lists has a link that opens it.
 12. **Retire, don't delete.** When a term is superseded, **Deprecate** it with a reason and its replacement, so that old tagging still finds the new term (see Terms, Classes and Deprecation).
 
 ### Done when
@@ -405,7 +406,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 - [ ] Branches are about equally deep, or the difference is explained
 - [ ] Acronyms and project names are alternative labels, not preferred labels
 - [ ] No definition uses the term itself
-- [ ] The Gate report shows no taxonomy warning that you have not decided about
+- [ ] The Model checks shows no taxonomy warning that you have not decided about
 
 ### Watch out for
 
@@ -424,7 +425,7 @@ A taxonomy puts each term under a broader one (*Web application* under *Applicat
 
 Treat the taxonomy like production code: changes should be deliberate, reviewed and reversible (book, p. 134). Validate on every change: one preferred label per language, no label used in two roles of one concept, no cycles, no top concept with a broader concept (book, pp. 134-135). Give each concept a lifecycle from proposed to retired, with notes that say what changed and why, and keep the old label findable on the replacement (book, p. 135). A deprecated term that is not handled properly keeps being used and the tagging drifts (book, p. 135). Use the quality checklist before you call a branch final (book, pp. 115, 137).
 
-In the app, the five statuses are the same lifecycle, a change request records the decision, and the change log shows who changed what. Review mappings with each taxonomy review. Roles and cadence are on the [Governance Sheet](#governance-sheet); every check above is in the Gate Report; the outline itself is described in Terms, Classes and Deprecation and the fields of a term in Vocabulary.
+In the app, the five statuses are the same lifecycle, a change request records the decision, and the change log shows who changed what. Review mappings with each taxonomy review. Roles and cadence are on the [Governance Sheet](#governance-sheet); every check above is in the Model Checks; the outline itself is described in Terms, Classes and Deprecation and the fields of a term in Vocabulary.
 
 ### Next stage
 
@@ -457,7 +458,7 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 7. **Choose the kind of mapping.** For a concept in another scheme, pick the kind that says how close the two are: **exactMatch** (the same concept in both), **closeMatch** (nearly the same), **relatedMatch** (an associative link), **broadMatch** (the other concept is broader than yours) or **narrowMatch** (the other concept is narrower). The book explains the first three on p. 164. When in doubt, take the weaker one.
 8. **Point at the other concept.** Pick the registered vocabulary and type the term, or choose **(enter a full IRI)** and paste the concept's IRI. The app refuses a mapping to a concept of the same scheme: use a hierarchy or a related link there.
 9. **Add the link.** Choose **Add relation**. Repeat for each mapping.
-10. **Run the checks.** Open **Validation**, then the **Gate report** tab. Read the thesaurus findings (a mapping inside one scheme, a related link along a concept's own ancestry) together with the label and definition findings from the earlier stages.
+10. **Run the checks.** Open the **Ontology** page, then the **Model checks** tab. Read the thesaurus findings (a mapping inside one scheme, a related link along a concept's own ancestry) together with the label and definition findings from the earlier stages.
 11. **Use the other names.** Make sure synonyms live in **Alternative labels** and misspellings in **Hidden labels** of the concept. Search and query expansion rely on them, so that one concept answers to all of its names.
 12. **Group concepts with a collection when they belong together but are not a hierarchy.** In **Vocabulary**, open the **Collections** tab, choose **Add collection** above the list, type a **Label**, tick **Ordered collection** only when the order matters (steps, a ranking), and choose **Create collection**. Add members by searching for a concept or by choosing another collection. *When to use a collection, not a hierarchy:* use broader and narrower when a member *is a kind of* the parent (a dog is an animal). Use a collection when you only want a named set for a menu, a facet or a reading list (*European countries*, *Steps of onboarding*): nothing is implied about the members, and the app never flags a collection as an orphan. Deleting a collection removes only the grouping; the concepts stay.
 13. **See what your thesaurus does for search.** In the Query Workbench, the search adds the alternative and hidden labels, and the narrower concepts, of a term you type. The line **Also searching for:** shows them as chips you can switch off; broader concepts are off until you switch them on.
@@ -470,7 +471,7 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 - [ ] Every mapping points to a concept of another scheme and uses the weakest kind that is true
 - [ ] Every external vocabulary you map to is registered, or its IRI is recorded in full
 - [ ] Synonyms and misspellings are on the concept as alternative and hidden labels
-- [ ] The Gate report shows no thesaurus warning that you have not decided about
+- [ ] The Model checks shows no thesaurus warning that you have not decided about
 - [ ] A mapping review date is set
 
 ### Watch out for
@@ -483,15 +484,15 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 ### What the app does not do
 
 - It reports a related link between siblings and a related link to an own ancestor, but it cannot tell whether a related link is useful: step 5 stays with you.
-- It lists concepts that have no relation at all under **Scheme health** on the Pipeline page, but does not decide which of them should have one.
-- It does not treat a collection as part of the hierarchy: collections never appear in the taxonomy outline and no gate reports them.
+- It lists concepts that have no relation at all under **Scheme health** on the Ontology page, but does not decide which of them should have one.
+- It does not treat a collection as part of the hierarchy: collections never appear in the taxonomy outline and no model checkss them.
 - It does not schedule or remind you of a mapping review.
 
 ### Governance for this stage
 
 The thesaurus has no governance section of its own in the book; its rules come from the stages around it. Refine candidate terms into one reconciled, defined vocabulary and resist the pressure to keep ambiguous catch-alls (book, pp. 149-150). Build the review of mappings into the taxonomy governance cycle (book, p. 128). Check the structure with a quality tool for hierarchy cycles, colliding labels, missing documentation and related links that only repeat the tree (book, pp. 165-166).
 
-In the app, the Gate report covers the checks it can, a change request records a decision to add or change a mapping, and the change log shows who did it. The cadence is on the [Governance Sheet](#governance-sheet). The relations are described in Terms, Classes and Deprecation, the registered vocabularies in External Vocabulary Management View, and the checks in the Gate Report.
+In the app, the Model checks covers the checks it can, a change request records a decision to add or change a mapping, and the change log shows who did it. The cadence is on the [Governance Sheet](#governance-sheet). The relations are described in Terms, Classes and Deprecation, the registered vocabularies in External Vocabulary Management View, and the checks in the Model Checks.
 
 ### Next stage
 
@@ -515,7 +516,7 @@ An ontology is the model: what kinds of things exist, how they relate, and what 
 
 ### Steps
 
-1. **Open the questions page.** Choose **Questions** in the Pipeline navigation. The page lists the questions, what each expects, which classes and properties it needs, its owner and when it was last reviewed.
+1. **Open the questions page.** Choose **Questions** in the Ontology navigation. The page lists the questions, what each expects, which classes and properties it needs, its owner and when it was last reviewed.
 2. **Write the competency questions first, before the first modelling decision.** Choose **Add question** and write each question the model must be able to answer, in the words of the people who will ask. In the example: *Which applications process personal data?* Agree the list with a domain expert (book, pp. 192-193).
 3. **Say what a good answer looks like.** In the form, describe the expected result (at least some rows, or a yes or no) and how to check it: your own SPARQL query or a saved query. Fill in **Owner**, so that someone looks after the question.
 4. **Work out what each question needs.** For each question, list the classes, properties and rules it implies. *Which applications process personal data?* needs a class *Application*, a class *Data category* and a relation *processes* between them (book, pp. 201-202). Every class and property should trace back to a question.
@@ -557,7 +558,7 @@ An ontology is the model: what kinds of things exist, how they relate, and what 
 
 Ownership is the first requirement: a named **steward** who looks after the health of the ontology (drift, documentation, the test suite) and a named **authority** who approves changes. The practical minimum is both roles named, plus a change log that records the reason for every model change. A small organisation can have one person hold both (book, pp. 235-236). Number each release with major, minor and patch, so every version is a deliberate decision (book, pp. 236-237). Keep model changes under change control and data changes under the data owner's rules (book, pp. 237-238). Tie every change request to a competency question, assess its impact by re-running the questions, and send changes to existing elements to the authority (book, p. 238). Review the questions at least every quarter (book, p. 240).
 
-The roles, cadence and the minimum to start with are on the [Governance Sheet](#governance-sheet). The pages used above are described in Competency Questions, Changes, Requests and Releases, Entity Form and Terms, Classes and Deprecation; the checks are in the Gate Report.
+The roles, cadence and the minimum to start with are on the [Governance Sheet](#governance-sheet). The pages used above are described in Competency Questions, Changes, Requests and Releases, Entity Form and Terms, Classes and Deprecation; the checks are in the Model Checks.
 
 ### Next stage
 
@@ -567,7 +568,7 @@ Check the model against real data and operate it in the [Validation and knowledg
 
 ## Stage Guide: Validation and Knowledge Graph
 
-The last stage of the book: check the model against real data, load that data, and run the result as something people rely on. The Pipeline page splits this stage in two, **Validation** (the shapes and their checks) and **Application** (the individuals), because the app counts them separately; this guide covers both, in the order you will usually do them. It follows the *IT landscape* example from [Worked Example: IT Landscape](#worked-example-the-it-landscape), and it is a recommended step, not a gate.
+The last stage of the book: check the model against real data, load that data, and run the result as something people rely on. The Ontology page splits this stage in two, **Validation** (the shapes and their checks) and **Application** (the individuals), because the app counts them separately; this guide covers both, in the order you will usually do them. It follows the *IT landscape* example from [Worked Example: IT Landscape](#worked-example-the-it-landscape), and it is a recommended step, not a gate.
 
 ### What this stage is for
 
@@ -582,8 +583,8 @@ A knowledge graph is the model plus the data: real applications, owners and data
 ### Steps
 
 1. **Run the shape checks.** Choose **Validation** in the navigation, then **Run Validation** on the SHACL validation tab. It evaluates every individual against the shapes and lists the violations per individual. Nothing is cached: each run starts fresh.
-2. **Read the Gate report.** On the same page, open the **Gate report** tab. It lists model and data findings by stage, each with an **Open** link to where it is fixed.
-3. **Look at the whole picture.** On the Pipeline **Overview**, read the stage strip of each namespace and the **Semantic debt** list. Every count links to the screen that shows it.
+2. **Read the Model checks.** On the Ontology page, open the **Model checks** tab. It lists the model problems with filters for stage and severity, each with an **Open** link to where it is fixed. Data problems are on the Validation page.
+3. **Look at the whole picture.** On the Ontology **Overview**, read the stage strip of each namespace and open **Model checks** for the open problems. Every count links to the screen that shows it.
 4. **Load the data.** For a catalog you already keep elsewhere, use the sync (see Backstage Catalog Sync). For a few individuals by hand, open a class's members and choose **+ Add**.
 5. **Classify what has no class.** In **Identities**, set the class filter to **Unclassified (no class)** and give each individual a class (see Identities).
 6. **Run the validation again.** New data breaks the shapes in ways the model did not show. Fix the data or the shape, whichever is wrong.
@@ -591,7 +592,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 8. **Write down the gaps.** Keep a short gap analysis: what the questions showed about the data, the vocabulary and the model (book, p. 308). It is the list for the next iteration.
 9. **Put it in front of real users.** Show the graph to people who will rely on it. Domain experts catch errors that engineers cannot, such as a link that holds in the model but not in the business. The read-only Review pages are made for this (book, p. 309).
 10. **Set the maturity.** On the **Governance** page, set **Maturity** to POC, pilot or production as the work moves on. The three phases are below.
-11. **Keep the rhythm.** Work the Semantic debt list, review the competency questions every quarter and update **Last reviewed**, and release through the Governance page when the change log has entries.
+11. **Keep the rhythm.** Work the Model checks, review the competency questions every quarter and update **Last reviewed**, and release through the Governance page when the change log has entries.
 
 #### The three phases
 
@@ -607,7 +608,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 - [ ] All competency questions have been run on the real data and the failing ones are on the gap list
 - [ ] At least one domain expert has looked at the results
 - [ ] Maturity is set to the phase you are in
-- [ ] There is a review rhythm for the questions and the debt list
+- [ ] There is a review rhythm for the questions and the Model checks
 
 ### Watch out for
 
@@ -629,7 +630,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 
 Two kinds of governance, kept apart. **Data governance** asks who can add, change or remove triples. **Semantic governance** asks who can change the ontology: add a class, change a property's domain or range, add a rule. Programmes stall when the two are mixed (book, p. 311). Assess the impact of a semantic change before it is committed, and version the ontology so that the systems that use it can move on their own schedule (book, pp. 311-312). Use the pilot to test the governance process as well as the model (book, p. 309).
 
-In the app, model changes go through a change request and the change log, a release sets the version, and the debt list and the quarterly review keep an eye on quality. Data arrives through the sync or by hand and is checked by the shapes. The roles, cadence and checklist are on the [Governance Sheet](#governance-sheet). The pages used above are described in SHACL/Structural Validation, Validation Report View, Gate Report, Pipeline View and Changes, Requests and Releases.
+In the app, model changes go through a change request and the change log, a release sets the version, and the Model checks and the quarterly review keep an eye on quality. Data arrives through the sync or by hand and is checked by the shapes. The roles, cadence and checklist are on the [Governance Sheet](#governance-sheet). The pages used above are described in SHACL/Structural Validation, Validation Report View, Model Checks, Pipeline View and Changes, Requests and Releases.
 
 ### Next stage
 
@@ -647,7 +648,7 @@ Tick the boxes on paper. Each list is copied from the section it belongs to.
 
 Before a release:
 
-- [ ] Gate report read; no warning left without a decision
+- [ ] Model checks read; no warning left without a decision
 - [ ] Every approved change request has a rationale and a change log entry
 - [ ] Failing competency questions explained or fixed
 - [ ] Suggested version checked (major, minor or patch)
@@ -655,7 +656,7 @@ Before a release:
 Every quarter:
 
 - [ ] Competency questions reviewed and their *Last reviewed* date updated
-- [ ] Semantic debt list worked through
+- [ ] Model checks worked through
 - [ ] Mappings to other vocabularies reviewed
 - [ ] Steward, authority and maturity still correct
 
@@ -673,7 +674,7 @@ When a change request arrives:
 - [ ] No two terms share a preferred label unless a qualifier tells them apart
 - [ ] Synonyms and abbreviations are alternative labels, and no alternative label equals another term's preferred label
 - [ ] Every term has a source and an authority
-- [ ] The Gate report shows no vocabulary warning that you have not decided about
+- [ ] The Model checks shows no vocabulary warning that you have not decided about
 
 ### Metadata
 
@@ -693,7 +694,7 @@ When a change request arrives:
 - [ ] Branches are about equally deep, or the difference is explained
 - [ ] Acronyms and project names are alternative labels, not preferred labels
 - [ ] No definition uses the term itself
-- [ ] The Gate report shows no taxonomy warning that you have not decided about
+- [ ] The Model checks shows no taxonomy warning that you have not decided about
 
 ### Thesaurus
 
@@ -702,7 +703,7 @@ When a change request arrives:
 - [ ] Every mapping points to a concept of another scheme and uses the weakest kind that is true
 - [ ] Every external vocabulary you map to is registered, or its IRI is recorded in full
 - [ ] Synonyms and misspellings are on the concept as alternative and hidden labels
-- [ ] The Gate report shows no thesaurus warning that you have not decided about
+- [ ] The Model checks shows no thesaurus warning that you have not decided about
 - [ ] A mapping review date is set
 
 ### Ontology
@@ -723,4 +724,4 @@ When a change request arrives:
 - [ ] All competency questions have been run on the real data and the failing ones are on the gap list
 - [ ] At least one domain expert has looked at the results
 - [ ] Maturity is set to the phase you are in
-- [ ] There is a review rhythm for the questions and the debt list
+- [ ] There is a review rhythm for the questions and the Model checks

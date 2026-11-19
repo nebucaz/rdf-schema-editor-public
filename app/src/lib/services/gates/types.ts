@@ -2,7 +2,7 @@
  * Quality gates (ontology-pipeline STORY-319). A gate is a pure function over the loaded schema that
  * returns findings. Gates only report: they never block a save or disable anything.
  */
-import type { CompetencyQuestion } from '../competency-question';
+import type { CompetencyQuestion, CompetencyQuestionRun } from '../competency-question';
 import type { Governance } from '../governance';
 import type { SkosCollection } from '../skos-collection';
 import type { Concept } from '../skos-concept';
@@ -55,6 +55,10 @@ export interface GateOptions {
 	governance?: (Governance & { namespaceIri: string }) | null;
 	/** The competency questions, for the question review gate; without them it reports nothing. */
 	questions?: CompetencyQuestion[];
+	/** The competency question runs, for the failing-question gate; without them it reports nothing. */
+	runs?: CompetencyQuestionRun[];
+	/** Months after which an untouched concept is stale; without it the stale-concept gate reports nothing. */
+	staleAfterMonths?: number;
 	/** Months between question reviews; defaults to a quarter. */
 	reviewPeriodMonths?: number;
 	/** The date to measure review ages from; defaults to now. */

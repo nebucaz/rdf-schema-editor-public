@@ -18,7 +18,7 @@ The stages below are a **recommended order**. Whether your team adopts the metho
 | 6. Knowledge graph | Load individuals and check them | **Identities** and **Validation** |
 | Throughout | Questions, owners, change control, releases | [Competency Questions](competency-questions), **Governance**, see [Changes, Requests and Releases](changes-and-releases) |
 
-The book's six stages and the Pipeline page do not line up one to one. The page has no metadata box (metadata is recorded on the terms and on the Governance page, so its guide is linked from the vocabulary box), and it splits the last stage into validation and application, which the knowledge-graph guide covers together.
+The book's six stages and the Ontology page do not line up one to one. The page has no metadata box (metadata is recorded on the terms and on the Governance page, so its guide is linked from the vocabulary box), and it splits the last stage into validation and application, which the knowledge-graph guide covers together.
 
 ## Classes or concepts?
 
@@ -39,9 +39,9 @@ A concept property is a property whose values are the concepts of one scheme, su
 - **What the constraint checks.** The property is stored with no range class. The validation report checks that every value is a concept of the chosen scheme, and reports any other value (a concept of another scheme, or something that is not a concept) with the value, the property and a message naming the scheme. The check is a generated SPARQL constraint on the class, so it runs with the other data checks on the Validation page.
 - **Entering values.** On an individual, the value field offers the concepts of the scheme as you type. Only concepts you can still use are offered; a deprecated or retired concept you already set stays selectable, so it is not lost silently. Free text is not accepted.
 - **The 1000-concept limit.** The list offers at most 1000 concepts of a scheme. When a scheme has more, the list says so, and you narrow it by typing. A scheme that large is usually better split.
-- **Deprecated concepts.** A retired concept is no longer offered for new values. Individuals that already hold it show up in the Gate report and the semantic debt list, with the replacement when the concept names one.
+- **Deprecated concepts.** A retired concept is no longer offered for new values. Individuals that already hold it show up in the Model checks, with the replacement when the concept names one.
 - **Deleting a concept property** removes the property and its constraint, and leaves the values on the individuals in place.
-- **The hazard of `skos:Concept`.** Do not draw a relation to the external class `skos:Concept` to get the same effect. A concept is not typed by a declared class, so that relation is not evaluated and the report shows false violations. The Gate report flags such a relation as **Relation to skos:Concept**.
+- **The hazard of `skos:Concept`.** Do not draw a relation to the external class `skos:Concept` to get the same effect. A concept is not typed by a declared class, so that relation is not evaluated and the report shows false violations. The Model checks flags such a relation as **Relation to skos:Concept**.
 - **Cost.** Each concept property adds one query to the validation run, which runs one constraint at a time. A constraint that hits the row cap or the timeout is listed under "not checked", never skipped silently.
 
 ## Step-by-step guides
@@ -70,7 +70,7 @@ They then do three jobs over the life of the model:
 
 ## Gates: advice, not walls
 
-A *gate* is a check over the loaded model. The [Gate Report](gate-report) lists what each one looks at: description and shape coverage for classes, label style and duplicates for terms, cycles and uneven depth in the taxonomy, mappings that stay inside their scheme, the match between the class hierarchy and the concept hierarchy, missing owners, and questions that were not reviewed in time. Findings marked *for human judgement* are prompts to look, not errors. The **semantic debt** list on the Pipeline page collects the open ones in one place.
+A *gate* is a check over the loaded model. The [Model Checks](gate-report) lists what each one looks at: description and shape coverage for classes, label style and duplicates for terms, cycles and uneven depth in the taxonomy, mappings that stay inside their scheme, the match between the class hierarchy and the concept hierarchy, missing owners, and questions that were not reviewed in time. Findings marked *for human judgement* are prompts to look, not errors.
 
 ## Roles
 

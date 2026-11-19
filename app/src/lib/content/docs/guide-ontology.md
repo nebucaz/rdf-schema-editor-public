@@ -14,7 +14,7 @@ An ontology is the model: what kinds of things exist, how they relate, and what 
 
 ## Steps
 
-1. **Open the questions page.** Choose **Questions** in the Pipeline navigation. The page lists the questions, what each expects, which classes and properties it needs, its owner and when it was last reviewed.
+1. **Open the questions page.** Choose **Questions** in the Ontology navigation. The page lists the questions, what each expects, which classes and properties it needs, its owner and when it was last reviewed.
 2. **Write the competency questions first, before the first modelling decision.** Choose **Add question** and write each question the model must be able to answer, in the words of the people who will ask. In the example: *Which applications process personal data?* Agree the list with a domain expert (book, pp. 192-193).
 3. **Say what a good answer looks like.** In the form, describe the expected result (at least some rows, or a yes or no) and how to check it: your own SPARQL query or a saved query. Fill in **Owner**, so that someone looks after the question.
 4. **Work out what each question needs.** For each question, list the classes, properties and rules it implies. *Which applications process personal data?* needs a class *Application*, a class *Data category* and a relation *processes* between them (book, pp. 201-202). Every class and property should trace back to a question.
@@ -56,7 +56,7 @@ An ontology is the model: what kinds of things exist, how they relate, and what 
 
 Ownership is the first requirement: a named **steward** who looks after the health of the ontology (drift, documentation, the test suite) and a named **authority** who approves changes. The practical minimum is both roles named, plus a change log that records the reason for every model change. A small organisation can have one person hold both (book, pp. 235-236). Number each release with major, minor and patch, so every version is a deliberate decision (book, pp. 236-237). Keep model changes under change control and data changes under the data owner's rules (book, pp. 237-238). Tie every change request to a competency question, assess its impact by re-running the questions, and send changes to existing elements to the authority (book, p. 238). Review the questions at least every quarter (book, p. 240).
 
-The roles, cadence and the minimum to start with are on the [Governance Sheet](pipeline-governance). The pages used above are described in [Competency Questions](competency-questions), [Changes, Requests and Releases](changes-and-releases), [Entity Form](entity-form) and [Terms, Classes and Deprecation](terms-and-classes); the checks are in the [Gate Report](gate-report).
+The roles, cadence and the minimum to start with are on the [Governance Sheet](pipeline-governance). The pages used above are described in [Competency Questions](competency-questions), [Changes, Requests and Releases](changes-and-releases), [Entity Form](entity-form) and [Terms, Classes and Deprecation](terms-and-classes); the checks are in the [Model Checks](gate-report).
 
 ## Next stage
 

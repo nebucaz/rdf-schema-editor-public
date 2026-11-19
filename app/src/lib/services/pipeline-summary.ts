@@ -8,10 +8,20 @@ import { appUrl } from '#lib/utils/urls.js';
 import type { CompetencyQuestion, CompetencyQuestionRun } from './competency-question';
 import { buildReportRows } from './competency-question-report';
 import type { GateFinding, PipelineStage } from './gates/types';
+import type { Concept } from './skos-concept';
 import type { FetchedSchema } from './sparql-connector';
 
 export const STAGE_IDS = ['vocabulary', 'taxonomy', 'thesaurus', 'ontology', 'validation', 'application'] as const;
 export type StageId = (typeof STAGE_IDS)[number];
+
+export const STAGE_LABEL: Record<StageId, string> = {
+	vocabulary: 'Vocabulary',
+	taxonomy: 'Taxonomy',
+	thesaurus: 'Thesaurus',
+	ontology: 'Ontology',
+	validation: 'Validation',
+	application: 'Application'
+};
 
 export interface StageStat {
 	label: string;
@@ -36,13 +46,25 @@ export interface NamespaceSummary {
 
 export interface PipelineSummaryInput {
 	schema: FetchedSchema;
-	namespaces: { baseIri: string; prefix: string }[];
+	/** `vocabulary` marks the core vocabulary namespace, the only one that holds concepts. */
+	namespaces: { baseIri: string; prefix: string; vocabulary?: boolean }[];
+	/** The loaded concepts; without them (still loading, or no core vocabulary) the three concept stages are not started. */
+	concepts?: Concept[] | null;
 	findings: GateFinding[];
 	questions: CompetencyQuestion[];
 	runs: CompetencyQuestionRun[];
 }
 
 /** Which of the six stages a gate's stage is shown under; governance has no stage of its own here. */
+/** The Model checks stage filter that lists exactly the problems a strip counts; the Vocabulary strip counts two
+ *  gate stages, so it links to the unfiltered list. */
+const CHECKS_FILTER: Partial<Record<StageId, PipelineStage>> = {
+	taxonomy: 'taxonomy',
+	thesaurus: 'thesaurus',
+	ontology: 'ontology',
+	application: 'knowledgeGraph'
+};
+
 const STAGE_OF_GATE: Partial<Record<PipelineStage, StageId>> = {
 	vocabulary: 'vocabulary',
 	metadata: 'vocabulary',
@@ -68,7 +90,12 @@ export function pipelineSummary(input: PipelineSummaryInput): NamespaceSummary[]
 	}
 	const reportRows = buildReportRows(questions, runs);
 
-	return input.namespaces.map(({ baseIri, prefix }) => {
+	return input.namespaces.map(({ baseIri, prefix, vocabulary }) => {
+		// Concepts live in the core vocabulary namespace only.
+		const concepts = vocabulary ? (input.concepts ?? []) : [];
+		const live = concepts.filter((c) => c.status !== 'retired');
+		const hierarchy = live.filter((c) => c.topConcept || (c.broader?.length ?? 0) > 0).length;
+		const relations = live.filter((c) => (c.related?.length ?? 0) > 0 || (c.mappings?.length ?? 0) > 0).length;
 		const classes = schema.classes.filter((c) => c.namespaceBaseIri === baseIri).length;
 		const properties = [...schema.datatypeProperties, ...schema.objectProperties].filter(
 			(p) => p.namespaceBaseIri === baseIri
@@ -86,15 +113,16 @@ export function pipelineSummary(input: PipelineSummaryInput): NamespaceSummary[]
 				infos: mine.filter((f) => f.severity === 'info').length
 			};
 		};
-		const findingStat = (counts: { warnings: number; infos: number }): StageStat[] =>
-			counts.warnings + counts.infos > 0
-				? [{ label: 'Findings', value: counts.warnings + counts.infos, href: appUrl('/validation?tab=gates') }]
-				: [];
+		const findingStat = (id: StageId, counts: { warnings: number; infos: number }): StageStat[] => {
+			const filter = CHECKS_FILTER[id];
+			const href = appUrl(`/pipeline?tab=checks${filter ? `&stage=${filter}` : ''}`);
+			return counts.warnings + counts.infos > 0 ? [{ label: 'Problems', value: counts.warnings + counts.infos, href }] : [];
+		};
 
 		const stage = (id: StageId, status: StageSummary['status'], stats: StageStat[], counts = findingsFor(id)): StageSummary => ({
 			stage: id,
 			status,
-			stats: [...stats, ...(id === 'validation' ? [] : findingStat(counts))],
+			stats: [...stats, ...(id === 'validation' ? [] : findingStat(id, counts))],
 			warnings: counts.warnings,
 			infos: counts.infos
 		});
@@ -123,9 +151,15 @@ export function pipelineSummary(input: PipelineSummaryInput): NamespaceSummary[]
 			namespaceBaseIri: baseIri,
 			prefix,
 			stages: [
-				notStarted('vocabulary'),
-				notStarted('taxonomy'),
-				notStarted('thesaurus'),
+				live.length > 0
+					? stage('vocabulary', 'in-progress', [{ label: 'Concepts', value: live.length, href: appUrl('/vocabulary') }])
+					: notStarted('vocabulary'),
+				hierarchy > 0
+					? stage('taxonomy', 'in-progress', [{ label: 'In hierarchy', value: hierarchy, href: appUrl('/taxonomy') }])
+					: notStarted('taxonomy'),
+				relations > 0
+					? stage('thesaurus', 'in-progress', [{ label: 'With relations or mappings', value: relations, href: appUrl('/vocabulary') }])
+					: notStarted('thesaurus'),
 				classes + properties + mine.length > 0
 					? stage('ontology', 'in-progress', [
 							...(classes + properties > 0

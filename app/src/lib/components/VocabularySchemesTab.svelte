@@ -178,7 +178,7 @@
 		<ul>
 			{#if confirming.classes}<li>{confirming.classes} class link{confirming.classes === 1 ? '' : 's'} to these concepts will be removed.</li>{/if}
 			{#if confirming.collections}<li>{confirming.collections} collection{confirming.collections === 1 ? '' : 's'} lose these concepts as members.</li>{/if}
-			{#if confirming.properties}<li>{confirming.properties} concept propert{confirming.properties === 1 ? 'y' : 'ies'} take values of this scheme and stay; the Gate report will flag them.</li>{/if}
+			{#if confirming.properties}<li>{confirming.properties} concept propert{confirming.properties === 1 ? 'y' : 'ies'} take values of this scheme and stay; the Model checks will flag them.</li>{/if}
 		</ul>
 		<div class="buttons">
 			<button type="button" class="danger" onclick={() => remove(confirming!.iri, true)} data-testid="scheme-delete-confirm">

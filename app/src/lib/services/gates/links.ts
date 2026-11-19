@@ -9,7 +9,7 @@ export function gateFindingLink(finding: GateFinding, schema: FetchedSchema): st
 	const iri = finding.elementIri;
 	const conceptLink = appUrl(`/vocabulary?concept=${encodeURIComponent(iri)}`);
 	if (finding.stage === 'vocabulary') return conceptLink;
-	if (finding.gateId === 'question-review-overdue') return appUrl('/questions');
+	if (finding.gateId === 'question-review-overdue' || finding.gateId === 'failing-question') return appUrl('/questions');
 	if (finding.stage === 'governance') return appUrl('/governance');
 	// Taxonomy and thesaurus findings are about a concept, except the ones about a class (link consistency).
 	if ((finding.stage === 'taxonomy' || finding.stage === 'thesaurus') && !schema.classes.some((c) => c.iri === iri)) return conceptLink;

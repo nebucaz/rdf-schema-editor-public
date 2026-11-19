@@ -1,6 +1,6 @@
 # Stage Guide: Validation and Knowledge Graph
 
-The last stage of the book: check the model against real data, load that data, and run the result as something people rely on. The Pipeline page splits this stage in two, **Validation** (the shapes and their checks) and **Application** (the individuals), because the app counts them separately; this guide covers both, in the order you will usually do them. It follows the *IT landscape* example from [Worked Example: IT Landscape](pipeline-example), and it is a recommended step, not a gate.
+The last stage of the book: check the model against real data, load that data, and run the result as something people rely on. The Ontology page splits this stage in two, **Validation** (the shapes and their checks) and **Application** (the individuals), because the app counts them separately; this guide covers both, in the order you will usually do them. It follows the *IT landscape* example from [Worked Example: IT Landscape](pipeline-example), and it is a recommended step, not a gate.
 
 ## What this stage is for
 
@@ -15,8 +15,8 @@ A knowledge graph is the model plus the data: real applications, owners and data
 ## Steps
 
 1. **Run the shape checks.** Choose **Validation** in the navigation, then **Run Validation** on the SHACL validation tab. It evaluates every individual against the shapes and lists the violations per individual. Nothing is cached: each run starts fresh.
-2. **Read the Gate report.** On the same page, open the **Gate report** tab. It lists model and data findings by stage, each with an **Open** link to where it is fixed.
-3. **Look at the whole picture.** On the Pipeline **Overview**, read the stage strip of each namespace and the **Semantic debt** list. Every count links to the screen that shows it.
+2. **Read the Model checks.** On the Ontology page, open the **Model checks** tab. It lists the model problems with filters for stage and severity, each with an **Open** link to where it is fixed. Data problems are on the Validation page.
+3. **Look at the whole picture.** On the Ontology **Overview**, read the stage strip of each namespace and open **Model checks** for the open problems. Every count links to the screen that shows it.
 4. **Load the data.** For a catalog you already keep elsewhere, use the sync (see [Backstage Catalog Sync](backstage-catalog-sync)). For a few individuals by hand, open a class's members and choose **+ Add**.
 5. **Classify what has no class.** In **Identities**, set the class filter to **Unclassified (no class)** and give each individual a class (see [Identities](identities-area)).
 6. **Run the validation again.** New data breaks the shapes in ways the model did not show. Fix the data or the shape, whichever is wrong.
@@ -24,7 +24,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 8. **Write down the gaps.** Keep a short gap analysis: what the questions showed about the data, the vocabulary and the model (book, p. 308). It is the list for the next iteration.
 9. **Put it in front of real users.** Show the graph to people who will rely on it. Domain experts catch errors that engineers cannot, such as a link that holds in the model but not in the business. The read-only Review pages are made for this (book, p. 309).
 10. **Set the maturity.** On the **Governance** page, set **Maturity** to POC, pilot or production as the work moves on. The three phases are below.
-11. **Keep the rhythm.** Work the Semantic debt list, review the competency questions every quarter and update **Last reviewed**, and release through the Governance page when the change log has entries.
+11. **Keep the rhythm.** Work the Model checks, review the competency questions every quarter and update **Last reviewed**, and release through the Governance page when the change log has entries.
 
 ### The three phases
 
@@ -40,7 +40,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 - [ ] All competency questions have been run on the real data and the failing ones are on the gap list
 - [ ] At least one domain expert has looked at the results
 - [ ] Maturity is set to the phase you are in
-- [ ] There is a review rhythm for the questions and the debt list
+- [ ] There is a review rhythm for the questions and the Model checks
 
 ## Watch out for
 
@@ -62,7 +62,7 @@ A knowledge graph is the model plus the data: real applications, owners and data
 
 Two kinds of governance, kept apart. **Data governance** asks who can add, change or remove triples. **Semantic governance** asks who can change the ontology: add a class, change a property's domain or range, add a rule. Programmes stall when the two are mixed (book, p. 311). Assess the impact of a semantic change before it is committed, and version the ontology so that the systems that use it can move on their own schedule (book, pp. 311-312). Use the pilot to test the governance process as well as the model (book, p. 309).
 
-In the app, model changes go through a change request and the change log, a release sets the version, and the debt list and the quarterly review keep an eye on quality. Data arrives through the sync or by hand and is checked by the shapes. The roles, cadence and checklist are on the [Governance Sheet](pipeline-governance). The pages used above are described in [SHACL/Structural Validation](shacl-validation), [Validation Report View](validation-report-view), [Gate Report](gate-report), [Pipeline View](pipeline-view) and [Changes, Requests and Releases](changes-and-releases).
+In the app, model changes go through a change request and the change log, a release sets the version, and the Model checks and the quarterly review keep an eye on quality. Data arrives through the sync or by hand and is checked by the shapes. The roles, cadence and checklist are on the [Governance Sheet](pipeline-governance). The pages used above are described in [SHACL/Structural Validation](shacl-validation), [Validation Report View](validation-report-view), [Model Checks](gate-report), [Pipeline View](pipeline-view) and [Changes, Requests and Releases](changes-and-releases).
 
 ## Next stage
 

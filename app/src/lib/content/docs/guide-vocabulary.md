@@ -8,7 +8,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 
 ## Before you start
 
-- You can sign in and open **Vocabulary** in the Pipeline navigation.
+- You can sign in and open **Vocabulary** in the Ontology navigation.
 - You know who will answer for the meaning of the terms (an authority) and where definitions come from (a source). If you do not know yet, you can still start and fill both in later.
 - You have a rough list of the words people use. A service desk's ticket categories or an application inventory is a good source.
 
@@ -26,9 +26,9 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 10. **Add examples and working notes.** In **Examples** (one per line) show how the term is used. In **Editorial notes** write internal remarks for editors: they never appear on read-only pages. If the term has a legacy code, put it in **Notation**. The concept's **History** below its details is generated from the change log; you do not write it.
 11. **Record where it comes from.** Fill **Source** (where the definition comes from) and **Authority** (who answers for the meaning). Choose the **Scheme** and tick **Top concept** for the broadest terms of a branch. Choose **Save**.
 12. **Approve.** A new concept starts as *proposed*. When the authority agrees, select the concept and choose **Mark approved**. An approved concept needs a definition. A concept moves one step at a time: proposed, approved, active, deprecated, retired.
-13. **Run the checks.** Open **Validation**, then the **Gate report** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
+13. **Run the checks.** Open the **Ontology** page, then the **Model checks** tab, and read the vocabulary findings: missing definitions, duplicate labels, labels that clash, acronyms as preferred labels, label style. The Vocabulary list also shows a badge with the number of findings on each concept. Fix what is wrong, or decide to leave it and say why.
 14. **Merge a duplicate you find later.** If two concepts turn out to be one idea, open the one that should go and choose **Merge into…**, then pick the concept to keep. The preview lists everything that moves (labels, relations, collections, the classes that point at it) and what it leaves out; decide any conflict between two definitions or two notations, then choose **Merge**. The old concept stays as a retired entry that points to the one you kept.
-15. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only. A retired concept is no longer offered as a value of a concept property, and the Gate report lists individuals that still hold it (see "Concept properties" in the [Pipeline Guide](pipeline-guide)).
+15. **Retire a term with care.** Do not delete. Select the concept and choose **Deprecate**, give the reason and, if there is one, the replacement. Tick the option that adds the old label to the replacement as a hidden label, so a search for it still finds the new concept. **Delete** is for mistakes only. A retired concept is no longer offered as a value of a concept property, and the Model checks lists individuals that still hold it (see "Concept properties" in the [Pipeline Guide](pipeline-guide)).
 
 ## Done when
 
@@ -38,7 +38,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 - [ ] No two terms share a preferred label unless a qualifier tells them apart
 - [ ] Synonyms and abbreviations are alternative labels, and no alternative label equals another term's preferred label
 - [ ] Every term has a source and an authority
-- [ ] The Gate report shows no vocabulary warning that you have not decided about
+- [ ] The Model checks shows no vocabulary warning that you have not decided about
 
 ## Watch out for
 
@@ -57,7 +57,7 @@ A controlled vocabulary gives each thing in your domain one preferred name, a wr
 
 Decide *before* the vocabulary is shared how a new term gets in, and write the rule down. The book suggests grounding acceptance in evidence: how often people use the term, a regulatory need, a business priority, or visible confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how terms are versioned and retired (p. 50). A request names who asks, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Before each release, check that there are no cycles, every preferred term has a definition, no labels are duplicated and no alternative label clashes with another term (p. 51).
 
-In the app, use a change request for a term that needs a decision, and read the change log to see who changed what. The roles, the cadence and the minimum to start with are on the [Governance Sheet](pipeline-governance). Every check named above is a gate in the [Gate Report](gate-report); fields and statuses are described in [Vocabulary](vocabulary), and homonyms and deprecation in [Terms, Classes and Deprecation](terms-and-classes).
+In the app, use a change request for a term that needs a decision, and read the change log to see who changed what. The roles, the cadence and the minimum to start with are on the [Governance Sheet](pipeline-governance). Every check named above is a gate in the [Model Checks](gate-report); fields and statuses are described in [Vocabulary](vocabulary), and homonyms and deprecation in [Terms, Classes and Deprecation](terms-and-classes).
 
 ## Next stage
 

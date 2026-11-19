@@ -83,6 +83,7 @@ Related links join concepts of different branches:
 |---|---|
 | Application | Personal data |
 | Application | Application owner |
+| Application | Offering |
 
 Mappings point to concepts of another scheme. The target scheme here is an invented partner glossary:
 

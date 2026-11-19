@@ -12,7 +12,7 @@
 	let { routeView, onOpenGuide }: Props = $props();
 
 	const tabs = $derived([
-		{ href: appUrl('/pipeline'), label: 'Overview', title: 'Where each namespace stands, and the semantic debt', active: routeView.isPipelineView },
+		{ href: appUrl('/pipeline'), label: 'Overview', title: 'Where each namespace stands,', active: routeView.isPipelineView },
 		{ href: appUrl('/questions'), label: 'Questions', title: 'Competency questions: what the model must be able to answer', active: routeView.isQuestionsView },
 		{ href: appUrl('/vocabulary'), label: 'Vocabulary', title: 'The agreed terms and their definitions', active: routeView.isVocabularyView },
 		{ href: appUrl('/taxonomy'), label: 'Taxonomy', title: 'Terms arranged from general to specific', active: routeView.isTaxonomyView },

@@ -9,7 +9,7 @@ const LINKS = [
 	['Report', '/workbench', '/workbench'],
 	['Validation', '/validation', '/validation'],
 	['Issues', '/issues', '/issues'],
-	['Pipeline', '/pipeline', '/pipeline']
+	['Ontology', '/pipeline', '/pipeline']
 ] as const;
 
 function renderAt(pathname: string) {
@@ -100,7 +100,7 @@ describe('AppNav', () => {
 				['Schema', '/'],
 				['Validation', '/validation'],
 				['Issues', '/issues'],
-				['Pipeline', '/pipeline']
+				['Ontology', '/pipeline']
 			]);
 		});
 

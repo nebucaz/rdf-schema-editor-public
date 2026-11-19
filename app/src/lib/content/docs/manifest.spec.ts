@@ -259,6 +259,15 @@ describe('ontology-pipeline STORY-336: pipeline guide sections', () => {
 		}
 	});
 
+	it('keeps validation (data) and model checks (model) apart, and no longer puts the Gate report on /validation', () => {
+		const text = (id: string) => docSections.find((s) => s.id === id)!.content;
+		expect(text('gate-report')).toContain('Model checks');
+		expect(text('gate-report')).toContain('Validation page');
+		expect(text('gate-report')).not.toContain('tab on the Validation page');
+		expect(text('validation-report-view')).toContain('Model checks');
+		for (const section of docSections) expect(section.content, section.id).not.toMatch(/Gate report/i);
+	});
+
 	it('presents the method as a recommended order, not a rule', () => {
 		expect(docSections.find((s) => s.id === 'pipeline-guide')!.content).toMatch(/recommended order/i);
 	});

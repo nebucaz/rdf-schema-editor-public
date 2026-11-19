@@ -22,7 +22,7 @@ Metadata is data about data: who owns an application, when it was last confirmed
 4. **On paper: describe how each system uses the elements.** The inventory may call it *Owner*, the ticket tool *Assignee group*. Write down, per system, which field holds which element and what format it uses (book, pp. 73-74).
 5. **On paper: write the crosswalks.** For each pair of systems, the mapping between their fields, including the cases that are not one to one (book, p. 78).
 6. **On paper: choose the allowed values.** Where an element takes a value from a list, such as *data processed*, use a scheme from your vocabulary as that list (book, p. 78).
-7. **In the app: record source and authority on every term.** Open each concept in **Vocabulary**, choose **Edit** and fill **Source** and **Authority**. The Gate report warns about terms without them.
+7. **In the app: record source and authority on every term.** Open each concept in **Vocabulary**, choose **Edit** and fill **Source** and **Authority**. The Model checks warns about terms without them.
 8. **In the app: name the owners of the model.** On the **Governance** page, in *Owners and version*, fill **Steward**, **Authority**, **Maturity** (POC, pilot or production) and **Version**, and save.
 9. **In the app: model the elements as attributes.** On the Schema canvas, choose **+ Add attribute** on the class, give it a **Name** and a **Datatype**, and tick **Required** or **Repeatable** as the definition says. The attribute becomes a property with a shape constraint, which is how the rules of your profile are enforced when data is validated.
 10. **In the app: describe the catalog entry.** For classes you publish in a data catalog, open the **Catalog** tab of the Triples Panel and fill the fields such as **Publisher override**; leave a field empty to use the namespace's default.
@@ -49,7 +49,7 @@ Metadata is data about data: who owns an application, when it was last confirmed
 
 - It has no metadata application profile: you cannot declare a profile, version it or compare it with another one in the app. Steps 1 to 6 stay on paper.
 - It has no crosswalk editor and no per-system profile view.
-- It has no metadata gates. The Gate report checks terms, classes and shapes, not the completeness of a profile.
+- It has no metadata gates. The Model checks checks terms, classes and shapes, not the completeness of a profile.
 - It does not enforce who may add an element.
 
 ## Governance for this stage

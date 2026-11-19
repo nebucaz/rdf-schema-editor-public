@@ -23,7 +23,7 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 7. **Choose the kind of mapping.** For a concept in another scheme, pick the kind that says how close the two are: **exactMatch** (the same concept in both), **closeMatch** (nearly the same), **relatedMatch** (an associative link), **broadMatch** (the other concept is broader than yours) or **narrowMatch** (the other concept is narrower). The book explains the first three on p. 164. When in doubt, take the weaker one.
 8. **Point at the other concept.** Pick the registered vocabulary and type the term, or choose **(enter a full IRI)** and paste the concept's IRI. The app refuses a mapping to a concept of the same scheme: use a hierarchy or a related link there.
 9. **Add the link.** Choose **Add relation**. Repeat for each mapping.
-10. **Run the checks.** Open **Validation**, then the **Gate report** tab. Read the thesaurus findings (a mapping inside one scheme, a related link along a concept's own ancestry) together with the label and definition findings from the earlier stages.
+10. **Run the checks.** Open the **Ontology** page, then the **Model checks** tab. Read the thesaurus findings (a mapping inside one scheme, a related link along a concept's own ancestry) together with the label and definition findings from the earlier stages.
 11. **Use the other names.** Make sure synonyms live in **Alternative labels** and misspellings in **Hidden labels** of the concept. Search and query expansion rely on them, so that one concept answers to all of its names.
 12. **Group concepts with a collection when they belong together but are not a hierarchy.** In **Vocabulary**, open the **Collections** tab, choose **Add collection** above the list, type a **Label**, tick **Ordered collection** only when the order matters (steps, a ranking), and choose **Create collection**. Add members by searching for a concept or by choosing another collection. *When to use a collection, not a hierarchy:* use broader and narrower when a member *is a kind of* the parent (a dog is an animal). Use a collection when you only want a named set for a menu, a facet or a reading list (*European countries*, *Steps of onboarding*): nothing is implied about the members, and the app never flags a collection as an orphan. Deleting a collection removes only the grouping; the concepts stay.
 13. **See what your thesaurus does for search.** In the Query Workbench, the search adds the alternative and hidden labels, and the narrower concepts, of a term you type. The line **Also searching for:** shows them as chips you can switch off; broader concepts are off until you switch them on.
@@ -36,7 +36,7 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 - [ ] Every mapping points to a concept of another scheme and uses the weakest kind that is true
 - [ ] Every external vocabulary you map to is registered, or its IRI is recorded in full
 - [ ] Synonyms and misspellings are on the concept as alternative and hidden labels
-- [ ] The Gate report shows no thesaurus warning that you have not decided about
+- [ ] The Model checks shows no thesaurus warning that you have not decided about
 - [ ] A mapping review date is set
 
 ## Watch out for
@@ -49,15 +49,15 @@ The taxonomy says what is a kind of what. The thesaurus adds the links that a hi
 ## What the app does not do
 
 - It reports a related link between siblings and a related link to an own ancestor, but it cannot tell whether a related link is useful: step 5 stays with you.
-- It lists concepts that have no relation at all under **Scheme health** on the Pipeline page, but does not decide which of them should have one.
-- It does not treat a collection as part of the hierarchy: collections never appear in the taxonomy outline and no gate reports them.
+- It lists concepts that have no relation at all under **Scheme health** on the Ontology page, but does not decide which of them should have one.
+- It does not treat a collection as part of the hierarchy: collections never appear in the taxonomy outline and no model checkss them.
 - It does not schedule or remind you of a mapping review.
 
 ## Governance for this stage
 
 The thesaurus has no governance section of its own in the book; its rules come from the stages around it. Refine candidate terms into one reconciled, defined vocabulary and resist the pressure to keep ambiguous catch-alls (book, pp. 149-150). Build the review of mappings into the taxonomy governance cycle (book, p. 128). Check the structure with a quality tool for hierarchy cycles, colliding labels, missing documentation and related links that only repeat the tree (book, pp. 165-166).
 
-In the app, the Gate report covers the checks it can, a change request records a decision to add or change a mapping, and the change log shows who did it. The cadence is on the [Governance Sheet](pipeline-governance). The relations are described in [Terms, Classes and Deprecation](terms-and-classes), the registered vocabularies in [External Vocabulary Management View](external-vocabulary-management-view), and the checks in the [Gate Report](gate-report).
+In the app, the Model checks covers the checks it can, a change request records a decision to add or change a mapping, and the change log shows who did it. The cadence is on the [Governance Sheet](pipeline-governance). The relations are described in [Terms, Classes and Deprecation](terms-and-classes), the registered vocabularies in [External Vocabulary Management View](external-vocabulary-management-view), and the checks in the [Model Checks](gate-report).
 
 ## Next stage
 

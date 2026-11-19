@@ -1,5 +1,5 @@
 /**
- * The semantic debt settings (ontology-pipeline STORY-334). Like the other view preferences they are per
+ * The model check thresholds (ontology-pipeline STORY-334). Like the other view preferences they are per
  * browser, in `localStorage` behind an injectable storage.
  */
 import { DEFAULT_DEBT_SETTINGS, parseDebtSettings, type DebtSettings } from '#lib/services/debt-settings.js';

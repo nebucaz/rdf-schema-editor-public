@@ -1,6 +1,6 @@
-# Gate Report
+# Model Checks
 
-The **Gate report** tab on the Validation page lists quality findings about the model, grouped by pipeline stage. A *gate* is a check that looks at the loaded model and points out something worth a second look.
+The **Model checks** tab on the Ontology page lists quality problems in the model, with filters for stage, severity and search. Validation (the Validation page) checks the data against the SHACL shapes; model checks look at the model and never replace it. A *gate* is a check that looks at the loaded model and points out something worth a second look.
 
 Gates only advise. A finding never blocks a save and never disables a button; the method is a recommended order, not a mandatory process.
 
@@ -58,10 +58,10 @@ These gates look at properties whose values must be concepts of a scheme, and ne
 
 - **Concept property without concepts** (warning): the property's scheme has no concepts, or no longer exists.
 - **Retired concept as a value** (warning): an individual holds a deprecated or retired concept; the message names the replacement when the concept has one.
-- **Value outside the scheme** (info): an individual holds something that is not a concept of the scheme. Validation reports it too, so it is not counted in the semantic debt.
+- **Value outside the scheme** (info): an individual holds something that is not a concept of the scheme. Validation reports it too, so Model checks does not list it again.
 - **Relation to skos:Concept** (warning): a relation points at the external class `skos:Concept`, which the validation cannot check; use a concept property with a scheme instead.
 
-The two value checks read the individuals' values, so they only run on a model loaded with its individuals (the Pipeline page does; a view that loads the schema alone skips them silently).
+The two value checks read the individuals' values, so they only run on a model loaded with its individuals (the Ontology page does; a view that loads the schema alone skips them silently).
 
 ### SKOS structure and label gates
 
@@ -78,7 +78,7 @@ These follow the SKOS reference and the qSKOS quality criteria. Where a rule is 
 ## Governance gates
 
 - **Core namespace without steward, authority or version** (warning): name them on the Governance page. Silent when no namespace is the core vocabulary.
-- **Competency question not reviewed** (warning): a question was last reviewed longer ago than the review period (quarterly by default, a setting on the Pipeline page's debt list) or never.
+- **Competency question not reviewed** (warning): a question was last reviewed longer ago than the review period (quarterly by default) or never.
 
 ## Reading the report
 

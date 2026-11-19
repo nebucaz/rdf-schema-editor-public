@@ -85,7 +85,8 @@ describe('pipelineSummary', () => {
 		});
 		const a = stage(s, A, 'ontology');
 		expect([a.warnings, a.infos]).toEqual([1, 1]);
-		expect(stat(a, 'Findings')).toMatchObject({ value: 2, href: '/validation?tab=gates' });
+		expect(stat(a, 'Problems')).toMatchObject({ value: 2, href: '/pipeline?tab=checks&stage=ontology' });
+		expect(stat(stage(s, A, 'application'), 'Problems')?.href).toBe('/pipeline?tab=checks&stage=knowledgeGraph');
 		expect(stage(s, B, 'ontology').warnings).toBe(1);
 		expect(stage(s, A, 'application').warnings).toBe(1);
 	});
@@ -137,5 +138,34 @@ describe('pipelineSummary', () => {
 			{ baseIri: B, prefix: 'b', pipeline: false }
 		];
 		expect(pipelineNamespaces(all).map((n) => n.baseIri)).toEqual([A]);
+	});
+});
+
+describe('concept stages (core vocabulary namespace)', () => {
+	const concept = (name: string, extra: Record<string, unknown> = {}) =>
+		({ iri: `${A}#${name}`, status: 'active', topConcept: false, ...extra }) as never;
+	const summary = (concepts: unknown[]) =>
+		pipelineSummary({
+			schema,
+			namespaces: [{ baseIri: A, prefix: 'a', vocabulary: true }, { baseIri: B, prefix: 'b' }],
+			concepts: concepts as never,
+			findings: [],
+			questions: [],
+			runs: []
+		});
+
+	it('starts vocabulary, taxonomy and thesaurus from the concepts of the vocabulary namespace only', () => {
+		const result = summary([concept('x', { topConcept: true }), concept('y', { broader: [`${A}#x`], related: [`${A}#x`] })]);
+		expect(stage(result, A, 'vocabulary')).toMatchObject({ status: 'in-progress', stats: [{ label: 'Concepts', value: 2 }] });
+		expect(stage(result, A, 'taxonomy').status).toBe('in-progress');
+		expect(stage(result, A, 'thesaurus').status).toBe('in-progress');
+		expect(stage(result, B, 'vocabulary').status).toBe('not-started');
+	});
+
+	it('leaves taxonomy and thesaurus not started for flat concepts, and ignores retired ones', () => {
+		const result = summary([concept('x'), concept('gone', { status: 'retired', topConcept: true })]);
+		expect(stage(result, A, 'vocabulary').status).toBe('in-progress');
+		expect(stage(result, A, 'taxonomy').status).toBe('not-started');
+		expect(stage(result, A, 'thesaurus').status).toBe('not-started');
 	});
 });

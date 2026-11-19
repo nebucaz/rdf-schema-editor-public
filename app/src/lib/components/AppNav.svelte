@@ -19,7 +19,7 @@
 		{ href: appUrl('/validation'), label: 'Validation', title: 'Validation Report', active: routeView.isValidationView },
 		{ href: appUrl('/issues'), label: 'Issues', title: 'Validation Issues', active: routeView.isIssuesView },
 		// One entry for the whole area; `PipelineSubNav` switches between its pages.
-		{ href: appUrl('/pipeline'), label: 'Pipeline', title: 'Ontology Pipeline', active: routeView.isPipelineArea }
+		{ href: appUrl('/pipeline'), label: 'Ontology', title: 'Ontology', active: routeView.isPipelineArea }
 	]);
 	const activeLink = $derived(links.find((l) => l.active));
 

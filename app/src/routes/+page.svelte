@@ -221,7 +221,7 @@
 		});
 	}
 
-	/** `/?focus=<class IRI>` (linked from the Gate report): select that node and pan to it, if the active
+	/** `/?focus=<class IRI>` (linked from the Model checks): select that node and pan to it, if the active
 	 *  Workspace shows it. */
 	function focusFromUrl() {
 		const iri = page.url.searchParams.get('focus');

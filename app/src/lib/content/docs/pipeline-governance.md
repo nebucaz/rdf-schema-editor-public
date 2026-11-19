@@ -8,7 +8,7 @@ Governance here is a **recommended practice**. The app records owners, requests,
 
 | Stage | What the book asks for | What the app gives you |
 |---|---|---|
-| **Vocabulary** | Treat the vocabulary as a living system (p. 47). Decide how a new term gets in *before* rollout, and base that on evidence such as how often the term is used, a regulation, a business priority or visible user confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how you version and retire terms (p. 50). A request names the requester, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Retire terms by marking them, with a reason, a date and a replacement, and keep them for old data (p. 51). Before each release check for cycles, missing definitions, duplicate labels and labels that clash (p. 51). | Status steps from proposed to retired; **Deprecate** with reason, date and replacement; duplicate check that offers *Add as alternative label*; the vocabulary gates in the [Gate Report](gate-report); change requests and the change log on the Governance page. |
+| **Vocabulary** | Treat the vocabulary as a living system (p. 47). Decide how a new term gets in *before* rollout, and base that on evidence such as how often the term is used, a regulation, a business priority or visible user confusion (p. 50). Say who can ask for a change, who approves it, how often you review, and how you version and retire terms (p. 50). A request names the requester, the proposed term, definition and relations, and the reason; a rejection gives its reason; a synonym becomes an alternative label instead of a new term (p. 51). Retire terms by marking them, with a reason, a date and a replacement, and keep them for old data (p. 51). Before each release check for cycles, missing definitions, duplicate labels and labels that clash (p. 51). | Status steps from proposed to retired; **Deprecate** with reason, date and replacement; duplicate check that offers *Add as alternative label*; the vocabulary gates in the [Model Checks](gate-report); change requests and the change log on the Governance page. |
 | **Metadata** | Design governance and meaning together, not in separate teams (p. 68). A metadata application profile (MAP) keeps meaning steady in three ways: every element has a precise definition, a new meaning gets a new element through a formal process, and rules enforce the profile (pp. 76-77). Version the profile and track changes (p. 79). Let domain experts own their metadata while one place coordinates the standards, and automate the checks (p. 79). | Source, authority and status on each concept; steward, authority, maturity and version on the Governance page. The profile itself is not modelled in the app. |
 | **Taxonomy** | Keep the hierarchy under change control, so every change is deliberate, reviewed and reversible (p. 134). Validate on every change: one preferred label per language, no label used in two roles, no cycles, top concepts without a broader concept (pp. 134-135). Give each concept a lifecycle from proposed to retired, with notes that say what changed and why, and keep the old label findable on the replacement (p. 135). Use the quality checklists (pp. 115, 137). | The same five statuses; the change log; deprecation that can copy the old label to the replacement as a hidden label; taxonomy gates for cycles, top concepts, uneven depth, overlapping siblings and circular definitions. |
 | **Thesaurus** | Collapse and refine candidate terms into one reconciled, defined vocabulary and resist pressure to keep vague catch-alls (pp. 149-150). Build the review of mappings into the taxonomy review cycle (p. 128). Run a quality check for hierarchy cycles, labels that collide, concepts without definition and related links that only repeat the tree (pp. 165-166). | Mapping gate (no mapping inside one scheme), a prompt when a related link joins a concept and its own ancestor, and the label and definition gates. |
@@ -40,7 +40,7 @@ Suggested split, recorded in the app as names and not enforced. *R* does it, *A*
 | With every release | Read the log since the last release, accept or change the suggested version, check the gates first |
 | Every quarter, at least | Review the competency questions: a new question the model cannot answer is a scope change, an obsolete one a candidate for deprecation, a wrong answer a defect (p. 240) |
 | With each taxonomy review | Review mappings to other vocabularies |
-| When the debt list grows | Work the semantic debt list on the Pipeline Overview |
+| When the problem list grows | Work the Model checks |
 
 ## The minimum to start with
 
@@ -71,7 +71,7 @@ Print this from the standalone guide; the in-app page is for reading.
 
 Before a release:
 
-- [ ] Gate report read; no warning left without a decision
+- [ ] Model checks read; no warning left without a decision
 - [ ] Every approved change request has a rationale and a change log entry
 - [ ] Failing competency questions explained or fixed
 - [ ] Suggested version checked (major, minor or patch)
@@ -79,7 +79,7 @@ Before a release:
 Every quarter:
 
 - [ ] Competency questions reviewed and their *Last reviewed* date updated
-- [ ] Semantic debt list worked through
+- [ ] Model checks worked through
 - [ ] Mappings to other vocabularies reviewed
 - [ ] Steward, authority and maturity still correct
 
@@ -89,4 +89,4 @@ When a change request arrives:
 - [ ] Impact assessed
 - [ ] Decision and rationale recorded
 
-See [Changes, Requests and Releases](changes-and-releases), [Competency Questions](competency-questions) and the [Gate Report](gate-report) for how each step works in the app.
+See [Changes, Requests and Releases](changes-and-releases), [Competency Questions](competency-questions) and the [Model Checks](gate-report) for how each step works in the app.

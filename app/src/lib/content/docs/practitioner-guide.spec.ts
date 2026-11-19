@@ -63,8 +63,8 @@ describe('practitioner guide: links', () => {
 	});
 
 	it('turns a link to a page that is not in the file into plain text', () => {
-		expect(built).not.toMatch(/\[Gate Report\]\(/);
-		expect(built).toContain('Gate Report');
+		expect(built).not.toMatch(/\[Model Checks\]\(/);
+		expect(built).toContain('Model Checks');
 	});
 });
 

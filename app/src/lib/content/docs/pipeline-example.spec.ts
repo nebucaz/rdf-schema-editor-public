@@ -6,7 +6,7 @@ import { lintLabel } from '#lib/services/gates/vocabulary.js';
 import { docSections } from './manifest';
 
 /** process-description STORY-339: the worked example is checked against the real gates, so following the guides
- *  with it produces a clean Gate report. */
+ *  with it produces a clean Model checks. */
 const section = docSections.find((s) => s.id === 'pipeline-example');
 const text = section?.content ?? '';
 
@@ -109,9 +109,9 @@ describe('worked example: content', () => {
 		expect(text).toMatch(/1\.2\.0.*1\.3\.0.*minor/s);
 	});
 
-	it('has related links across branches and two mappings to another scheme', () => {
+	it('has related links across branches (every branch connected) and two mappings to another scheme', () => {
 		const related = tableAfter('Related terms');
-		expect(related).toHaveLength(2);
+		expect(related).toHaveLength(3);
 		expect(mappingRows).toHaveLength(2);
 		for (const [, , target] of mappingRows) expect(target.startsWith('https://example.org/')).toBe(true);
 	});
@@ -124,7 +124,7 @@ describe('worked example: clean against the gates', () => {
 		}
 	});
 
-	it('the Gate report for the example has no finding', () => {
+	it('the Model checks for the example has no finding', () => {
 		const findings = runGates(schema, { concepts, stages: ['vocabulary', 'taxonomy', 'thesaurus'] }, GATES);
 		expect(findings.map((f) => `${f.gateId}: ${f.message}`)).toEqual([]);
 	});

@@ -10,8 +10,14 @@
 	let { hasPipelineNamespace }: Props = $props();
 </script>
 
-<details class="getting-started" open={!hasPipelineNamespace} data-testid="getting-started">
-	<summary>New to the pipeline? Start here</summary>
+<div class="getting-started" data-testid="getting-started">
+	<p class="order">
+		Recommended order: vocabulary, taxonomy, thesaurus, ontology, validation, application. It is a guide, not a
+		rule. Work on any stage at any time, return to earlier ones, and skip what you do not need. Nothing here
+		blocks anything.
+	</p>
+	<details class="steps" open={!hasPipelineNamespace} data-testid="getting-started-steps">
+	<summary>New to the ontology pipeline? Start here</summary>
 	<ol>
 		<li>
 			<strong>Pick the namespaces.</strong>
@@ -31,22 +37,20 @@
 		</li>
 		<li>
 			<strong>Check and release.</strong>
-			Run the questions again, work through the semantic debt below, and record changes and releases in
+			Run the questions again, work through the Model checks, and record changes and releases in
 			<a href={appUrl('/governance')}>Governance</a>.
 		</li>
 	</ol>
-	<p>
-		The order is a recommendation, never enforced. The <strong>Quick start</strong> button above opens the full explanation.
-	</p>
 </details>
+</div>
 
 <style>
 	.getting-started {
 		max-width: 60rem;
-		padding: 0.5rem 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
 		font-size: 0.9rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
 	}
 	summary {
 		cursor: pointer;

@@ -7,3 +7,12 @@ import { afterEach } from 'vitest';
 (globalThis as Record<string, unknown>).__sveltekit_dev = { env: {} };
 
 afterEach(() => cleanup());
+
+// jsdom has no ResizeObserver, which Svelte's `bind:clientWidth` uses; it never reports a size here.
+if (typeof ResizeObserver === 'undefined') {
+	(globalThis as Record<string, unknown>).ResizeObserver = class {
+		observe() {}
+		unobserve() {}
+		disconnect() {}
+	};
+}

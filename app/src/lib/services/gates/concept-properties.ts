@@ -2,7 +2,7 @@
  * Hygiene of concept-valued properties (spec/concept-valued-properties STORY-440), ontology stage. Prompts only:
  *  1. a concept property whose scheme is gone or has no concepts,
  *  2. an individual whose value is a deprecated or retired concept (the replacement is named when there is one),
- *  3. a value that is not a concept of the scheme (also reported by Validation; kept out of the semantic debt),
+ *  3. a value that is not a concept of the scheme (also reported by Validation; kept out of the Model checks),
  *  4. a relation to the external class `skos:Concept`, which the validation engine cannot evaluate.
  * Silent without the vocabulary's concepts. Findings 2 and 3 read the individuals' values, which only the `full`
  * schema carries: on a schema loaded without individuals they are skipped silently.

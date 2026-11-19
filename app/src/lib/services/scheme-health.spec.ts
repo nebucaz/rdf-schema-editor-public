@@ -27,10 +27,17 @@ describe('analyseSchemeHealth (STORY-422)', () => {
 		expect(r.orphans).toEqual([iri('lonely')]);
 	});
 
-	it('a top concept without relations is not an orphan but has no relation', () => {
+	it('a top concept without relations is counted, not listed as an orphan', () => {
 		const r = report([c('top', { topConcept: true }), c('other', { topConcept: true })]);
 		expect(r.orphans).toEqual([]);
-		expect(r.withoutRelation).toEqual([iri('other'), iri('top')]);
+		expect(r.topConceptsWithoutRelation).toBe(2);
+		expect('withoutRelation' in r).toBe(false);
+	});
+
+	it('an orphan appears once and is not counted among the lone top concepts', () => {
+		const r = report([c('top', { topConcept: true }), c('lonely')]);
+		expect(r.orphans).toEqual([iri('lonely')]);
+		expect(r.topConceptsWithoutRelation).toBe(1);
 	});
 
 	it('finds disconnected clusters, largest first', () => {

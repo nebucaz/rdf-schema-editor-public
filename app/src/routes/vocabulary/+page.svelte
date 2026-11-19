@@ -131,7 +131,7 @@
 			externals = loadedExternals;
 			concepts = loadedConcepts ?? [];
 			reloadKey++;
-			// A link from the Gate report: `/vocabulary?concept=<iri>`.
+			// A link from the Model checks: `/vocabulary?concept=<iri>`.
 			const wanted = page.url.searchParams.get('concept');
 			if (wanted && !selectedIri && concepts.some((c) => c.iri === wanted)) selectedIri = wanted;
 		} catch (e) {

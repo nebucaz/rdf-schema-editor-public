@@ -16,8 +16,8 @@ export interface SchemeHealth {
 	conceptCount: number;
 	/** No broader, narrower, related or mapping, and not a top concept. */
 	orphans: string[];
-	/** No relation of any kind, top concepts included. */
-	withoutRelation: string[];
+	/** Top concepts with no relation of any kind; a count only, they are not defects to list. */
+	topConceptsWithoutRelation: number;
 	/** Connected groups over broader and related, largest first. */
 	clusters: string[][];
 	/** `skos:related` pairs where one concept is an ancestor, two or more levels up, of the other. */
@@ -68,8 +68,9 @@ function analyse(schemeIri: string, members: Concept[], known: Set<string>): Sch
 		if (m.mappings?.length) hasRelation.add(m.iri);
 	}
 
-	const withoutRelation = sorted(members.filter((m) => !hasRelation.has(m.iri)).map((m) => m.iri));
-	const orphans = withoutRelation.filter((i) => !byIri.get(i)!.topConcept);
+	const unrelated = members.filter((m) => !hasRelation.has(m.iri));
+	const orphans = sorted(unrelated.filter((m) => !m.topConcept).map((m) => m.iri));
+	const topConceptsWithoutRelation = unrelated.length - orphans.length;
 
 	const seen = new Set<string>();
 	const clusters: string[][] = [];
@@ -130,7 +131,7 @@ function analyse(schemeIri: string, members: Concept[], known: Set<string>): Sch
 		schemeIri,
 		conceptCount: members.length,
 		orphans,
-		withoutRelation,
+		topConceptsWithoutRelation,
 		clusters,
 		transitiveRelated,
 		polyhierarchy: sorted(members.filter((m) => parents(m).length > 1).map((m) => m.iri)),

@@ -4,9 +4,9 @@ A *concept* in the vocabulary names a meaning; a *class* in the schema is a set 
 
 ## The link between a class and its concept
 
-A class can point to the concept that defines it. The link is stored on the class as `rse:definedByConcept`, in the class's own schema graph, and the class form shows a concept picker. When a class is linked, its definition lives in one place, the concept; the class keeps only a pointer. If the class also has its own description that differs from the concept's definition, the [Gate Report](gate-report) shows *definition drift*.
+A class can point to the concept that defines it. The link is stored on the class as `rse:definedByConcept`, in the class's own schema graph, and the class form shows a concept picker. When a class is linked, its definition lives in one place, the concept; the class keeps only a pointer. If the class also has its own description that differs from the concept's definition, the [Model Checks](gate-report) shows *definition drift*.
 
-Starting from the other side, **Promote to class** on an approved or active concept creates a class from it and links the two. For a model that already has classes, **Create concepts for unlinked classes** proposes one concept per class, which you review before anything is written (see [Vocabulary](vocabulary)). Retargeting a link, for example after a concept is replaced, can be done from the Gate Report.
+Starting from the other side, **Promote to class** on an approved or active concept creates a class from it and links the two. For a model that already has classes, **Create concepts for unlinked classes** proposes one concept per class, which you review before anything is written (see [Vocabulary](vocabulary)). Retargeting a link, for example after a concept is replaced, can be done from the Model Checks.
 
 ## Classes or concepts?
 

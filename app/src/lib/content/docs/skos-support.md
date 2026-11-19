@@ -16,7 +16,7 @@ Preferred, alternative and hidden labels with language tags, definition, scope n
 
 ## Checks
 
-The [Gate report](gate-report) reports the known SKOS and qSKOS defects, and **Scheme health** on the [Pipeline](pipeline-view) page summarises each scheme. They advise; nothing blocks a save.
+The [Model checks](gate-report) reports the known SKOS and qSKOS defects, and **Scheme health** on the [Ontology](pipeline-view) page summarises each scheme. They advise; nothing blocks a save.
 
 ## Reading and printing
 

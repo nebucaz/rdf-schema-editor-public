@@ -3,6 +3,8 @@
 A read-only SHACL constraint-violation report. Available inline and as the dedicated **Validation
 Report** route, via the **Validation** tab in the navigation strip.
 
+Validation checks the **data** against the SHACL shapes. Whether the **model** is well built is a separate question, answered by the **Model checks** tab on the Pipeline page; the two never share counts.
+
 ## What you see
 
 The page opens with the findings of the **last run**, so a finding link works without running anything; the

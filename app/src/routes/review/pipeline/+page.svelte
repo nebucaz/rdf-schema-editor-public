@@ -1,54 +1,29 @@
 <script lang="ts">
-	/** Read-only pipeline status (ontology-pipeline STORY-335): the stage strip of each namespace, without the
-	 *  debt settings or any control. Only reads. */
+	/** Read-only Ontology status (ontology-pipeline STORY-335, spec/ontology-dashboard STORY-475): the same tiles as the
+	 *  Overview, in the default order, without any control, guide link or stored arrangement. Only reads. The checklist
+	 *  and the guides belong to the editor, so those two tiles are left out. */
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
-	import StageStrip from '#lib/components/StageStrip.svelte';
-	import { runGates } from '#lib/services/gates/index.js';
-	import { pipelineNamespaces, pipelineSummary, type NamespaceSummary } from '#lib/services/pipeline-summary.js';
-	import { sparqlConnector } from '#lib/services/sparql-connector.js';
-	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
-	import { schemaStore } from '#lib/stores/schema-store.js';
+	import OntologyDashboard from '#lib/components/OntologyDashboard.svelte';
+	import { DEFAULT_LAYOUT, hideTile, type DashboardLayout } from '#lib/services/dashboard-layout.js';
+	import { ontologyDashboardDeps } from '#lib/stores/ontology-dashboard-deps.js';
+	import { createOntologyDashboardState } from '#lib/stores/ontology-dashboard-state.svelte.js';
 
-	let summaries = $state<NamespaceSummary[]>([]);
-	let loading = $state(true);
-	let error = $state<string | null>(null);
+	const dashboard = createOntologyDashboardState(ontologyDashboardDeps());
+	const layout: DashboardLayout = hideTile(hideTile(DEFAULT_LAYOUT, 'getting-started'), 'guides');
 
-	onMount(async () => {
-		if (!page.data.user) return;
-		try {
-			const [schema, questions, runs] = await Promise.all([
-				schemaStore.ensureLoaded('full'),
-				sparqlConnector.fetchCompetencyQuestions(),
-				sparqlConnector.fetchCompetencyQuestionRuns(),
-				namespaceStore.ensureLoaded()
-			]);
-			summaries = pipelineSummary({ schema, namespaces: pipelineNamespaces(namespaceStore.namespaces), findings: runGates(schema), questions, runs });
-		} catch (e) {
-			error = e instanceof Error ? e.message : 'Failed to load the pipeline status';
-		} finally {
-			loading = false;
-		}
+	onMount(() => {
+		if (page.data.user) void dashboard.load();
 	});
 </script>
 
 <svelte:head>
-	<title>Pipeline (review) — RDF Schema Editor</title>
+	<title>Ontology (review) — RDF Schema Editor</title>
 </svelte:head>
 
 <div class="review-page">
-	<h1>Pipeline status</h1>
-	{#if error}
-		<p class="error" role="alert">{error}</p>
-	{:else if loading}
-		<p>Loading…</p>
-	{:else if summaries.length === 0}
-		<p data-testid="no-pipeline-namespaces">No namespace is part of the ontology pipeline yet.</p>
-	{:else}
-		{#each summaries as summary (summary.namespaceBaseIri)}
-			<StageStrip {summary} />
-		{/each}
-	{/if}
+	<h1>Ontology status</h1>
+	<OntologyDashboard state={dashboard} {layout} readonly />
 </div>
 
 <style>
@@ -65,10 +40,6 @@
 	h1 {
 		font-size: 1.3rem;
 		margin: 0;
-	}
-
-	.error {
-		color: var(--color-error);
 	}
 
 	@media print {

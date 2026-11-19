@@ -13,7 +13,14 @@ const roots = [
 	join(SRC, 'lib', 'components', 'ConceptReview.svelte'),
 	join(SRC, 'lib', 'components', 'GlossaryBrowser.svelte'),
 	join(SRC, 'lib', 'components', 'SchemePrintView.svelte'),
-	join(SRC, 'lib', 'components', 'TaxonomyGraph.svelte')
+	join(SRC, 'lib', 'components', 'TaxonomyGraph.svelte'),
+	// The dashboard the review page shares with the editor: never a write itself. (DashboardGrid is left out: its drag
+	// handler calls `dataTransfer.setData`, which the pattern would take for a connector write; its own spec covers `readonly`.)
+	join(SRC, 'lib', 'components', 'OntologyDashboard.svelte'),
+	join(SRC, 'lib', 'components', 'GovernanceTile.svelte'),
+	join(SRC, 'lib', 'components', 'RecentChangesTile.svelte'),
+	join(SRC, 'lib', 'stores', 'ontology-dashboard-state.svelte.ts'),
+	join(SRC, 'lib', 'stores', 'ontology-dashboard-deps.ts')
 ];
 
 function files(path: string): string[] {

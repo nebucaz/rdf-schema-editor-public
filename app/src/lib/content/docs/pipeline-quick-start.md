@@ -21,7 +21,7 @@ On the **Schema** canvas draw classes, properties and shapes. Link each class to
 ## 5. Check, change and release
 
 - Run all questions on the Questions page; a question that used to pass and now fails is a regression.
-- Work through the **semantic debt** list on the Overview: each item has an Open link to where it is fixed.
+- Work through the [Model Checks](gate-report): each finding has an Open link to where it is fixed.
 - Record decisions in **Governance**: owners, change requests, the change log and releases. See [Changes, Requests and Releases](changes-and-releases).
 
 ## Step-by-step guides

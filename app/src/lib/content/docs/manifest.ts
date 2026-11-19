@@ -310,14 +310,14 @@ const sectionMetas: DocSectionMeta[] = [
 	},
 	{
 		id: 'gate-report',
-		title: 'Gate Report',
+		title: 'Model Checks',
 		category: 'Ontology Pipeline',
 		order: 130,
 		file: 'gate-report.md'
 	},
 	{
 		id: 'pipeline-view',
-		title: 'Pipeline View',
+		title: 'Ontology Page',
 		category: 'Ontology Pipeline',
 		order: 140,
 		file: 'pipeline-view.md'
