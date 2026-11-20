@@ -59,7 +59,7 @@ ex:Contractor a skos:Concept ; skos:prefLabel "Freelancer"@en .`;
 		expect(selectImportWrites(plan, existing, {}, 'f.ttl').concepts).toEqual([]);
 		const taken = selectImportWrites(plan, existing, { entries: { [c('Manager')]: 'take', [c('Contractor')]: 'take' } }, 'f.ttl');
 		const manager = taken.concepts.find((x) => x.iri === c('Manager'))!;
-		expect(manager).toMatchObject({ mode: 'update', draft: { definition: 'A leader.', status: 'active' } });
+		expect(manager).toMatchObject({ mode: 'update', draft: { definitions: [{ text: 'A leader.', lang: '' }], status: 'active' } });
 		expect(taken.concepts.find((x) => x.iri === c('Contractor'))!.draft.prefLabels).toEqual([{ text: 'Freelancer', lang: 'en' }]);
 		expect(taken.summary.changed).toBe(2);
 	});
@@ -72,7 +72,7 @@ ex:Contractor a skos:Concept ; skos:prefLabel "Freelancer"@en .`;
 		const write = w.concepts[0];
 		expect(write).toMatchObject({ iri: c('Employee'), mode: 'update', broader: [c('Employee')] });
 		expect(write.draft.altLabels.map((l) => l.text)).toEqual(['Staff member', 'Staff']);
-		expect(write.draft.definition).toBe('A person employed by the organisation.');
+		expect(write.draft.definitions).toEqual([{ text: 'A person employed by the organisation.', lang: '' }]);
 		expect(w.summary.merged).toBe(1);
 	});
 
@@ -108,7 +108,7 @@ describe('applyImport (STORY-417)', () => {
 			{
 				applyImportPlan: async () => { order.push('write'); },
 				recordChange: async (e) => { order.push('log'); entries.push(e); return null; },
-				loadConcepts: async () => [{ ...fixtureVocabulary().concepts[0], iri: c('Alpha'), prefLabels: [{ text: 'Alpha', lang: 'en' }], definition: '', status: 'active' as const }]
+				loadConcepts: async () => [{ ...fixtureVocabulary().concepts[0], iri: c('Alpha'), prefLabels: [{ text: 'Alpha', lang: 'en' }], definitions: [], status: 'active' as const }]
 			},
 			'http://example.org/core',
 			writes

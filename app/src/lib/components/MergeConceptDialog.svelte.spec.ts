@@ -4,13 +4,13 @@ import MergeConceptDialog from './MergeConceptDialog.svelte';
 import type { Concept } from '#lib/services/skos-concept.js';
 
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri: 'urn:s:1', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '', created: '',
 	modified: '', deprecatedOn: '', ...over
 });
 const concepts = [
-	c('Staff', { definition: 'People who work here.', notation: ['S1'] }),
-	c('Employee', { definition: 'A person employed.', altLabels: [{ text: 'Worker', lang: 'en' }], notation: ['E1'] }),
+	c('Staff', { definitions: [{ text: 'People who work here.', lang: '' }], notation: ['S1'] }),
+	c('Employee', { definitions: [{ text: 'A person employed.', lang: '' }], altLabels: [{ text: 'Worker', lang: 'en' }], notation: ['E1'] }),
 	c('Other')
 ];
 

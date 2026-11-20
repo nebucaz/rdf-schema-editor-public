@@ -30,8 +30,10 @@ export interface ConceptDraft {
 	prefLabels: LangText[];
 	altLabels: LangText[];
 	hiddenLabels: LangText[];
-	definition: string;
-	scopeNote: string;
+	/** `skos:definition`, one per language. */
+	definitions: LangText[];
+	/** `skos:scopeNote`, one per language. */
+	scopeNotes: LangText[];
 	/** Legacy or system codes (`skos:notation`); zero or more, plain literals. */
 	notation?: string[];
 	/** `skos:example`: how the term is used; zero or more. */
@@ -45,7 +47,12 @@ export interface ConceptDraft {
 	topConcept: boolean;
 	status: ConceptStatus;
 	source: string;
+	/** Name of the group holding authority: the label of the linked business unit, or an old plain-text value. */
 	authority: string;
+	/** The business unit node `authority` names; absent for an old plain-text value. */
+	authorityIri?: string;
+	/** Save only: `authority` is a new name, so the store links the unit of that name or creates it. */
+	authorityCreate?: boolean;
 	replacedBy: string;
 	deprecationReason: string;
 }
@@ -128,28 +135,77 @@ export function normaliseLabel(label: string): string {
 
 const hasText = (v: LangText) => v.text.trim() !== '';
 
+/** Same shape the Go glossary accepts (`backend/internal/glossary`): a BCP 47-like tag. */
+const LANG_TAG = /^[A-Za-z]{1,8}(-[A-Za-z0-9]{1,8})*$/;
+
+/** Whether `tag` is usable as a language tag; the empty string means "no language" and is allowed. */
+export function isValidLangTag(tag: string): boolean {
+	return tag === '' || LANG_TAG.test(tag);
+}
+
+/** Tags offered in the language pickers' datalist; any valid tag may still be typed. */
+export const COMMON_LANG_TAGS = ['en', 'de', 'fr', 'it', 'es', 'nl', 'pt', 'sv', 'da', 'pl', 'ja', 'zh'] as const;
+
+const sameLang = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+/** The trimmed text in `lang` (case-insensitive), or '' when there is none. */
+export function textIn(values: LangText[], lang: string): string {
+	return values.find((v) => hasText(v) && sameLang(v.lang, lang))?.text.trim() ?? '';
+}
+
+/** One string out of per-language values: the preferred language if present, else the first non-empty text.
+ *  Every consumer that needs a single definition or note goes through this. */
+export function primaryText(values: LangText[], preferredLang?: string): string {
+	if (preferredLang !== undefined) {
+		const preferred = textIn(values, preferredLang);
+		if (preferred) return preferred;
+	}
+	return values.find(hasText)?.text.trim() ?? '';
+}
+
+/** Each non-empty text as `text (lang)`, bare when untagged; for views that show every language. */
+export function taggedTexts(values: LangText[]): string[] {
+	return values.filter(hasText).map((v) => (v.lang.trim() ? `${v.text.trim()} (${v.lang.trim()})` : v.text.trim()));
+}
+
+/** Sorted, lower-cased tags used by any non-empty label, definition or scope note. */
+export function languagesOf(c: Pick<ConceptDraft, 'prefLabels' | 'altLabels' | 'hiddenLabels' | 'definitions' | 'scopeNotes'>): string[] {
+	const tags = [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels, ...c.definitions, ...c.scopeNotes]
+		.filter(hasText)
+		.map((v) => v.lang.trim().toLowerCase());
+	return [...new Set(tags)].sort();
+}
+
 export function validateConceptDraft(d: ConceptDraft): string[] {
 	const errors: string[] = [];
+	const add = (msg: string) => {
+		if (!errors.includes(msg)) errors.push(msg);
+	};
 	const prefs = d.prefLabels.filter(hasText);
 	if (prefs.length === 0) errors.push('A preferred label is required');
+	for (const v of [...d.prefLabels, ...d.altLabels, ...d.hiddenLabels, ...d.definitions, ...d.scopeNotes].filter(hasText)) {
+		if (!isValidLangTag(v.lang.trim())) add(`Invalid language tag "${v.lang.trim()}"`);
+	}
 	const seen = new Set<string>();
 	for (const p of prefs) {
 		const lang = p.lang.trim().toLowerCase();
-		if (seen.has(lang)) {
-			const msg = `Only one preferred label per language (${lang || 'none'})`;
-			if (!errors.includes(msg)) errors.push(msg);
-		}
+		if (seen.has(lang)) add(`Only one preferred label per language (${lang || 'none'})`);
 		seen.add(lang);
-		if (/[()]/.test(p.text)) {
-			const msg = 'Preferred label must not contain parentheses; use the disambiguation field';
-			if (!errors.includes(msg)) errors.push(msg);
+		if (/[()]/.test(p.text)) add('Preferred label must not contain parentheses; use the disambiguation field');
+	}
+	for (const [values, noun] of [[d.definitions, 'definition'], [d.scopeNotes, 'scope note']] as const) {
+		const langs = new Set<string>();
+		for (const v of values.filter(hasText)) {
+			const lang = v.lang.trim().toLowerCase();
+			if (langs.has(lang)) add(`Only one ${noun} per language (${lang || 'none'})`);
+			langs.add(lang);
 		}
 	}
-	const prefNorm = new Set(prefs.map((p) => normaliseLabel(p.text)));
 	for (const a of d.altLabels.filter(hasText)) {
-		if (prefNorm.has(normaliseLabel(a.text))) errors.push(`Alternative label "${a.text.trim()}" repeats the preferred label`);
+		const repeats = prefs.some((p) => sameLang(p.lang, a.lang) && normaliseLabel(p.text) === normaliseLabel(a.text));
+		if (repeats) errors.push(`Alternative label "${a.text.trim()}" repeats the preferred label`);
 	}
-	if (d.status !== 'proposed' && !d.definition.trim()) errors.push('A definition is required before a concept is approved');
+	if (d.status !== 'proposed' && !d.definitions.some(hasText)) errors.push('A definition is required before a concept is approved');
 	if (d.topConcept && !d.schemeIri.trim()) errors.push('A top concept needs a scheme');
 	return errors;
 }
@@ -246,7 +302,7 @@ export function filterConcepts(concepts: Concept[], filter: ConceptFilter): Conc
 		if (!wanted) return true;
 		const haystack = [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels]
 			.map((l) => l.text)
-			.concat(c.definition, c.notation ?? []);
+			.concat(c.definitions.map((d) => d.text), c.notation ?? []);
 		return haystack.some((text) => normaliseLabel(text).includes(wanted));
 	});
 }

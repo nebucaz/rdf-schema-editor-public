@@ -122,8 +122,20 @@ func Turtle(schemes []Scheme, concepts []Concept) string {
 				e = append(e, entry{p, quote(v)})
 			}
 		}
-		text("skos:definition", c.Definition)
-		text("skos:scopeNote", c.ScopeNote)
+		perLanguage := func(p string, m map[string]string) {
+			ls := make([]string, 0, len(m))
+			for l := range m {
+				ls = append(ls, l)
+			}
+			sort.Strings(ls)
+			for _, l := range ls {
+				if strings.TrimSpace(m[l]) != "" {
+					e = append(e, entry{p, langLit(m[l], l)})
+				}
+			}
+		}
+		perLanguage("skos:definition", c.Definition)
+		perLanguage("skos:scopeNote", c.ScopeNote)
 		for _, v := range c.Notation {
 			text("skos:notation", v)
 		}

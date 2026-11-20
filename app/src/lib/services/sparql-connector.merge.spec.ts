@@ -9,7 +9,7 @@ const CORE = 'http://example.org/core';
 const VOCAB = namespaceGraphs(CORE, { vocab: true }).vocab!;
 const iri = (id: string) => `${VOCAB}#${id}`;
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: iri(id), prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	iri: iri(id), prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri: iri('Scheme'), topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '', created: '',
 	modified: '', deprecatedOn: '', ...over
 });
@@ -33,7 +33,7 @@ describe('SparqlConnector.mergeConcepts (STORY-423)', () => {
 	const plan = () =>
 		planMerge({
 			concepts: [
-				c('S', { definition: 'Surviving.' }),
+				c('S', { definitions: [{ text: 'Surviving.', lang: '' }] }),
 				c('D', { broader: [iri('P')], related: [iri('R')], mappings: [{ kind: 'exactMatch', target: 'http://o.example/1' }], altLabels: [{ text: 'Dee', lang: 'en' }] }),
 				c('P', { topConcept: true }),
 				c('R'),

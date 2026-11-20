@@ -21,6 +21,8 @@
 		schemes: ConceptScheme[];
 		concepts: Concept[];
 		listState: ListUrlState;
+		/** The scheme to open selected, when the tab is reached from a link to one. */
+		initialSelectedIri?: string | null;
 		onStateChange: (next: ListUrlState) => void;
 		/** Creates the scheme and resolves with its IRI. */
 		onAdd: (draft: { name: string; description: string }) => Promise<string>;
@@ -33,9 +35,10 @@
 		) => Promise<{ deleted: boolean; concepts: string[]; linkedClasses: string[]; conceptProperties: string[]; collections: string[] }>;
 	}
 
-	let { core, schemes, concepts, listState, onStateChange, onAdd, onSaveScope, onSaveMetadata, onDelete }: Props = $props();
+	let { core, schemes, concepts, listState, onStateChange, onAdd, onSaveScope, onSaveMetadata, onDelete, initialSelectedIri = null }: Props = $props();
 
-	let selectedIri = $state<string | null>(null);
+	/* svelte-ignore state_referenced_locally */
+	let selectedIri = $state<string | null>(initialSelectedIri);
 	let adding = $state(false);
 	let newName = $state('');
 	let newDescription = $state('');

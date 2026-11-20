@@ -29,7 +29,7 @@ const quiet = {
 const concept = (over: Partial<Concept> = {}): Concept => ({
 	iri: 'http://e/core/vocab#Customer',
 	prefLabels: [{ text: 'Customer', lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: 's', authority: 'a',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over
@@ -126,7 +126,7 @@ describe('ModelChecksView', () => {
 			...schema,
 			classes: [{ iri: `${NS}#A`, label: 'Alpha', comment: 'ok', namespaceBaseIri: NS, definedByConcept: 'http://e/core/vocab#Client' }]
 		} as unknown as FetchedSchema;
-		const concepts = [concept({ iri: 'http://e/core/vocab#Client', status: 'deprecated', replacedBy: 'http://e/core/vocab#Customer', definition: 'd' }), concept({ definition: 'd' })];
+		const concepts = [concept({ iri: 'http://e/core/vocab#Client', status: 'deprecated', replacedBy: 'http://e/core/vocab#Customer', definitions: [{ text: 'd', lang: '' }] }), concept({ definitions: [{ text: 'd', lang: '' }] })];
 		const load = vi.fn(async () => linked);
 		const onRetarget = vi.fn(async () => {});
 		render(ModelChecksView, { props: { ...quiet, load, loadConcepts: async () => concepts, onRetarget } });
@@ -146,7 +146,7 @@ describe('ModelChecksView', () => {
 			...schema,
 			classes: [{ iri: `${NS}#A`, label: 'Alpha', comment: 'ok', namespaceBaseIri: NS, definedByConcept: 'http://e/core/vocab#Client' }]
 		} as unknown as FetchedSchema;
-		const concepts = [concept({ iri: 'http://e/core/vocab#Client', status: 'deprecated', replacedBy: 'http://e/core/vocab#Customer', definition: 'd' }), concept({ definition: 'd' })];
+		const concepts = [concept({ iri: 'http://e/core/vocab#Client', status: 'deprecated', replacedBy: 'http://e/core/vocab#Customer', definitions: [{ text: 'd', lang: '' }] }), concept({ definitions: [{ text: 'd', lang: '' }] })];
 		const onRetarget = vi.fn(async () => {
 			throw new Error('write failed');
 		});
@@ -161,7 +161,7 @@ describe('ModelChecksView thresholds (STORY-463)', () => {
 		let value = initial;
 		return { get: () => value, set: vi.fn((v: typeof initial) => (value = v)) };
 	};
-	const stale = concept({ definition: 'd', modified: '2025-01-01', created: '2025-01-01' });
+	const stale = concept({ definitions: [{ text: 'd', lang: '' }], modified: '2025-01-01', created: '2025-01-01' });
 	const props = (settingsStore: ReturnType<typeof store>) => ({
 		...quiet,
 		load: async () => ({ ...schema, classes: [] }) as FetchedSchema,

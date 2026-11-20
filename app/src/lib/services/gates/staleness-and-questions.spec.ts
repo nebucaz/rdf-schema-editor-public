@@ -12,7 +12,7 @@ const now = new Date('2026-11-10T00:00:00Z');
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `urn:c:${id}`,
 	prefLabels: [{ text: id.toUpperCase(), lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: 'urn:scheme:a', topConcept: true, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over

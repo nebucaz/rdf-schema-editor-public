@@ -6,7 +6,7 @@ const CORE = 'http://e/core';
 const concept = (iri: string, label: string, over: Partial<Concept> = {}): Concept => ({
 	iri,
 	prefLabels: [{ text: label, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over

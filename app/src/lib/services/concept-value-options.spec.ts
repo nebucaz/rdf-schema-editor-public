@@ -12,7 +12,7 @@ const concept = (id: string, label: string, over: Partial<Concept> = {}): Concep
 	prefLabels: [{ text: label, lang: 'en' }],
 	altLabels: [{ text: `alt ${label}`, lang: 'en' }],
 	hiddenLabels: [{ text: `hidden ${label}`, lang: 'en' }],
-	definition: 'd', scopeNote: '', notation: [], example: [], editorialNote: ['secret note'], disambiguation: '',
+	definitions: [{ text: 'd', lang: '' }], scopeNotes: [], notation: [], example: [], editorialNote: ['secret note'], disambiguation: '',
 	schemeIri: 'http://example.org/core/vocab#Lifecycle', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '', broader: [], related: [], mappings: [],
 	...over

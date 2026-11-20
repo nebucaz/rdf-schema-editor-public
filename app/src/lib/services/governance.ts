@@ -7,7 +7,11 @@ export type MaturityLevel = (typeof MATURITY_LEVELS)[number];
 
 export interface Governance {
 	steward: string;
+	/** Name of the business unit, or an old plain-text value. */
 	authority: string;
+	authorityIri?: string;
+	/** Save only: `authority` is a new name; the store links the unit of that name or creates it. */
+	authorityCreate?: boolean;
 	maturity: MaturityLevel | '';
 	/** Semantic version, stored as `owl:versionInfo`. */
 	version: string;

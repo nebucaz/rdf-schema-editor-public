@@ -4,7 +4,7 @@ import type { Concept } from './skos-concept';
 import type { SkosCollection } from './skos-collection';
 
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri: 's', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '', created: '',
 	modified: '', deprecatedOn: '', ...over
 });
@@ -25,7 +25,7 @@ describe('promoteGuidance (STORY-424)', () => {
 	it('leans towards keeping a status-like or tag-like concept, and never blocks', () => {
 		expect(promoteGuidance(c('Order status')).lean).toBe('keep');
 		expect(promoteGuidance(c('Priority tag')).lean).toBe('keep');
-		expect(promoteGuidance(c('Customer', { definition: 'Has properties such as address; every customer must have an owner.' })).lean).toBe('promote');
+		expect(promoteGuidance(c('Customer', { definitions: [{ text: 'Has properties such as address; every customer must have an owner.', lang: '' }] })).lean).toBe('promote');
 		expect(promoteGuidance(c('Customer')).lean).toBeNull();
 	});
 });

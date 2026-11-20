@@ -206,13 +206,15 @@ export interface Neighborhood {
 	broader: NeighborRef[];
 	narrower: NeighborRef[];
 	related: NeighborRef[];
+	/** The concept's scheme, only for a concept with no broader concept (a broader one leads to the scheme anyway). */
+	scheme: NeighborRef | null;
 }
 
 /** The concepts one hop from `iri`: its broader and narrower concepts and its related ones, whichever side states the relation. */
-export function buildNeighborhood(concepts: Concept[], iri: string): Neighborhood {
+export function buildNeighborhood(concepts: Concept[], iri: string, schemes: Pick<ConceptScheme, 'iri' | 'name' | 'metadata'>[] = []): Neighborhood {
 	const byIri = new Map(concepts.map((c) => [c.iri, c]));
 	const me = byIri.get(iri);
-	if (!me) return { center: null, broader: [], narrower: [], related: [] };
+	if (!me) return { center: null, broader: [], narrower: [], related: [], scheme: null };
 	const ref = (c: Concept): NeighborRef => ({ iri: c.iri, label: conceptTitle(c) });
 	const sorted = (set: Set<string>) =>
 		[...set]
@@ -224,5 +226,7 @@ export function buildNeighborhood(concepts: Concept[], iri: string): Neighborhoo
 	const narrower = new Set(concepts.filter((c) => (c.broader ?? []).includes(iri)).map((c) => c.iri));
 	const related = new Set(me.related ?? []);
 	for (const c of concepts) if ((c.related ?? []).includes(iri)) related.add(c.iri);
-	return { center: ref(me), broader: sorted(broader), narrower: sorted(narrower), related: sorted(related) };
+	const scheme = schemes.find((s) => s.iri === me.schemeIri);
+	const schemeRef = scheme && sorted(broader).length === 0 ? { iri: scheme.iri, label: schemeDisplayName(scheme) } : null;
+	return { center: ref(me), broader: sorted(broader), narrower: sorted(narrower), related: sorted(related), scheme: schemeRef };
 }

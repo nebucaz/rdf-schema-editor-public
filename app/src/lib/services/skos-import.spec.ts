@@ -44,7 +44,7 @@ ex:B a skos:Concept ; skos:prefLabel "Beta"@en ; skos:inScheme ex:S ; skos:broad
 		const a = entry(p, c('A'));
 		expect(a).toMatchObject({ kind: 'concept', status: 'new' });
 		expect(a.kind === 'concept' && a.imported).toMatchObject({
-			prefLabels: [{ text: 'Alpha', lang: 'en' }], altLabels: [{ text: 'Alef', lang: 'en' }], definition: 'First.',
+			prefLabels: [{ text: 'Alpha', lang: 'en' }], altLabels: [{ text: 'Alef', lang: 'en' }], definitions: [{ text: 'First.', lang: '' }],
 			notation: ['A1'], schemeIri: c('S'), topConcept: true, mappings: [{ kind: 'exactMatch', target: 'http://other.example/Alpha' }]
 		});
 	});
@@ -62,6 +62,20 @@ ex:C a skos:Concept ; skos:prefLabel "C"@en .`);
 		expect(cc.kind === 'concept' && cc.imported.related).toEqual([c('A')]);
 		expect(p.info.map((i) => i.code)).toEqual(expect.arrayContaining(['one-sided-related', 'one-sided-hierarchy']));
 		expect(p.errors).toEqual([]);
+	});
+
+	it('shows a changed definition per language, and a new language as an addition (STORY-481)', () => {
+		const existing = fixtureVocabulary();
+		existing.concepts = existing.concepts.map((x) => (x.iri === c('Employee') ? { ...x, definitions: [{ text: 'A person employed by the organisation.', lang: 'en' }] } : x));
+		const p = plan(`
+ex:Employee a skos:Concept ; skos:prefLabel "Employee"@en ;
+  skos:definition "A worker."@en , "Eine angestellte Person."@de .`, existing);
+		const e = entry(p, c('Employee'));
+		expect(e.status).toBe('changed');
+		expect(e.changes.filter((x) => x.property.startsWith('definition')).map((x) => [x.property, x.before, x.after]).sort()).toEqual([
+			['definition@de', '', 'Eine angestellte Person.'],
+			['definition@en', 'A person employed by the organisation.', 'A worker.']
+		]);
 	});
 
 	it('compares with the loaded vocabulary: unchanged, changed per property, conflicting', () => {

@@ -5,7 +5,7 @@ import type { Concept } from '#lib/services/skos-concept.js';
 import type { SkosCollection } from '#lib/services/skos-collection.js';
 
 const concept = (id: string): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 	disambiguation: '', schemeIri: 'urn:s', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '',
 	deprecationReason: '', created: '', modified: '', deprecatedOn: ''
 });

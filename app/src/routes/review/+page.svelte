@@ -17,7 +17,7 @@
 		<li><a href={reviewPipelineUrl()}>Pipeline status</a> of each namespace</li>
 		<li><a href={reviewGlossaryUrl()}>Glossary</a>: search and browse the terms and their definitions</li>
 		<li>A printable scheme: open it from the <a href={appUrl('/vocabulary')}>Vocabulary</a> area or share <code>/review/scheme?scheme=&lt;id&gt;</code></li>
-		<li>A concept: open it from the <a href={appUrl('/vocabulary')}>Vocabulary</a> area with "Read-only page"</li>
+		<li>A concept: pick a term in the glossary, or open it from the <a href={appUrl('/vocabulary')}>Vocabulary</a> area, and use the share icon next to its title. The page links to its broader, narrower and related concepts and its scheme, and draws its neighbourhood</li>
 	</ul>
 </div>
 

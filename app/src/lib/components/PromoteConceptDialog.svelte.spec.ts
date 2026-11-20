@@ -39,7 +39,7 @@ describe('PromoteConceptDialog (STORY-326)', () => {
 
 	describe('guidance (STORY-424)', () => {
 		const concept = {
-			iri: 'urn:c:status', prefLabels: [{ text: 'Order status', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'Where an order is.', scopeNote: '',
+			iri: 'urn:c:status', prefLabels: [{ text: 'Order status', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'Where an order is.', lang: '' }], scopeNotes: [],
 			disambiguation: '', schemeIri: 's', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '',
 			created: '', modified: '', deprecatedOn: ''
 		} as never;

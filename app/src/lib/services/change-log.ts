@@ -48,7 +48,7 @@ const labelKey = (labels: LangText[]) => JSON.stringify(labels.map((l) => [l.tex
 
 type Editable = Pick<
 	ConceptDraft,
-	'prefLabels' | 'altLabels' | 'hiddenLabels' | 'definition' | 'scopeNote' | 'disambiguation' | 'source' | 'authority' | 'schemeIri' | 'topConcept' | 'replacedBy'
+	'prefLabels' | 'altLabels' | 'hiddenLabels' | 'definitions' | 'scopeNotes' | 'disambiguation' | 'source' | 'authority' | 'authorityIri' | 'schemeIri' | 'topConcept' | 'replacedBy'
 >;
 
 /** `label` when only labels changed, `comment` when a text changed, otherwise `other`. */
@@ -56,11 +56,12 @@ export function changeKindForConceptEdit(before: Editable, after: Editable): Cha
 	const structural = before.schemeIri !== after.schemeIri || before.topConcept !== after.topConcept || before.replacedBy !== after.replacedBy;
 	if (structural) return 'other';
 	const texts =
-		before.definition !== after.definition ||
-		before.scopeNote !== after.scopeNote ||
+		labelKey(before.definitions) !== labelKey(after.definitions) ||
+		labelKey(before.scopeNotes) !== labelKey(after.scopeNotes) ||
 		before.disambiguation !== after.disambiguation ||
 		before.source !== after.source ||
-		before.authority !== after.authority;
+		before.authority !== after.authority ||
+		(before.authorityIri ?? '') !== (after.authorityIri ?? '');
 	if (texts) return 'comment';
 	const labels =
 		labelKey(before.prefLabels) !== labelKey(after.prefLabels) ||

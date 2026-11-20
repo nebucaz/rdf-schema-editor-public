@@ -4,8 +4,8 @@ import type { Concept } from './skos-concept';
 
 const S = 'urn:s:a';
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd',
-	scopeNote: '', disambiguation: '', schemeIri: S, topConcept: false, status: 'active', source: '', authority: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }],
+	scopeNotes: [], disambiguation: '', schemeIri: S, topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '', ...over
 });
 const iri = (id: string) => `urn:c:${id}`;

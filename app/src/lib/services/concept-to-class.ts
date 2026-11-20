@@ -2,7 +2,7 @@
  * Advice before promoting a concept to a class, and the plan for an enumerated class made from a collection
  * (skos-support STORY-424). Pure and advisory: nothing here blocks a save or a promotion.
  */
-import { conceptTitle, type Concept } from './skos-concept';
+import { conceptTitle, primaryText, type Concept } from './skos-concept';
 import type { SkosCollection } from './skos-collection';
 
 /** Terms that usually belong in the vocabulary only (book: the CBox), as plain sentences for the dialog. */
@@ -38,7 +38,7 @@ export function promoteGuidance(concept: Concept): PromoteGuidance {
 	const title = conceptTitle(concept);
 	let lean: PromoteGuidance['lean'] = null;
 	if (KEEP_WORDS.test(title)) lean = 'keep';
-	else if (PROMOTE_WORDS.test(concept.definition)) lean = 'promote';
+	else if (PROMOTE_WORDS.test(primaryText(concept.definitions))) lean = 'promote';
 	return { stay: PROMOTE_STAY_CRITERIA, promote: PROMOTE_CRITERIA, example: EXAMPLE, lean };
 }
 

@@ -375,6 +375,8 @@ export const CONCEPT_DISAMBIGUATION_PREDICATE_IRI = `${SCHEMA_NAMESPACE}disambig
 export const CONCEPT_STATUS_PREDICATE_IRI = `${SCHEMA_NAMESPACE}status`;
 export const CONCEPT_SOURCE_PREDICATE_IRI = `${SCHEMA_NAMESPACE}source`;
 export const CONCEPT_AUTHORITY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}authority`;
+/** A group (business unit) that holds authority over concepts or a namespace; stored in the core vocabulary graph. */
+export const BUSINESS_UNIT_CLASS_IRI = `${SCHEMA_NAMESPACE}BusinessUnit`;
 export const CONCEPT_REPLACED_BY_PREDICATE_IRI = `${SCHEMA_NAMESPACE}replacedBy`;
 export const CONCEPT_DEPRECATION_REASON_PREDICATE_IRI = `${SCHEMA_NAMESPACE}deprecationReason`;
 export const CONCEPT_DEPRECATED_ON_PREDICATE_IRI = `${SCHEMA_NAMESPACE}deprecatedOn`;
@@ -390,6 +392,12 @@ export const CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI = `${SCHEMA_NAMESPACE}define
 export function conceptIri(label: string, disambiguation: string, coreBaseIri: string): string {
 	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
 	return `${vocab}#${pascalCase(`${label} ${disambiguation}`)}`;
+}
+
+/** e.g. "Data Office" -> `<core>/vocab#DataOfficeBusinessUnit` */
+export function businessUnitIri(name: string, coreBaseIri: string): string {
+	const vocab = namespaceGraphs(coreBaseIri, { vocab: true }).vocab!;
+	return `${vocab}#${pascalCase(name)}BusinessUnit`;
 }
 
 /** e.g. "Facet: region" -> `<core>/vocab#FacetRegionCollection`; the suffix keeps it apart from concept IRIs. */

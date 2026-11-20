@@ -16,8 +16,8 @@ const c = (iri: string, label: string, over: Partial<Concept> = {}): Concept => 
 	prefLabels: [{ text: label, lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: `About ${label}`,
-	scopeNote: '',
+	definitions: [{ text: `About ${label}`, lang: '' }],
+	scopeNotes: [],
 	disambiguation: '',
 	schemeIri: 's',
 	topConcept: false,
@@ -38,7 +38,7 @@ const concepts = [
 		altLabels: [{ text: 'Carer', lang: 'en' }],
 		hiddenLabels: [{ text: 'Sister', lang: 'en' }],
 		editorialNote: ['internal remark'],
-		scopeNote: 'Registered only',
+		scopeNotes: [{ text: 'Registered only', lang: '' }],
 		example: ['Ward nurse']
 	}),
 	c('elsewhere', 'Elsewhere', { schemeIri: 'other' })

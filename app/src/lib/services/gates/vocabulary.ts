@@ -4,7 +4,7 @@
  * per-concept request. Concepts being phased out (deprecated, retired) are left out. All findings are
  * warnings except the four-word label, which is only a prompt to review.
  */
-import { conceptTitle, normaliseLabel, type Concept, type LangText } from '../skos-concept';
+import { conceptTitle, normaliseLabel, primaryText, type Concept, type LangText } from '../skos-concept';
 import type { Gate, GateFinding, GateSeverity } from './types';
 
 const LIVE: readonly string[] = ['proposed', 'approved', 'active'];
@@ -79,7 +79,7 @@ export const conceptWithoutDefinitionGate: Gate = {
 	stage: 'vocabulary',
 	run: (_schema, options) =>
 		live(options.concepts)
-			.filter((c) => !c.definition.trim())
+			.filter((c) => !primaryText(c.definitions))
 			.map((c) => finding('concept-without-definition', 'warning', c, `Concept "${conceptTitle(c)}" has no definition.`))
 };
 
@@ -148,7 +148,10 @@ export const conceptWithoutProvenanceGate: Gate = {
 	run: (_schema, options) =>
 		live(options.concepts)
 			.filter((c) => !c.source.trim() || !c.authority.trim())
-			.map((c) => finding('concept-without-provenance', 'warning', c, `Concept "${conceptTitle(c)}" has no source or authority.`))
+			.map((c) => {
+				const missing = [...(c.source.trim() ? [] : ['source']), ...(c.authority.trim() ? [] : ['authority'])].join(' or ');
+				return finding('concept-without-provenance', 'warning', c, `Concept "${conceptTitle(c)}" has no ${missing}.`);
+			})
 };
 
 export const multiplePreferredLabelsGate: Gate = {

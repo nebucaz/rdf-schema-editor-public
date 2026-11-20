@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { schemeDisplayName } from './skos-concept';
 import { buildNeighborhood, buildSchemeGraph } from './concept-graph';
 import type { Concept, ConceptScheme } from './skos-concept';
 
@@ -8,7 +9,7 @@ const schemes: ConceptScheme[] = [{ iri: SCHEME, name: 'A', description: '', sco
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `urn:c:${id}`,
 	prefLabels: [{ text: id, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: SCHEME, topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	broader: [],
@@ -127,5 +128,29 @@ describe('buildNeighborhood', () => {
 
 	it('is empty for an unknown concept', () => {
 		expect(buildNeighborhood([top('A')], 'urn:c:none').center).toBeNull();
+	});
+});
+
+describe('buildNeighborhood scheme node', () => {
+	const schemes = [{ iri: SCHEME, name: 'Lifecycle', description: '', scope: { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' } }];
+
+	it('names the scheme for a concept with no broader concept', () => {
+		const n = buildNeighborhood([top('Draft'), concept('Active')], 'urn:c:Active', schemes);
+		expect(n.scheme).toEqual({ iri: SCHEME, label: 'Lifecycle' });
+		expect(buildNeighborhood([top('Draft')], 'urn:c:Draft', schemes).scheme?.label).toBe('Lifecycle');
+	});
+
+	it('leaves the scheme out when a broader concept already leads to it', () => {
+		expect(buildNeighborhood([top('Animal'), under('Dog', 'Animal')], 'urn:c:Dog', schemes).scheme).toBeNull();
+	});
+
+	it('has no scheme node for a concept in no scheme, or when no schemes are given', () => {
+		expect(buildNeighborhood([concept('Loose', { schemeIri: '' })], 'urn:c:Loose', schemes).scheme).toBeNull();
+		expect(buildNeighborhood([top('A')], 'urn:c:A').scheme).toBeNull();
+	});
+
+	it('falls back to the last part of the scheme IRI when the scheme has no name', () => {
+		const unnamed = [{ ...schemes[0], name: '' }];
+		expect(buildNeighborhood([top('A')], 'urn:c:A', unnamed).scheme?.label).toBe(schemeDisplayName(unnamed[0]));
 	});
 });

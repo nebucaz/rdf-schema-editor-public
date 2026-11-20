@@ -9,8 +9,8 @@ const concept = (iri: string, label: string, over: Partial<Concept> = {}): Conce
 	prefLabels: [{ text: label, lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: 'A defined thing.',
-	scopeNote: '',
+	definitions: [{ text: 'A defined thing.', lang: '' }],
+	scopeNotes: [],
 	disambiguation: '',
 	schemeIri: '',
 	topConcept: false,
@@ -83,7 +83,7 @@ describe('vocabulary gates (STORY-324)', () => {
 	});
 
 	it('concept-without-definition', () => {
-		expect(ids([concept('urn:1', 'Customer', { definition: '  ' })], 'concept-without-definition')).toEqual([
+		expect(ids([concept('urn:1', 'Customer', { definitions: [{ text: '  ', lang: '' }] })], 'concept-without-definition')).toEqual([
 			['concept-without-definition', 'urn:1', 'warning']
 		]);
 	});
@@ -129,6 +129,13 @@ describe('vocabulary gates (STORY-324)', () => {
 		expect(ids([concept('urn:1', 'A')], 'acronym-as-preferred-label')).toEqual([]);
 	});
 
+	it('concept-without-provenance names what is missing', () => {
+		const msg = (over: object) => runVocabularyGates([concept('urn:1', 'Customer', over)]).find((f) => f.gateId === 'concept-without-provenance')!.message;
+		expect(msg({ source: 'concepts.ttl', authority: '' })).toBe('Concept "Customer" has no authority.');
+		expect(msg({ source: '', authority: 'Data Office' })).toBe('Concept "Customer" has no source.');
+		expect(msg({ source: '', authority: ' ' })).toBe('Concept "Customer" has no source or authority.');
+	});
+
 	it('concept-without-provenance', () => {
 		expect(ids([concept('urn:1', 'Customer', { source: '' })], 'concept-without-provenance')).toEqual([['concept-without-provenance', 'urn:1', 'warning']]);
 		expect(ids([concept('urn:1', 'Customer', { authority: ' ' })], 'concept-without-provenance')).toEqual([['concept-without-provenance', 'urn:1', 'warning']]);
@@ -149,12 +156,12 @@ describe('vocabulary gates (STORY-324)', () => {
 	});
 
 	it('leaves deprecated and retired concepts out', () => {
-		const bad = { definition: '', source: '' };
+		const bad = { definitions: [], source: '' };
 		expect(runVocabularyGates([concept('urn:1', 'CRM', { ...bad, status: 'deprecated' }), concept('urn:2', 'CRM', { ...bad, status: 'retired' })])).toEqual([]);
 	});
 
 	it('every finding names the concept in its message', () => {
-		const [f] = runVocabularyGates([concept('urn:1', 'Customer', { definition: '' })]);
+		const [f] = runVocabularyGates([concept('urn:1', 'Customer', { definitions: [] })]);
 		expect(f.stage).toBe('vocabulary');
 		expect(f.message).toContain('Customer');
 	});
@@ -164,7 +171,7 @@ describe('vocabulary gates in the gate framework (STORY-324)', () => {
 	const schema = { classes: [], dataProperties: [], objectProperties: [], subClassOf: [], individuals: [] } as unknown as FetchedSchema;
 
 	it('runGates includes them when concepts are supplied', () => {
-		const findings = runGates(schema, { concepts: [concept('urn:1', 'Customer', { definition: '' })], stages: ['vocabulary'] });
+		const findings = runGates(schema, { concepts: [concept('urn:1', 'Customer', { definitions: [] })], stages: ['vocabulary'] });
 		expect(findings.map((f) => f.gateId)).toEqual(['concept-without-definition']);
 	});
 

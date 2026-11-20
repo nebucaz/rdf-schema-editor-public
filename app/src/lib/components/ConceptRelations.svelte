@@ -1,14 +1,9 @@
 <script lang="ts">
 	/** Related concepts and mappings to other schemes on the concept page (ontology-pipeline STORY-329). Lists the
-	 *  relations with a remove button each, and adds one at a time after `validateRelation`; the page writes them. */
+	 *  relations with a remove button each, and opens `AddRelationModal` to add one (concept-edit STORY-478); the page writes them. */
+	import AddRelationModal from './AddRelationModal.svelte';
 	import RationaleField from './RationaleField.svelte';
-	import {
-		RELATION_KINDS,
-		composeMappingTarget,
-		isMappingKind,
-		relationsOf,
-		validateRelation
-	} from '#lib/services/concept-relations.js';
+	import { relationsOf } from '#lib/services/concept-relations.js';
 	import { conceptTitle, type Concept, type RelationKind } from '#lib/services/skos-concept.js';
 	import type { FetchedExternalVocabulary } from '#lib/services/sparql-connector.js';
 
@@ -26,22 +21,15 @@
 
 	let { concept, concepts, externals, onAdd, onRemove, rationale = $bindable('') }: Props = $props();
 
-	let kind = $state<RelationKind>('related');
-	let relatedTarget = $state('');
-	let vocabularyBase = $state('');
-	let term = $state('');
 	let error = $state<string | null>(null);
 	let busy = $state(false);
+	let adding = $state(false);
 
 	const relations = $derived(relationsOf(concept, concepts));
 	const titleOf = (iri: string) => {
 		const c = concepts.find((x) => x.iri === iri);
 		return c ? conceptTitle(c) : iri;
 	};
-	const candidates = $derived(
-		concepts.filter((c) => c.iri !== concept.iri && c.status !== 'retired' && !relations.related.includes(c.iri))
-	);
-
 	async function run(action: () => Promise<void>) {
 		busy = true;
 		error = null;
@@ -54,19 +42,10 @@
 		}
 	}
 
-	async function add(event: SubmitEvent) {
-		event.preventDefault();
-		const target = isMappingKind(kind) ? composeMappingTarget(vocabularyBase, term) : relatedTarget;
-		const problem = validateRelation(concepts, concept.iri, kind, target);
-		if (problem) {
-			error = problem;
-			return;
-		}
-		await run(async () => {
-			await onAdd(kind, target.trim());
-			relatedTarget = '';
-			term = '';
-		});
+	/** The dialog hands over its rationale; the page reads it from the bound value when it writes. */
+	async function add(kind: RelationKind, target: string, why: string) {
+		rationale = why;
+		await onAdd(kind, target);
 	}
 </script>
 
@@ -97,47 +76,17 @@
 		</ul>
 	{/if}
 
-	<form onsubmit={add} novalidate>
-		<label>
-			Relation
-			<select bind:value={kind}>
-				{#each RELATION_KINDS as k (k)}
-					<option value={k}>{k}</option>
-				{/each}
-			</select>
-		</label>
-		{#if isMappingKind(kind)}
-			<label>
-				Vocabulary
-				<select bind:value={vocabularyBase}>
-					<option value="">(enter a full IRI)</option>
-					{#each externals as ext (ext.baseIri)}
-						<option value={ext.baseIri}>{ext.prefix}</option>
-					{/each}
-				</select>
-			</label>
-			<label>
-				Term or IRI
-				<input type="text" bind:value={term} />
-			</label>
-		{:else}
-			<label>
-				Related concept
-				<select bind:value={relatedTarget}>
-					<option value="">(choose)</option>
-					{#each candidates as c (c.iri)}
-						<option value={c.iri}>{conceptTitle(c)}</option>
-					{/each}
-				</select>
-			</label>
-		{/if}
-		<button type="submit" disabled={busy}>Add relation</button>
-	</form>
-	<RationaleField bind:value={rationale} />
+	<button type="button" class="add" disabled={busy} onclick={() => (adding = true)}>Add relation</button>
+	{#if relations.related.some((iri) => concept.related?.includes(iri)) || relations.mappings.length}
+		<!-- Only removing needs it here; adding asks for its own rationale in the dialog. -->
+		<RationaleField bind:value={rationale} />
+	{/if}
 	{#if error}
 		<p class="error" role="alert">{error}</p>
 	{/if}
 </section>
+
+<AddRelationModal isOpen={adding} {concept} {concepts} {externals} onAdd={add} onClose={() => (adding = false)} />
 
 <style>
 	h3 {
@@ -165,31 +114,6 @@
 		overflow-wrap: anywhere;
 	}
 
-	form {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: flex-end;
-		gap: 0.6rem;
-	}
-
-	label {
-		display: flex;
-		flex-direction: column;
-		gap: 0.25rem;
-		font-size: 0.8rem;
-		color: var(--color-text-muted);
-	}
-
-	input,
-	select {
-		font-size: 0.9rem;
-		color: var(--color-text);
-		background: var(--color-bg);
-		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		padding: 0.4rem 0.55rem;
-	}
-
 	button {
 		padding: 0.4rem 0.8rem;
 		border-radius: 6px;
@@ -197,6 +121,10 @@
 		background: transparent;
 		color: var(--color-text);
 		cursor: pointer;
+	}
+
+	.add {
+		margin-bottom: 0.75rem;
 	}
 
 	.hint,

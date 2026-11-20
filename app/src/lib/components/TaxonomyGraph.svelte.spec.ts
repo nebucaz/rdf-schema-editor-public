@@ -11,7 +11,7 @@ const concept = (id: string, over: Partial<Concept> = {}): Concept =>
 	({
 		iri: `urn:c:${id}`,
 		prefLabels: [{ text: id, lang: 'en' }],
-		altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+		altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 		schemeIri: SCHEME, topConcept: false, status: 'active', source: '', authority: '',
 		replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 		broader: [],

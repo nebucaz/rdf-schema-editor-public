@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+	COMMON_LANG_TAGS,
 	CONCEPT_STATUSES,
 	addAlternativeLabel,
 	conceptTitle,
 	filterConcepts,
+	isValidLangTag,
+	languagesOf,
+	primaryText,
+	taggedTexts,
+	textIn,
 	schemeDisplayName,
 	moveLabelToReplacement,
 	type Concept,
@@ -20,8 +26,8 @@ const draft = (over: Partial<ConceptDraft> = {}): ConceptDraft => ({
 	prefLabels: [{ text: 'Customer', lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: 'A party that buys goods or services.',
-	scopeNote: '',
+	definitions: [{ text: 'A party that buys goods or services.', lang: 'en' }],
+	scopeNotes: [],
 	disambiguation: '',
 	schemeIri: '',
 	topConcept: false,
@@ -103,10 +109,10 @@ describe('validateConceptDraft (STORY-322)', () => {
 	});
 
 	it('requires a definition once the concept leaves proposed', () => {
-		expect(validateConceptDraft(draft({ status: 'approved', definition: '' }))).toContain(
+		expect(validateConceptDraft(draft({ status: 'approved', definitions: [] }))).toContain(
 			'A definition is required before a concept is approved'
 		);
-		expect(validateConceptDraft(draft({ status: 'proposed', definition: '' }))).toEqual([]);
+		expect(validateConceptDraft(draft({ status: 'proposed', definitions: [] }))).toEqual([]);
 	});
 
 	it('does not touch the one-preferred-label rule when notations are present (STORY-406)', () => {
@@ -180,7 +186,7 @@ describe('concept list helpers (STORY-323)', () => {
 	});
 	const list = [
 		base({ iri: 'urn:1', prefLabels: [{ text: 'Customer', lang: 'en' }], altLabels: [{ text: 'Client', lang: 'en' }], status: 'active', schemeIri: 'urn:s1' }),
-		base({ iri: 'urn:2', prefLabels: [{ text: 'Invoice', lang: 'en' }], definition: 'A bill for a customer order', status: 'proposed', schemeIri: 'urn:s2' }),
+		base({ iri: 'urn:2', prefLabels: [{ text: 'Invoice', lang: 'en' }], definitions: [{ text: 'A bill for a customer order', lang: 'en' }], status: 'proposed', schemeIri: 'urn:s2' }),
 		base({ iri: 'urn:3', prefLabels: [{ text: 'Café', lang: 'en' }], status: 'active', schemeIri: 'urn:s2' })
 	];
 
@@ -247,5 +253,84 @@ describe('schemeDisplayName (STORY-444)', () => {
 		expect(schemeDisplayName(scheme({ name: '  ' }))).toBe('Glossary');
 		expect(schemeDisplayName(scheme({ iri: '' }))).toBe('');
 		expect(schemeDisplayName(scheme({ iri: 'urn:scheme' }))).toBe('urn:scheme');
+	});
+});
+
+describe('language tags and per-language text (STORY-479)', () => {
+	it('validates tags: BCP 47 shape, empty means no language', () => {
+		for (const ok of ['', 'en', 'de-CH', 'zh-Hant-TW']) expect(isValidLangTag(ok)).toBe(true);
+		for (const bad of ['e n', 'en_US', '-en', 'en-', '123', 'toolongtagx']) expect(isValidLangTag(bad)).toBe(false);
+	});
+
+	it('textIn finds a language case-insensitively and ignores empty text', () => {
+		const v = [{ text: 'Kunde', lang: 'de' }, { text: ' ', lang: 'fr' }];
+		expect(textIn(v, 'DE')).toBe('Kunde');
+		expect(textIn(v, 'fr')).toBe('');
+		expect(textIn(v, 'it')).toBe('');
+	});
+
+	it('primaryText prefers the language, else the first non-empty', () => {
+		const v = [{ text: '', lang: 'en' }, { text: 'Kunde', lang: 'de' }, { text: 'Client', lang: 'fr' }];
+		expect(primaryText(v, 'fr')).toBe('Client');
+		expect(primaryText(v, 'en')).toBe('Kunde');
+		expect(primaryText(v)).toBe('Kunde');
+		expect(primaryText([])).toBe('');
+	});
+
+	it('languagesOf is the sorted union of tags over labels, definitions and scope notes', () => {
+		const c = draft({
+			prefLabels: [{ text: 'a', lang: 'en' }],
+			altLabels: [{ text: 'b', lang: 'de' }],
+			definitions: [{ text: 'd', lang: 'fr' }, { text: '', lang: 'it' }],
+			scopeNotes: [{ text: 's', lang: 'en' }]
+		});
+		expect(languagesOf(c)).toEqual(['de', 'en', 'fr']);
+	});
+
+	it('offers common tags for a datalist', () => {
+		expect(COMMON_LANG_TAGS).toContain('en');
+		expect(COMMON_LANG_TAGS.every(isValidLangTag)).toBe(true);
+	});
+
+	it('reports an invalid tag on any text field', () => {
+		expect(validateConceptDraft(draft({ prefLabels: [{ text: 'Customer', lang: 'e n' }] }))).toContain('Invalid language tag "e n"');
+		expect(validateConceptDraft(draft({ definitions: [{ text: 'd', lang: 'en_US' }] }))).toContain('Invalid language tag "en_US"');
+	});
+
+	it('reports a second definition or scope note in the same language', () => {
+		const dup = [{ text: 'a', lang: 'en' }, { text: 'b', lang: 'EN' }];
+		expect(validateConceptDraft(draft({ definitions: dup }))).toContain('Only one definition per language (en)');
+		expect(validateConceptDraft(draft({ scopeNotes: dup }))).toContain('Only one scope note per language (en)');
+		expect(validateConceptDraft(draft({ definitions: [{ text: 'a', lang: 'en' }, { text: 'b', lang: 'de' }] }))).toEqual([]);
+	});
+
+	it('still allows one preferred label per language only', () => {
+		const errors = validateConceptDraft(draft({ prefLabels: [{ text: 'A', lang: 'en' }, { text: 'B', lang: 'en' }] }));
+		expect(errors).toContain('Only one preferred label per language (en)');
+	});
+
+	it('compares an alternative label with the preferred label of its own language', () => {
+		const prefs = [{ text: 'Customer', lang: 'en' }, { text: 'Kunde', lang: 'de' }];
+		expect(validateConceptDraft(draft({ prefLabels: prefs, altLabels: [{ text: 'Kunde', lang: 'en' }] }))).toEqual([]);
+		expect(validateConceptDraft(draft({ prefLabels: prefs, altLabels: [{ text: 'kunde', lang: 'de' }] }))).toContain(
+			'Alternative label "kunde" repeats the preferred label'
+		);
+	});
+
+	it('validates untagged data as before', () => {
+		expect(validateConceptDraft(draft({ prefLabels: [{ text: 'Customer', lang: '' }], definitions: [{ text: 'd', lang: '' }] }))).toEqual([]);
+	});
+});
+
+describe('taggedTexts (STORY-484)', () => {
+	it('shows every text with its language and skips empty ones', () => {
+		expect(taggedTexts([{ text: 'A buyer.', lang: 'en' }, { text: ' ', lang: 'fr' }, { text: 'Ein Käufer.', lang: 'de' }])).toEqual([
+			'A buyer. (en)',
+			'Ein Käufer. (de)'
+		]);
+	});
+
+	it('leaves an untagged text bare', () => {
+		expect(taggedTexts([{ text: 'Plain', lang: '' }])).toEqual(['Plain']);
 	});
 });

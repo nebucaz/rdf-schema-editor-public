@@ -6,7 +6,7 @@ import type { Concept } from '#lib/services/skos-concept.js';
 const c = (iri: string, label: string, over: Partial<Concept> = {}): Concept => ({
 	iri,
 	prefLabels: [{ text: label, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: `${label} definition.`, scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: `${label} definition.`, lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over

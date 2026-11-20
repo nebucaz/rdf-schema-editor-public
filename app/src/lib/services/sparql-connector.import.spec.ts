@@ -10,7 +10,7 @@ const VOCAB = namespaceGraphs(CORE, { vocab: true }).vocab!;
 const SCHEME = `${VOCAB}#GlossaryScheme`;
 
 const draft = (over: Partial<ConceptDraft> = {}): ConceptDraft => ({
-	prefLabels: [{ text: 'Alpha "A"', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'First.', scopeNote: '', notation: ['A-1'], example: [],
+	prefLabels: [{ text: 'Alpha "A"', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'First.', lang: '' }], scopeNotes: [], notation: ['A-1'], example: [],
 	editorialNote: [], disambiguation: '', schemeIri: SCHEME, topConcept: false, status: 'proposed', source: 'terms.ttl', authority: '', replacedBy: '',
 	deprecationReason: '', ...over
 });

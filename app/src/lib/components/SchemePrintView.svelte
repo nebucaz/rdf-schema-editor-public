@@ -5,7 +5,7 @@
 	import TaxonomyGraph from './TaxonomyGraph.svelte';
 	import { glossaryLabel } from '#lib/services/glossary-search.js';
 	import type { SkosCollection } from '#lib/services/skos-collection.js';
-	import { schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
+	import { primaryText, schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
 	import { buildTaxonomy, type TaxonomyNode } from '#lib/services/taxonomy-tree.js';
 
 	interface Props {
@@ -49,8 +49,8 @@
 		<section class="concept">
 			<h3 class:deprecated={c.status === 'deprecated' || c.status === 'retired'}>{glossaryLabel(c, lang)}</h3>
 			{#if c.altLabels.length}<p class="also">Also called: {c.altLabels.map((l) => l.text).join(', ')}</p>{/if}
-			<p>{c.definition || '—'}</p>
-			{#if c.scopeNote}<p><em>Scope:</em> {c.scopeNote}</p>{/if}
+			<p>{primaryText(c.definitions, lang) || '—'}</p>
+			{#if primaryText(c.scopeNotes, lang)}<p><em>Scope:</em> {primaryText(c.scopeNotes, lang)}</p>{/if}
 			{#if c.example?.length}<p><em>Example:</em> {c.example.join('; ')}</p>{/if}
 			{#if c.replacedBy}<p><em>Replaced by:</em> {labelOf(c.replacedBy)}</p>{/if}
 			{#each node.children as child (child.iri)}{@render entry(child)}{/each}

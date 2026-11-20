@@ -34,7 +34,7 @@ function mockFetch(fixture: { classExists?: boolean; select?: Row[]; propertyDec
 
 const draft = (label: string, definition = ''): ConceptDraft => ({
 	prefLabels: [{ text: label, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition, scopeNote: '', disambiguation: '', schemeIri: '', topConcept: false,
+	altLabels: [], hiddenLabels: [], definitions: definition ? [{ text: definition, lang: '' }] : [], scopeNotes: [], disambiguation: '', schemeIri: '', topConcept: false,
 	status: 'proposed', source: '', authority: '', replacedBy: '', deprecationReason: ''
 });
 

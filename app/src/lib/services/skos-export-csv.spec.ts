@@ -53,7 +53,7 @@ describe('serializeSkosCsv (STORY-412)', () => {
 
 	it('quotes commas, quotes and newlines and neutralises formula cells', () => {
 		const vocab = fixtureVocabulary();
-		const tricky: Concept = { ...vocab.concepts[0], iri: c('Tricky'), prefLabels: [{ text: '=SUM(A1)', lang: 'en' }], definition: 'Says "hi", then\nbreaks', altLabels: [{ text: 'a;b', lang: 'en' }, { text: 'c', lang: 'en' }], notation: [], broader: [], related: [] };
+		const tricky: Concept = { ...vocab.concepts[0], iri: c('Tricky'), prefLabels: [{ text: '=SUM(A1)', lang: 'en' }], definitions: [{ text: 'Says "hi", then\nbreaks', lang: '' }], altLabels: [{ text: 'a;b', lang: 'en' }, { text: 'c', lang: 'en' }], notation: [], broader: [], related: [] };
 		const out = serializeSkosCsv({ ...vocab, concepts: [tricky] }, {});
 		expect(out).toContain("'=SUM(A1)");
 		expect(out).toContain('"Says ""hi"", then\nbreaks"');
@@ -65,6 +65,13 @@ describe('serializeSkosCsv (STORY-412)', () => {
 		vocab.concepts[0] = { ...vocab.concepts[0], prefLabels: [...vocab.concepts[0].prefLabels, { text: 'Mitarbeiter', lang: 'de' }] };
 		const header = rows(serializeSkosCsv(vocab, { schemeIri: SCHEME }))[0];
 		expect(header).toBe('scheme,iri,notation,prefLabel@de,prefLabel@en,definition,altLabel@en,hiddenLabel@en,broader,related');
+	});
+
+	it('adds one definition column per language in use, a plain one for untagged text (STORY-481)', () => {
+		const vocab = { ...fixtureVocabulary(), concepts: [...fixtureVocabulary().concepts] };
+		vocab.concepts[0] = { ...vocab.concepts[0], definitions: [{ text: 'A person.', lang: 'en' }, { text: 'Eine Person.', lang: 'de' }] };
+		const header = rows(serializeSkosCsv(vocab, { schemeIri: SCHEME }))[0];
+		expect(header.split(',').filter((h) => h.startsWith('definition'))).toEqual(['definition', 'definition@de', 'definition@en']);
 	});
 
 	it('the full export has one row per concept with its scheme', () => {

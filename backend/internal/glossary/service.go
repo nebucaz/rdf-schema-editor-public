@@ -163,7 +163,7 @@ func (s *Service) Load(ctx context.Context) (Vocabulary, error) {
 		iri, p, o := b["s"].Value, b["p"].Value, b["o"]
 		c := concepts[iri]
 		if c == nil {
-			c = &Concept{ID: localName(iri, graph), IRI: iri, PrefLabel: map[string]string{}, AltLabels: map[string][]string{}, Status: "proposed"}
+			c = &Concept{ID: localName(iri, graph), IRI: iri, PrefLabel: map[string]string{}, AltLabels: map[string][]string{}, Definition: map[string]string{}, ScopeNote: map[string]string{}, Status: "proposed"}
 			concepts[iri] = c
 		}
 		switch p {
@@ -172,9 +172,9 @@ func (s *Service) Load(ctx context.Context) (Vocabulary, error) {
 		case skos + "altLabel":
 			c.AltLabels[langKey(o.Lang)] = append(c.AltLabels[langKey(o.Lang)], o.Value)
 		case skos + "definition":
-			c.Definition = o.Value
+			c.Definition[langKey(o.Lang)] = o.Value
 		case skos + "scopeNote":
-			c.ScopeNote = o.Value
+			c.ScopeNote[langKey(o.Lang)] = o.Value
 		case skos + "notation":
 			c.Notation = append(c.Notation, o.Value)
 		case skos + "example":
@@ -336,6 +336,15 @@ func (s *Service) Concepts(ctx context.Context, f Filter) (Page, error) {
 	return Page{Items: matched[start:end], Page: page, HasMore: end < len(matched)}, nil
 }
 
+// onlyLanguage keeps the entry of one language; the result is never nil.
+func onlyLanguage(m map[string]string, lang string) map[string]string {
+	out := map[string]string{}
+	if v, ok := m[lang]; ok {
+		out[lang] = v
+	}
+	return out
+}
+
 func inLanguage(c Concept, lang string) Concept {
 	c.PrefLabel = map[string]string{lang: c.PrefLabel[lang]}
 	alt := map[string][]string{}
@@ -343,6 +352,8 @@ func inLanguage(c Concept, lang string) Concept {
 		alt[lang] = v
 	}
 	c.AltLabels = alt
+	c.Definition = onlyLanguage(c.Definition, lang)
+	c.ScopeNote = onlyLanguage(c.ScopeNote, lang)
 	return c
 }
 

@@ -11,7 +11,7 @@ const SCHEME = 'urn:scheme:lifecycle';
 const OTHER_SCHEME = 'urn:scheme:other';
 const stage = `${NS}#deviceStage`;
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 	notation: [], example: [], editorialNote: [], disambiguation: '', schemeIri: SCHEME, topConcept: true, status: 'active',
 	source: '', authority: '', replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	broader: [], related: [], mappings: [], ...over

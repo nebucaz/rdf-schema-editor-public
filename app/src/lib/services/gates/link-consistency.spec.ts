@@ -8,7 +8,7 @@ const NS = 'http://e';
 const concept = (id: string, broader: string[] = []): Concept => ({
 	iri: `urn:c:${id}`,
 	prefLabels: [{ text: id, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: 'urn:scheme:a', topConcept: broader.length === 0, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	broader: broader.map((b) => `urn:c:${b}`), related: [], mappings: []

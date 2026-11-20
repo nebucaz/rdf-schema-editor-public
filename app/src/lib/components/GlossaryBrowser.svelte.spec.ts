@@ -8,8 +8,8 @@ const c = (iri: string, label: string, over: Partial<Concept> = {}): Concept => 
 	prefLabels: [{ text: label, lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: `Definition of ${label}`,
-	scopeNote: '',
+	definitions: [{ text: `Definition of ${label}`, lang: '' }],
+	scopeNotes: [],
 	disambiguation: '',
 	schemeIri: 's',
 	topConcept: false,
@@ -31,7 +31,7 @@ const concepts = [
 		hiddenLabels: [{ text: 'Sister', lang: 'en' }],
 		editorialNote: ['check with HR'],
 		example: ['Ward nurse'],
-		scopeNote: 'Registered only',
+		scopeNotes: [{ text: 'Registered only', lang: '' }],
 		mappings: [{ kind: 'exactMatch', target: 'http://other.example/Nurse' }]
 	}),
 	c('x:old', 'Locum', { status: 'deprecated', replacedBy: 'x:nurse', deprecationReason: 'merged' })
@@ -79,5 +79,15 @@ describe('GlossaryBrowser', () => {
 		await fireEvent.click(screen.getByRole('button', { name: 'Locum' }));
 		expect(container.querySelector('.deprecated')).not.toBeNull();
 		expect(container.textContent).toContain('replaced by');
+	});
+});
+
+describe('GlossaryBrowser page link', () => {
+	it('links the selected term to its own read-only page', async () => {
+		render(GlossaryBrowser, { props: { concepts } });
+		expect(screen.queryByRole('link', { name: 'Page of this term to share' })).toBeNull();
+		await fireEvent.click(screen.getByRole('button', { name: 'Staff' }));
+		const link = screen.getByRole('link', { name: 'Page of this term to share' });
+		expect(link.getAttribute('href')).toContain('/review/concept?iri=x%3Astaff');
 	});
 });

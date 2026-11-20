@@ -4,6 +4,8 @@ import type { ConceptDraft } from './skos-concept';
 import { namespaceGraphs } from '#lib/config.js';
 import {
 	CLASS_DEFINED_BY_CONCEPT_PREDICATE_IRI,
+	BUSINESS_UNIT_CLASS_IRI,
+	CONCEPT_AUTHORITY_PREDICATE_IRI,
 	CONCEPT_STATUS_PREDICATE_IRI,
 	NAMESPACE_VOCABULARY_PREDICATE_IRI,
 	SKOS,
@@ -18,8 +20,8 @@ const draft: ConceptDraft = {
 	prefLabels: [{ text: 'Bank', lang: 'en' }],
 	altLabels: [{ text: 'Credit "institution"', lang: 'en' }],
 	hiddenLabels: [],
-	definition: 'A financial institution.',
-	scopeNote: '',
+	definitions: [{ text: 'A financial institution.', lang: '' }],
+	scopeNotes: [],
 	disambiguation: 'finance',
 	schemeIri: `${VOCAB}#GlossaryScheme`,
 	topConcept: true,
@@ -329,6 +331,42 @@ describe('SparqlConnector — concepts (STORY-322)', () => {
 		expect(concepts[0].notation).toEqual(['A1', 'B2']);
 	});
 
+	it('insertConcept writes one tagged triple per definition and scope-note language, untagged ones stay plain (STORY-480)', async () => {
+		const { fn, updates } = mockFetch();
+		vi.stubGlobal('fetch', fn);
+		await connector().insertConcept(CORE, {
+			...draft,
+			definitions: [{ text: 'A bank.', lang: 'en' }, { text: 'Ein "Geldinstitut".', lang: 'de' }, { text: 'Plain.', lang: '' }],
+			scopeNotes: [{ text: 'Retail only.', lang: 'en' }]
+		});
+		const u = updates[0];
+		expect(u).toContain(`<${SKOS.definition}> "A bank."@en`);
+		expect(u).toContain(`<${SKOS.definition}> "Ein \\"Geldinstitut\\"."@de`);
+		expect(u).toContain(`<${SKOS.definition}> "Plain."`);
+		expect(u).not.toContain('"Plain."@');
+		expect(u).toContain(`<${SKOS.scopeNote}> "Retail only."@en`);
+	});
+
+	it('fetchConcepts collects every definition and scope note with its language instead of overwriting (STORY-480)', async () => {
+		const c = `${VOCAB}#X`;
+		vi.stubGlobal('fetch', mockFetch({
+			select: () => [
+				{ c: { value: c }, p: { value: SKOS.prefLabel }, o: { value: 'X' }, lang: { value: 'en' } },
+				{ c: { value: c }, p: { value: SKOS.definition }, o: { value: 'A bank.' }, lang: { value: 'en' } },
+				{ c: { value: c }, p: { value: SKOS.definition }, o: { value: 'Eine Bank.' }, lang: { value: 'de' } },
+				{ c: { value: c }, p: { value: SKOS.definition }, o: { value: 'Untagged.' }, lang: { value: '' } },
+				{ c: { value: c }, p: { value: SKOS.scopeNote }, o: { value: 'Note.' } }
+			]
+		}).fn);
+		const { concepts } = await connector().fetchConcepts(CORE);
+		expect(concepts[0].definitions).toEqual([
+			{ text: 'A bank.', lang: 'en' },
+			{ text: 'Eine Bank.', lang: 'de' },
+			{ text: 'Untagged.', lang: '' }
+		]);
+		expect(concepts[0].scopeNotes).toEqual([{ text: 'Note.', lang: '' }]);
+	});
+
 	it('insertConcept rejects an invalid draft and an existing IRI before writing', async () => {
 		const { fn, updates } = mockFetch();
 		vi.stubGlobal('fetch', fn);
@@ -391,7 +429,7 @@ describe('SparqlConnector — concepts (STORY-322)', () => {
 			iri: c,
 			prefLabels: [{ text: 'Bank', lang: 'en' }],
 			altLabels: [{ text: 'Credit house', lang: 'en' }],
-			definition: 'A financial institution.',
+			definitions: [{ text: 'A financial institution.', lang: '' }],
 			schemeIri: draft.schemeIri,
 			topConcept: true,
 			status: 'active',
@@ -668,5 +706,73 @@ describe('SparqlConnector.countConceptsByScheme (STORY-448)', () => {
 		expect(queries).toHaveLength(1);
 		expect(queries[0]).toContain('GROUP BY ?s');
 		expect(queries[0]).toContain(`FROM <${VOCAB}>`);
+	});
+});
+
+describe('SparqlConnector — authority as a business unit (concept authority node)', () => {
+	const unit = (iri: string, label: string) => ({ u: { value: iri }, label: { value: label } });
+	const unitsQuery = (q: string) => q.includes(`<${BUSINESS_UNIT_CLASS_IRI}>`);
+
+	it('fetchBusinessUnits reads the nodes of the class with their labels', async () => {
+		vi.stubGlobal('fetch', mockFetch({ select: (q) => (unitsQuery(q) ? [unit(`${VOCAB}#DataOfficeBusinessUnit`, 'Data Office')] : []) }).fn);
+		expect(await connector().fetchBusinessUnits(CORE)).toEqual([{ iri: `${VOCAB}#DataOfficeBusinessUnit`, label: 'Data Office' }]);
+	});
+
+	it('insertConcept links an existing unit and creates nothing', async () => {
+		const iri = `${VOCAB}#DataOfficeBusinessUnit`;
+		const { fn, updates } = mockFetch({ select: (q) => (unitsQuery(q) ? [unit(iri, 'Data Office')] : []) });
+		vi.stubGlobal('fetch', fn);
+		await connector().insertConcept(CORE, { ...draft, authority: 'Data Office', authorityIri: iri });
+		expect(updates[0]).toContain(`<${CONCEPT_AUTHORITY_PREDICATE_IRI}> <${iri}>`);
+		expect(updates[0]).not.toContain(`a <${BUSINESS_UNIT_CLASS_IRI}>`);
+	});
+
+	it('insertConcept creates the unit in the same update when the name is new', async () => {
+		const { fn, updates } = mockFetch();
+		vi.stubGlobal('fetch', fn);
+		await connector().insertConcept(CORE, { ...draft, authority: 'Legal "Affairs"', authorityCreate: true });
+		const unitIri = `${VOCAB}#LegalAffairsBusinessUnit`;
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${unitIri}> a <${BUSINESS_UNIT_CLASS_IRI}>`);
+		expect(updates[0]).toContain('"Legal \\"Affairs\\""');
+		expect(updates[0]).toContain(`<${CONCEPT_AUTHORITY_PREDICATE_IRI}> <${unitIri}>`);
+	});
+
+	it('a new name that equals an existing unit reuses it', async () => {
+		const iri = `${VOCAB}#DataOfficeBusinessUnit`;
+		const { fn, updates } = mockFetch({ exists: true, select: (q) => (unitsQuery(q) ? [unit(iri, 'Data Office')] : []) });
+		vi.stubGlobal('fetch', fn);
+		await connector().updateConcept(CORE, `${VOCAB}#Bank`, { ...draft, authority: 'data office', authorityCreate: true });
+		expect(updates[0]).toContain(`<${CONCEPT_AUTHORITY_PREDICATE_IRI}> <${iri}>`);
+		expect(updates[0]).not.toContain(`a <${BUSINESS_UNIT_CLASS_IRI}>`);
+	});
+
+	it('without a link the old text is written as before (no migration)', async () => {
+		const { fn, updates } = mockFetch();
+		vi.stubGlobal('fetch', fn);
+		await connector().insertConcept(CORE, { ...draft, authority: 'Data Office' });
+		expect(updates[0]).toContain(`<${CONCEPT_AUTHORITY_PREDICATE_IRI}> "Data Office"`);
+	});
+
+	it('fetchConcepts reads a linked authority with its name and an old text value as before', async () => {
+		const iri = `${VOCAB}#DataOfficeBusinessUnit`;
+		const a = `${VOCAB}#A`;
+		const b = `${VOCAB}#B`;
+		vi.stubGlobal('fetch', mockFetch({
+			select: (q) =>
+				unitsQuery(q)
+					? [unit(iri, 'Data Office')]
+					: [
+							{ c: { value: a }, p: { value: SKOS.prefLabel }, o: { value: 'A' }, lang: { value: 'en' } },
+							{ c: { value: a }, p: { value: CONCEPT_AUTHORITY_PREDICATE_IRI }, o: { type: 'uri', value: iri } },
+							{ c: { value: b }, p: { value: SKOS.prefLabel }, o: { value: 'B' }, lang: { value: 'en' } },
+							{ c: { value: b }, p: { value: CONCEPT_AUTHORITY_PREDICATE_IRI }, o: { type: 'literal', value: 'Old Office' } }
+						]
+		}).fn);
+		const { concepts } = await connector().fetchConcepts(CORE);
+		const byLabel = (l: string) => concepts.find((c) => c.prefLabels[0].text === l)!;
+		expect(byLabel('A')).toMatchObject({ authority: 'Data Office', authorityIri: iri });
+		expect(byLabel('B').authority).toBe('Old Office');
+		expect(byLabel('B').authorityIri).toBeUndefined();
 	});
 });

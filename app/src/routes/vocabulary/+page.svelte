@@ -6,8 +6,10 @@
 	import { page } from '$app/state';
 	import BackfillConceptsModal from '#lib/components/BackfillConceptsModal.svelte';
 	import VocabularyCollectionsTab from '#lib/components/VocabularyCollectionsTab.svelte';
+	import CopyLinkButton from '#lib/components/CopyLinkButton.svelte';
 	import ImportVocabularyModal from '#lib/components/ImportVocabularyModal.svelte';
 	import ExportVocabularyModal from '#lib/components/ExportVocabularyModal.svelte';
+	import type { BusinessUnit } from '#lib/services/business-unit.js';
 	import ConceptForm from '#lib/components/ConceptForm.svelte';
 	import ConceptNeighborhood from '#lib/components/ConceptNeighborhood.svelte';
 	import ConceptHistory from '#lib/components/ConceptHistory.svelte';
@@ -38,6 +40,7 @@
 	import {
 		conceptTitle,
 		nextStatuses,
+		taggedTexts,
 		schemeDisplayName,
 		type Concept,
 		type ConceptDraft,
@@ -64,6 +67,13 @@
 		void goto(listStateHref(stripBase(page.url.pathname), page.url.searchParams, next), { replace: true, reset: false });
 	}
 	/** A neighbour in the Neighbourhood section becomes the selected concept, and `?concept=` follows. */
+	/** The scheme to show selected when the Schemes tab opens from the neighbourhood graph. */
+	let schemeToOpen = $state<string | null>(null);
+	function openScheme(iri: string) {
+		schemeToOpen = iri;
+		selectTab('schemes');
+	}
+
 	function selectNeighbour(iri: string) {
 		selectedIri = iri;
 		const params = new URLSearchParams(page.url.searchParams.toString());
@@ -108,6 +118,8 @@
 		return c ? conceptTitle(c) : (iri.split(/[#/]/).pop() ?? iri);
 	};
 
+	let businessUnits = $state<BusinessUnit[]>([]);
+
 	async function load() {
 		error = null;
 		try {
@@ -126,6 +138,8 @@
 				sparqlConnector.fetchExternalVocabularies(),
 				sparqlConnector.fetchCollections(core)
 			]);
+			// Best effort: without the list the form can still link the concept's current unit and create a new one.
+			businessUnits = await sparqlConnector.fetchBusinessUnits(core).catch(() => []);
 			collections = loadedCollections;
 			schemes = loadedSchemes;
 			externals = loadedExternals;
@@ -467,6 +481,7 @@
 		<h1>Vocabulary</h1>
 		{#if core}
 			<span class="header-actions">
+				<CopyLinkButton path="/review/glossary" label="Copy link to the read-only glossary" />
 				<button type="button" onclick={openImport} data-testid="import-vocabulary">Import</button>
 				<button type="button" onclick={() => (exporting = true)} data-testid="export-vocabulary">Export</button>
 			</span>
@@ -506,8 +521,15 @@
 
 			<section class="detail" aria-label="Concept">
 				{#if selected}
-					<h2>{conceptTitle(selected)}</h2>
-					<p><a href={reviewConceptUrl(selected.iri)} data-testid="review-link">Read-only page to share</a></p>
+					<h2>
+						{conceptTitle(selected)}
+						<a class="share" href={reviewConceptUrl(selected.iri)} data-testid="review-link" title="Read-only page to share" aria-label="Read-only page to share">
+							<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+								<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+								<line x1="8.6" y1="13.5" x2="15.4" y2="17.5" /><line x1="15.4" y1="6.5" x2="8.6" y2="10.5" />
+							</svg>
+						</a>
+					</h2>
 					<p class="status-line">
 						<span class="badge status-{selected.status}">{selected.status}</span>
 						{#if selected.schemeIri}in {schemeName.get(selected.schemeIri) ?? selected.schemeIri}{/if}
@@ -515,20 +537,20 @@
 					</p>
 					<dl>
 						<dt>Definition <code>skos:definition</code></dt>
-						<dd>{selected.definition || '—'}</dd>
-						{#if selected.scopeNote}
+						{#each taggedTexts(selected.definitions) as text (text)}<dd>{text}</dd>{:else}<dd>—</dd>{/each}
+						{#if taggedTexts(selected.scopeNotes).length}
 							<dt>Scope note <code>skos:scopeNote</code></dt>
-							<dd>{selected.scopeNote}</dd>
+							{#each taggedTexts(selected.scopeNotes) as text (text)}<dd>{text}</dd>{/each}
 						{/if}
 						<dt>Preferred <code>skos:prefLabel</code></dt>
-						<dd>{selected.prefLabels.map((l) => (l.lang ? `${l.text} (${l.lang})` : l.text)).join(', ')}</dd>
-						{#if selected.altLabels.length}
+						<dd>{taggedTexts(selected.prefLabels).join(', ')}</dd>
+						{#if taggedTexts(selected.altLabels).length}
 							<dt>Alternative <code>skos:altLabel</code></dt>
-							<dd>{selected.altLabels.map((l) => l.text).join(', ')}</dd>
+							<dd>{taggedTexts(selected.altLabels).join(', ')}</dd>
 						{/if}
-						{#if selected.hiddenLabels.length}
+						{#if taggedTexts(selected.hiddenLabels).length}
 							<dt>Hidden <code>skos:hiddenLabel</code></dt>
-							<dd>{selected.hiddenLabels.map((l) => l.text).join(', ')}</dd>
+							<dd>{taggedTexts(selected.hiddenLabels).join(', ')}</dd>
 						{/if}
 						{#if selected.notation?.length}
 							<dt>Notation <code>skos:notation</code></dt>
@@ -567,7 +589,7 @@
 							{/each}
 						</ul>
 					{/if}
-					<ConceptNeighborhood {concepts} iri={selected.iri} onSelect={selectNeighbour} />
+					<ConceptNeighborhood {concepts} iri={selected.iri} onSelect={selectNeighbour} {schemes} onSelectScheme={openScheme} />
 					<ConceptRelations concept={selected} {concepts} {externals} onAdd={addRelation} onRemove={removeRelation} bind:rationale={relationRationale} />
 					<div class="actions">
 						<button type="button" onclick={() => (editing = selected)}>Edit</button>
@@ -624,6 +646,7 @@
 		{#if tab === 'schemes'}
 		<VocabularySchemesTab
 			core={core}
+			initialSelectedIri={schemeToOpen}
 			{schemes}
 			{concepts}
 			{listState}
@@ -659,6 +682,7 @@
 			onCancel={() => (editing = null)}
 			onAddAlternative={addAlternative}
 			{collections}
+			{businessUnits}
 			bind:rationale
 		/>
 	{/if}
@@ -793,6 +817,16 @@
 		border: 1px solid var(--color-border);
 		border-radius: 999px;
 		padding: 0.05rem 0.5rem;
+	}
+
+	.share {
+		color: var(--color-text-muted);
+		margin-left: 0.4rem;
+		vertical-align: middle;
+	}
+
+	.share:hover {
+		color: var(--color-accent);
 	}
 
 	.status-line {

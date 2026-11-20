@@ -27,8 +27,8 @@ type fixture struct {
 		PrefLabels    []fixLang
 		AltLabels     []fixLang
 		HiddenLabels  []fixLang
-		Definition    string
-		ScopeNote     string
+		Definitions   []fixLang
+		ScopeNotes    []fixLang
 		Notation      []string
 		Example       []string
 		EditorialNote []string
@@ -117,11 +117,11 @@ func graphFrom(f fixture) *fakeGraph {
 		for _, e := range c.EditorialNote {
 			add(skos+"editorialNote", lit(e))
 		}
-		if c.Definition != "" {
-			add(skos+"definition", lit(c.Definition))
+		for _, l := range c.Definitions {
+			add(skos+"definition", tag(l.Text, l.Lang))
 		}
-		if c.ScopeNote != "" {
-			add(skos+"scopeNote", lit(c.ScopeNote))
+		for _, l := range c.ScopeNotes {
+			add(skos+"scopeNote", tag(l.Text, l.Lang))
 		}
 		for _, n := range c.Notation {
 			add(skos+"notation", lit(n))
@@ -217,6 +217,18 @@ func TestConceptFieldsAndDerivedRelations(t *testing.T) {
 	if staff.PrefLabel["en"] != "Staff" || staff.PrefLabel["de"] != "Personal" {
 		t.Errorf("prefLabel = %v", staff.PrefLabel)
 	}
+	if staff.Definition["en"] != "People employed by the hospital." || staff.Definition["de"] != "Beschäftigte des Spitals." {
+		t.Errorf("definition = %v", staff.Definition)
+	}
+	if staff.ScopeNote["und"] != "Includes contractors.\nExcludes volunteers." {
+		t.Errorf("an untagged scope note belongs under the no-language key: %v", staff.ScopeNote)
+	}
+	if got := byID["Nurse"].Definition; len(got) != 1 || got["und"] != "A registered nurse." {
+		t.Errorf("an untagged definition belongs under the no-language key: %v", got)
+	}
+	if byID["Doctor"].ScopeNote == nil || len(byID["Doctor"].ScopeNote) != 0 {
+		t.Errorf("an absent scope note must be {} not null: %#v", byID["Doctor"].ScopeNote)
+	}
 	if len(staff.Narrower) != 2 || staff.Narrower[0] != coreNS+"/vocab#Doctor" {
 		t.Errorf("narrower = %v", staff.Narrower)
 	}
@@ -251,6 +263,12 @@ func TestListFiltersAndPaging(t *testing.T) {
 	de, _ := svc.Concepts(ctx, Filter{Lang: "de"})
 	if len(de.Items) != 1 || de.Items[0].ID != "Staff" || len(de.Items[0].PrefLabel) != 1 {
 		t.Errorf("lang = %+v", de.Items)
+	}
+	if got := de.Items[0].Definition; len(got) != 1 || got["de"] != "Beschäftigte des Spitals." {
+		t.Errorf("lang=de must return only the German definition: %v", got)
+	}
+	if got := de.Items[0].ScopeNote; len(got) != 0 {
+		t.Errorf("lang=de must not return scope notes of other languages: %v", got)
 	}
 	none, _ := svc.Concepts(ctx, Filter{SchemeID: "Missing"})
 	if none.Items == nil || len(none.Items) != 0 {

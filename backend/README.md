@@ -115,9 +115,9 @@ Accept: application/json | text/turtle        (or ?format=json|turtle)
 
 Ids are the local name of the IRI in the vocab graph (`^[A-Za-z0-9_-]{1,128}$`); an empty result is `[]`. Lists are in
 IRI order, `pageSize` defaults to 100 and is capped at 500. `lang` keeps the concepts that have a preferred label in
-that language and only that language's labels; a label without a language tag is keyed `und`. `modifiedSince`
+that language and only that language's labels, `definition` and `scopeNote`; a text without a language tag is keyed `und`. `modifiedSince`
 compares with `dct:modified` (concepts without one are left out). A concept carries `iri`, `prefLabel` and
-`altLabels` per language, `definition`, `scopeNote`, `example`, `notation`, `broader`/`narrower`/`related` (both
+`altLabels`, `definition` and `scopeNote` per language (`{"en": "…", "de": "…"}`), `example`, `notation`, `broader`/`narrower`/`related` (both
 halves of every pair), `mappings`, `scheme`, `topConcept`, `status`, `createdAt`, `modifiedAt`.
 
 The Turtle writer is held to the app's own export by `testdata/golden/glossary.json` + `glossary.ttl`

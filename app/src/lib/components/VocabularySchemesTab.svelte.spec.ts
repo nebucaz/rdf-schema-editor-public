@@ -10,7 +10,7 @@ const scheme = (iri: string, name: string): ConceptScheme => ({
 	iri, name, description: '', scope, metadata: { title: '', creator: '', publisher: '', rights: '', modified: '2026-11-01T10:00:00Z' }
 });
 const concept = (iri: string, schemeIri: string, over: Partial<Concept> = {}): Concept => ({
-	iri, prefLabels: [{ text: iri, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	iri, prefLabels: [{ text: iri, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri, topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '',
 	created: '', modified: '', deprecatedOn: '', broader: [], related: [], mappings: [], ...over
 });

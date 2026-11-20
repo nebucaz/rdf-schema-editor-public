@@ -13,7 +13,7 @@ describe('GovernanceSettingsForm (STORY-331)', () => {
 		await fireEvent.change(screen.getByLabelText('Maturity'), { target: { value: 'pilot' } });
 		await fireEvent.input(screen.getByLabelText('Version'), { target: { value: '1.0.0' } });
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
-		await waitFor(() => expect(onSave).toHaveBeenCalledWith({ steward: 'Ann', authority: 'Data Office', maturity: 'pilot', version: '1.0.0' }));
+		await waitFor(() => expect(onSave).toHaveBeenCalledWith({ steward: 'Ann', authority: 'Data Office', authorityCreate: true, maturity: 'pilot', version: '1.0.0' }));
 	});
 
 	it('refuses an invalid version without saving', async () => {
@@ -28,5 +28,25 @@ describe('GovernanceSettingsForm (STORY-331)', () => {
 	it('notes that names are recorded, not enforced', () => {
 		render(GovernanceSettingsForm, { props: { initial, onSave: vi.fn(async () => {}) } });
 		expect(screen.getByText(/recorded, not enforced/i)).toBeTruthy();
+	});
+});
+
+describe('GovernanceSettingsForm authority (business unit)', () => {
+	const units = [{ iri: 'urn:bu:data', label: 'Data Office' }];
+
+	it('links an existing business unit instead of creating one', async () => {
+		const onSave = vi.fn(async () => {});
+		render(GovernanceSettingsForm, { props: { initial, onSave, businessUnits: units } });
+		await fireEvent.input(screen.getByLabelText('Authority'), { target: { value: 'Data' } });
+		await fireEvent.click(screen.getByRole('option', { name: 'Data Office' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() => expect(onSave).toHaveBeenCalledWith({ steward: 'Ann', authority: 'Data Office', authorityIri: 'urn:bu:data', maturity: '', version: '' }));
+	});
+
+	it('keeps an unchanged old text value as text', async () => {
+		const onSave = vi.fn(async () => {});
+		render(GovernanceSettingsForm, { props: { initial: { ...initial, authority: 'Old Office' }, onSave, businessUnits: units } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await waitFor(() => expect(onSave).toHaveBeenCalledWith({ steward: 'Ann', authority: 'Old Office', maturity: '', version: '' }));
 	});
 });

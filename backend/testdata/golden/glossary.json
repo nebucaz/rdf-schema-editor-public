@@ -5,60 +5,187 @@
       "iri": "http://example.org/core/vocab#Workforce",
       "name": "Workforce",
       "description": "Roles in the hospital",
-      "scope": { "purpose": "internal", "decisionsSupported": "", "outOfScope": "", "stakeholders": "" },
-      "metadata": { "title": "Workforce thesaurus", "creator": "https://example.org/people/hr", "publisher": "Hospital \"Mercy\"", "rights": "CC-BY 4.0", "modified": "2026-11-01T10:00:00Z" }
+      "scope": {
+        "purpose": "internal",
+        "decisionsSupported": "",
+        "outOfScope": "",
+        "stakeholders": ""
+      },
+      "metadata": {
+        "title": "Workforce thesaurus",
+        "creator": "https://example.org/people/hr",
+        "publisher": "Hospital \"Mercy\"",
+        "rights": "CC-BY 4.0",
+        "modified": "2026-11-01T10:00:00Z"
+      }
     }
   ],
   "concepts": [
     {
       "iri": "http://example.org/core/vocab#Staff",
-      "prefLabels": [{ "text": "Staff", "lang": "en" }, { "text": "Personal", "lang": "de" }],
-      "altLabels": [{ "text": "Personnel", "lang": "en" }],
-      "hiddenLabels": [{ "text": "Headcount", "lang": "en" }],
-      "definition": "People employed by the hospital.",
-      "scopeNote": "Includes contractors.\nExcludes volunteers.",
-      "notation": ["S-1"],
-      "example": ["Ward staff"],
-      "editorialNote": ["ask HR before changing"],
+      "prefLabels": [
+        {
+          "text": "Staff",
+          "lang": "en"
+        },
+        {
+          "text": "Personal",
+          "lang": "de"
+        }
+      ],
+      "altLabels": [
+        {
+          "text": "Personnel",
+          "lang": "en"
+        }
+      ],
+      "hiddenLabels": [
+        {
+          "text": "Headcount",
+          "lang": "en"
+        }
+      ],
+      "notation": [
+        "S-1"
+      ],
+      "example": [
+        "Ward staff"
+      ],
+      "editorialNote": [
+        "ask HR before changing"
+      ],
       "disambiguation": "",
       "schemeIri": "http://example.org/core/vocab#Workforce",
       "topConcept": true,
       "status": "active",
-      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
-      "created": "2026-01-02", "modified": "2026-10-30", "deprecatedOn": "",
-      "broader": [], "related": [], "mappings": [{ "kind": "exactMatch", "target": "http://other.example/Staff" }]
+      "source": "",
+      "authority": "",
+      "replacedBy": "",
+      "deprecationReason": "",
+      "created": "2026-01-02",
+      "modified": "2026-10-30",
+      "deprecatedOn": "",
+      "broader": [],
+      "related": [],
+      "mappings": [
+        {
+          "kind": "exactMatch",
+          "target": "http://other.example/Staff"
+        }
+      ],
+      "definitions": [
+        {
+          "text": "People employed by the hospital.",
+          "lang": "en"
+        },
+        {
+          "text": "Beschäftigte des Spitals.",
+          "lang": "de"
+        }
+      ],
+      "scopeNotes": [
+        {
+          "text": "Includes contractors.\nExcludes volunteers.",
+          "lang": ""
+        }
+      ]
     },
     {
       "iri": "http://example.org/core/vocab#Nurse",
-      "prefLabels": [{ "text": "Nurse", "lang": "en" }],
-      "altLabels": [{ "text": "Carer", "lang": "en" }, { "text": "Pflegekraft", "lang": "de" }],
-      "hiddenLabels": [{ "text": "Sister", "lang": "en" }],
-      "definition": "A registered nurse.",
-      "scopeNote": "", "notation": [], "example": [],
-      "editorialNote": ["internal remark"],
+      "prefLabels": [
+        {
+          "text": "Nurse",
+          "lang": "en"
+        }
+      ],
+      "altLabels": [
+        {
+          "text": "Carer",
+          "lang": "en"
+        },
+        {
+          "text": "Pflegekraft",
+          "lang": "de"
+        }
+      ],
+      "hiddenLabels": [
+        {
+          "text": "Sister",
+          "lang": "en"
+        }
+      ],
+      "notation": [],
+      "example": [],
+      "editorialNote": [
+        "internal remark"
+      ],
       "disambiguation": "",
       "schemeIri": "http://example.org/core/vocab#Workforce",
       "topConcept": false,
       "status": "approved",
-      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
-      "created": "2026-01-03", "modified": "2026-11-02", "deprecatedOn": "",
-      "broader": ["http://example.org/core/vocab#Staff"],
-      "related": ["http://example.org/core/vocab#Doctor"],
-      "mappings": [{ "kind": "closeMatch", "target": "http://other.example/Nurse" }]
+      "source": "",
+      "authority": "",
+      "replacedBy": "",
+      "deprecationReason": "",
+      "created": "2026-01-03",
+      "modified": "2026-11-02",
+      "deprecatedOn": "",
+      "broader": [
+        "http://example.org/core/vocab#Staff"
+      ],
+      "related": [
+        "http://example.org/core/vocab#Doctor"
+      ],
+      "mappings": [
+        {
+          "kind": "closeMatch",
+          "target": "http://other.example/Nurse"
+        }
+      ],
+      "definitions": [
+        {
+          "text": "A registered nurse.",
+          "lang": ""
+        }
+      ],
+      "scopeNotes": []
     },
     {
       "iri": "http://example.org/core/vocab#Doctor",
-      "prefLabels": [{ "text": "Doctor", "lang": "en" }],
-      "altLabels": [], "hiddenLabels": [],
-      "definition": "A physician.",
-      "scopeNote": "", "notation": [], "example": [], "editorialNote": [],
+      "prefLabels": [
+        {
+          "text": "Doctor",
+          "lang": "en"
+        }
+      ],
+      "altLabels": [],
+      "hiddenLabels": [],
+      "notation": [],
+      "example": [],
+      "editorialNote": [],
       "disambiguation": "",
       "schemeIri": "http://example.org/core/vocab#Workforce",
       "topConcept": false,
       "status": "proposed",
-      "source": "", "authority": "", "replacedBy": "", "deprecationReason": "",
-      "created": "2026-01-04", "modified": "2026-01-04", "deprecatedOn": "",
-      "broader": ["http://example.org/core/vocab#Staff"], "related": [], "mappings": []
+      "source": "",
+      "authority": "",
+      "replacedBy": "",
+      "deprecationReason": "",
+      "created": "2026-01-04",
+      "modified": "2026-01-04",
+      "deprecatedOn": "",
+      "broader": [
+        "http://example.org/core/vocab#Staff"
+      ],
+      "related": [],
+      "mappings": [],
+      "definitions": [
+        {
+          "text": "A physician.",
+          "lang": "en"
+        }
+      ],
+      "scopeNotes": []
     }
   ]
 }

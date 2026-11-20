@@ -70,7 +70,7 @@ These follow the SKOS reference and the qSKOS quality criteria. Where a rule is 
 - **Mapping clash** (warning): an exact match and a broad, related or narrow match to the same concept (SKOS S46).
 - **Related between siblings** (info): a related link between two concepts that share a broader concept. **Hierarchical redundancy** (info): a broader link that the hierarchy already implies. **Reflexive relation** (warning): a concept linked to itself.
 - **Omitted top concept** (warning): a scheme with concepts but no top concept. **Mapping without scheme** (info): a concept with mappings that belongs to no scheme.
-- **Invalid language tag** (warning): a label whose tag is not well-formed BCP 47. **Incomplete language coverage** (info): concepts lack a preferred label in a language others in the scheme use.
+- **Invalid language tag** (warning): a label, definition or scope note whose tag is not well-formed BCP 47. **Incomplete language coverage** (info): in a scheme that uses two or more languages for preferred labels, a concept lacks a preferred label or a definition in one of them; the finding names the languages and opens the concept.
 - **Empty or unprintable label** (warning).
 - **Duplicate notation** (info): one notation used by two concepts of a scheme; unique notation is a convention of this app.
 - **Type disjointness** (warning): one IRI used as both a concept and a scheme, or a collection and a concept or scheme (SKOS S9, S37). **Collection member invalid** (warning): a collection holds something that is neither a concept nor a collection of the vocabulary.

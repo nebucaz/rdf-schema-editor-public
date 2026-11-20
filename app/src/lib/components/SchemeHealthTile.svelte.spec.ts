@@ -5,8 +5,8 @@ import { analyseSchemeHealth } from '#lib/services/scheme-health.js';
 import type { Concept } from '#lib/services/skos-concept.js';
 
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id.toUpperCase(), lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd',
-	scopeNote: '', disambiguation: '', schemeIri: 'urn:s:hr#staff', topConcept: false, status: 'active', source: '', authority: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id.toUpperCase(), lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }],
+	scopeNotes: [], disambiguation: '', schemeIri: 'urn:s:hr#staff', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '', ...over
 });
 const concepts = [c('a', { topConcept: true }), c('b', { broader: ['urn:c:a'] }), c('e', { broader: ['urn:c:a', 'urn:c:b'] }), c('lonely')];

@@ -1,18 +1,31 @@
 <script lang="ts">
 	/** Steward, authority, maturity and version of the core namespace (ontology-pipeline STORY-331). */
+	import { resolveAuthorityInput, type BusinessUnit } from '#lib/services/business-unit.js';
+	import AuthorityPicker from './AuthorityPicker.svelte';
 	import { MATURITY_LEVELS, validateGovernance, type Governance } from '#lib/services/governance.js';
 
 	interface Props {
 		initial: Governance;
 		onSave: (g: Governance) => Promise<void>;
+		/** The business units that can hold authority; a typed name that matches none is created on save. */
+		businessUnits?: BusinessUnit[];
 	}
 
-	let { initial, onSave }: Props = $props();
+	let { initial, onSave, businessUnits = [] }: Props = $props();
 
 	/* svelte-ignore state_referenced_locally */
 	let steward = $state(initial.steward);
 	/* svelte-ignore state_referenced_locally */
 	let authority = $state(initial.authority);
+	/* svelte-ignore state_referenced_locally */
+	let authorityIri = $state(initial.authorityIri ?? '');
+	/* svelte-ignore state_referenced_locally */
+	const legacyAuthority = initial.authorityIri ? '' : initial.authority;
+	const units = $derived(
+		initial.authorityIri && !businessUnits.some((u) => u.iri === initial.authorityIri)
+			? [...businessUnits, { iri: initial.authorityIri, label: initial.authority }]
+			: businessUnits
+	);
 	/* svelte-ignore state_referenced_locally */
 	let maturity = $state<Governance['maturity']>(initial.maturity);
 	/* svelte-ignore state_referenced_locally */
@@ -24,7 +37,7 @@
 
 	async function submit(event: SubmitEvent) {
 		event.preventDefault();
-		const g: Governance = { steward: steward.trim(), authority: authority.trim(), maturity, version: version.trim() };
+		const g: Governance = { steward: steward.trim(), ...resolveAuthorityInput({ text: authority, iri: authorityIri, units, legacy: legacyAuthority }), maturity, version: version.trim() };
 		const problems = validateGovernance(g);
 		if (problems.length) {
 			error = problems[0];
@@ -45,7 +58,7 @@
 <form onsubmit={submit} novalidate>
 	<p class="hint">Names are recorded, not enforced: the app has no permissions, so they say who is accountable, not who is allowed.</p>
 	<label>Steward<input type="text" bind:value={steward} /></label>
-	<label>Authority<input type="text" bind:value={authority} /></label>
+	<AuthorityPicker {units} bind:text={authority} bind:iri={authorityIri} legacy={legacyAuthority} />
 	<label>
 		Maturity
 		<select bind:value={maturity}>

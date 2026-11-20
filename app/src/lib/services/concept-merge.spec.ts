@@ -3,8 +3,8 @@ import { planMerge, type MergeInput } from './concept-merge';
 import type { Concept } from './skos-concept';
 
 const c = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '',
-	scopeNote: '', disambiguation: '', schemeIri: 'urn:s:1', topConcept: false, status: 'active', source: '', authority: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [],
+	scopeNotes: [], disambiguation: '', schemeIri: 'urn:s:1', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '', ...over
 });
 const i = (id: string) => `urn:c:${id}`;
@@ -35,13 +35,28 @@ describe('planMerge (STORY-423)', () => {
 	});
 
 	it('takes a definition the survivor lacks, and asks when two differ', () => {
-		expect(merge([c('s'), c('d', { definition: 'From dup.' })]).survivorDraft.definition).toBe('From dup.');
-		const plan = merge([c('s', { definition: 'Mine.' }), c('d', { definition: 'Theirs.' })]);
+		expect(merge([c('s'), c('d', { definitions: [{ text: 'From dup.', lang: '' }] })]).survivorDraft.definitions).toEqual([{ text: 'From dup.', lang: '' }]);
+		const plan = merge([c('s', { definitions: [{ text: 'Mine.', lang: '' }] }), c('d', { definitions: [{ text: 'Theirs.', lang: '' }] })]);
 		expect(plan.conflicts).toEqual([{ field: 'definition', survivor: 'Mine.', duplicate: 'Theirs.', resolved: false }]);
-		expect(plan.survivorDraft.definition).toBe('Mine.');
-		const chosen = merge([c('s', { definition: 'Mine.' }), c('d', { definition: 'Theirs.' })], { decisions: { definition: 'duplicate' } });
-		expect(chosen.survivorDraft.definition).toBe('Theirs.');
+		expect(plan.survivorDraft.definitions).toEqual([{ text: 'Mine.', lang: '' }]);
+		const chosen = merge([c('s', { definitions: [{ text: 'Mine.', lang: '' }] }), c('d', { definitions: [{ text: 'Theirs.', lang: '' }] })], { decisions: { definition: 'duplicate' } });
+		expect(chosen.survivorDraft.definitions).toEqual([{ text: 'Theirs.', lang: '' }]);
 		expect(chosen.conflicts[0].resolved).toBe(true);
+	});
+
+	it('merges definitions per language: takes a missing language, asks only about a differing one (STORY-480)', () => {
+		const survivor = c('s', { definitions: [{ text: 'Mine.', lang: 'en' }] });
+		const dupe = c('d', { definitions: [{ text: 'Eine.', lang: 'de' }, { text: 'Theirs.', lang: 'en' }] });
+		const plan = merge([survivor, dupe]);
+		expect(plan.conflicts).toEqual([{ field: 'definition', survivor: 'Mine.', duplicate: 'Theirs.', resolved: false }]);
+		expect(plan.survivorDraft.definitions).toEqual([{ text: 'Mine.', lang: 'en' }, { text: 'Eine.', lang: 'de' }]);
+		const chosen = merge([survivor, dupe], { decisions: { definition: 'duplicate' } });
+		expect(chosen.survivorDraft.definitions).toEqual([{ text: 'Theirs.', lang: 'en' }, { text: 'Eine.', lang: 'de' }]);
+	});
+
+	it('takes the duplicate scope note for a language the survivor lacks (STORY-480)', () => {
+		const plan = merge([c('s', { scopeNotes: [{ text: 'Mine.', lang: 'en' }] }), c('d', { scopeNotes: [{ text: 'Meine.', lang: 'de' }] })]);
+		expect(plan.survivorDraft.scopeNotes).toEqual([{ text: 'Mine.', lang: 'en' }, { text: 'Meine.', lang: 'de' }]);
 	});
 
 	it('asks about two different notations', () => {
@@ -130,5 +145,15 @@ describe('planMerge (STORY-423)', () => {
 		expect(text).toMatch(/D2/);
 		expect(text).toMatch(/K/);
 		expect(merge([...concepts].reverse(), { classLinks: [{ classIri: 'http://e#K', label: 'K' }] })).toEqual(plan);
+	});
+});
+
+describe('planMerge authority link', () => {
+	it('keeps the survivor\'s business unit, or takes the duplicate\'s when the survivor has none', () => {
+		const mine = merge([c('s', { authority: 'Data Office', authorityIri: 'urn:bu:data' }), c('d', { authority: 'Legal', authorityIri: 'urn:bu:legal' })]);
+		expect(mine.survivorDraft).toMatchObject({ authority: 'Data Office', authorityIri: 'urn:bu:data' });
+		const theirs = merge([c('s'), c('d', { authority: 'Legal', authorityIri: 'urn:bu:legal' })]);
+		expect(theirs.survivorDraft).toMatchObject({ authority: 'Legal', authorityIri: 'urn:bu:legal' });
+		expect(merge([c('s', { authority: 'Old text' }), c('d')]).survivorDraft.authorityIri).toBeUndefined();
 	});
 });

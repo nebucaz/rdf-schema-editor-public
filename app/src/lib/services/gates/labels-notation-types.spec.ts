@@ -9,7 +9,7 @@ import { gateFindingLink } from './links';
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `urn:c:${id}`,
 	prefLabels: [{ text: id, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: 'urn:scheme:a', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	broader: [], related: [], mappings: [],
@@ -42,16 +42,50 @@ describe('label, notation and type gates (STORY-421)', () => {
 		expect(only('invalid-language-tag', good)).toEqual([]);
 	});
 
-	it('incomplete-language-coverage reports languages and counts per scheme', () => {
-		const de = { text: 'Hund', lang: 'de' };
-		const found = only('incomplete-language-coverage', [concept('A', { prefLabels: [{ text: 'A', lang: 'en' }, de] }), concept('B'), concept('C')]);
-		expect(found).toHaveLength(1);
-		expect(found[0].elementIri).toBe('urn:scheme:a');
-		expect(found[0].message).toContain('de');
-		expect(found[0].message).toContain('2');
-		const full = [concept('A', { prefLabels: [{ text: 'A', lang: 'en' }, de] }), concept('B', { prefLabels: [{ text: 'B', lang: 'en' }, de] })];
-		expect(only('incomplete-language-coverage', full)).toEqual([]);
-		expect(only('incomplete-language-coverage', [concept('A'), concept('B', { schemeIri: 'urn:scheme:b', prefLabels: [{ text: 'B', lang: 'de' }] })])).toEqual([]);
+	it('invalid-language-tag also covers definitions and scope notes (STORY-485)', () => {
+		const bad = only('invalid-language-tag', [
+			concept('A', { definitions: [{ text: 'd', lang: 'english_US' }] }),
+			concept('B', { scopeNotes: [{ text: 's', lang: 'de_DE' }] })
+		]);
+		expect(bad.map((f) => f.elementIri).sort()).toEqual(['urn:c:A', 'urn:c:B']);
+	});
+
+	describe('incomplete-language-coverage (STORY-485)', () => {
+		const full = (id: string) =>
+			concept(id, {
+				prefLabels: [{ text: id, lang: 'en' }, { text: id + 'de', lang: 'de' }],
+				definitions: [{ text: 'd', lang: 'en' }, { text: 'd', lang: 'de' }]
+			});
+
+		it('reports a concept once, naming each language and what is missing', () => {
+			const lacking = concept('B', { prefLabels: [{ text: 'B', lang: 'en' }], definitions: [{ text: 'd', lang: 'en' }] });
+			const noDef = concept('C', {
+				prefLabels: [{ text: 'C', lang: 'en' }, { text: 'Cde', lang: 'de' }],
+				definitions: [{ text: 'd', lang: 'en' }]
+			});
+			const found = only('incomplete-language-coverage', [full('A'), lacking, noDef]);
+			expect(found.map((f) => f.elementIri).sort()).toEqual(['urn:c:B', 'urn:c:C']);
+			expect(found.every((f) => f.severity === 'info')).toBe(true);
+			expect(found.find((f) => f.elementIri === 'urn:c:B')!.message).toMatch(/de.*preferred label.*definition/);
+			expect(found.find((f) => f.elementIri === 'urn:c:C')!.message).toMatch(/de.*definition/);
+			expect(found.find((f) => f.elementIri === 'urn:c:C')!.message).not.toMatch(/preferred label/);
+		});
+
+		it('is quiet for a complete scheme, a one-language scheme and a schemeless concept', () => {
+			expect(only('incomplete-language-coverage', [full('A'), full('B')])).toEqual([]);
+			expect(only('incomplete-language-coverage', [concept('A'), concept('B', { definitions: [] })])).toEqual([]);
+			const loose = concept('L', { schemeIri: '', prefLabels: [{ text: 'L', lang: 'en' }] });
+			expect(only('incomplete-language-coverage', [full('A'), loose])).toEqual([]);
+		});
+
+		it('keeps schemes apart and opens the concept', () => {
+			const other = concept('Z', { schemeIri: 'urn:scheme:b' });
+			const found = only('incomplete-language-coverage', [full('A'), other, concept('Y', { schemeIri: 'urn:scheme:b' })]);
+			expect(found).toEqual([]);
+			const lacking = concept('B', { definitions: [{ text: 'd', lang: 'en' }] });
+			const f = only('incomplete-language-coverage', [full('A'), lacking]);
+			expect(gateFindingLink(f[0], schema)).toContain('/vocabulary?concept=');
+		});
 	});
 
 	it('empty-or-unprintable-label', () => {

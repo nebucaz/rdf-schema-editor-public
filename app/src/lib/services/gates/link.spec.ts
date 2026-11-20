@@ -16,7 +16,7 @@ const cls = (name: string, over: Partial<FetchedClass> = {}): FetchedClass => ({
 const concept = (name: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `${VOCAB}#${name}`,
 	prefLabels: [{ text: name, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: `${name} definition`, scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: `${name} definition`, lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over
@@ -49,20 +49,20 @@ describe('link gates (STORY-327)', () => {
 	});
 
 	it('is quiet for a linked class whose comment is absent or says the same as the concept', () => {
-		const c = concept('Customer', { definition: 'A party that buys.' });
+		const c = concept('Customer', { definitions: [{ text: 'A party that buys.', lang: '' }] });
 		expect(run([cls('Customer', { definedByConcept: c.iri })], [c])).toEqual([]);
 		expect(run([cls('Customer', { definedByConcept: c.iri, comment: '  a PARTY   that buys. ' })], [c])).toEqual([]);
 	});
 
 	it('flags drift when class comment and concept definition differ', () => {
-		const c = concept('Customer', { definition: 'A party that buys.' });
+		const c = concept('Customer', { definitions: [{ text: 'A party that buys.', lang: '' }] });
 		expect(run([cls('Customer', { definedByConcept: c.iri, comment: 'Someone who orders.' })], [c])).toEqual([
 			['definition-drift', `${NS}/schema#Customer`, 'warning']
 		]);
 	});
 
 	it('does not flag drift when the concept has no definition', () => {
-		const c = concept('Customer', { definition: '' });
+		const c = concept('Customer', { definitions: [] });
 		expect(run([cls('Customer', { definedByConcept: c.iri, comment: 'Someone who orders.' })], [c])).toEqual([]);
 	});
 

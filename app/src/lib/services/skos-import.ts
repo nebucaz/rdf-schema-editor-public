@@ -8,7 +8,7 @@
 import { Parser, type Quad } from 'n3';
 import { SKOS, SKOS_NS } from '#lib/utils/iri.js';
 import { isSafeSparqlIri } from '#lib/utils/sparql-safe.js';
-import { MAPPING_KINDS, findSimilarConcepts, type Concept, type ConceptMapping, type LangText, type MappingKind } from './skos-concept';
+import { MAPPING_KINDS, textIn, findSimilarConcepts, type Concept, type ConceptMapping, type LangText, type MappingKind } from './skos-concept';
 import { collectionsFromQuads, type SkosCollection } from './skos-collection';
 import type { SkosVocabulary } from './skos-export';
 
@@ -33,8 +33,9 @@ export interface ImportedConcept {
 	prefLabels: LangText[];
 	altLabels: LangText[];
 	hiddenLabels: LangText[];
-	definition: string;
-	scopeNote: string;
+	/** One text per language (`skos:definition`); a later triple in the same language replaces the earlier one. */
+	definitions: LangText[];
+	scopeNotes: LangText[];
 	notation: string[];
 	example: string[];
 	editorialNote: string[];
@@ -86,10 +87,17 @@ const IGNORED = new Map<string, string>([
 ]);
 
 const emptyConcept = (iri: string): ImportedConcept => ({
-	iri, prefLabels: [], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', notation: [], example: [], editorialNote: [],
+	iri, prefLabels: [], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], notation: [], example: [], editorialNote: [],
 	schemeIri: '', topConcept: false, broader: [], related: [], mappings: []
 });
 const emptyScheme = (iri: string): ImportedScheme => ({ iri, name: '', description: '', title: '', creator: '', publisher: '', rights: '' });
+/** Adds `value`, or replaces the entry of the same language (case-insensitive). */
+const setByLang = (list: LangText[], value: LangText) => {
+	const i = list.findIndex((v) => v.lang.toLowerCase() === value.lang.toLowerCase());
+	if (i >= 0) list[i] = value;
+	else list.push(value);
+};
+
 const pushUnique = <T>(list: T[], value: T) => {
 	if (!list.some((x) => JSON.stringify(x) === JSON.stringify(value))) list.push(value);
 };
@@ -200,8 +208,8 @@ export function parseSkosTurtle(text: string, limits: Partial<ImportLimits> = {}
 				case SKOS.prefLabel: pushUnique(c.prefLabels, lang(q)); break;
 				case SKOS.altLabel: pushUnique(c.altLabels, lang(q)); break;
 				case SKOS.hiddenLabel: pushUnique(c.hiddenLabels, lang(q)); break;
-				case SKOS.definition: c.definition = o; break;
-				case SKOS.scopeNote: c.scopeNote = o; break;
+				case SKOS.definition: setByLang(c.definitions, lang(q)); break;
+				case SKOS.scopeNote: setByLang(c.scopeNotes, lang(q)); break;
 				case SKOS.notation: pushUnique(c.notation, o); break;
 				case SKOS.example: pushUnique(c.example, o); break;
 				case SKOS.editorialNote: pushUnique(c.editorialNote, o); break;
@@ -334,8 +342,12 @@ function compareConcept(imp: ImportedConcept, ex: Concept, related: Map<string, 
 	const text = (property: string, imported: string, existing: string) => {
 		if (imported.trim() && imported.trim() !== existing.trim()) changes.push({ property, before: existing, after: imported });
 	};
-	text('definition', imp.definition, ex.definition);
-	text('scopeNote', imp.scopeNote, ex.scopeNote);
+	// One change per language, named `definition` (no language) or `definition@de`.
+	const perLanguage = (property: string, imported: LangText[], existing: LangText[]) => {
+		for (const v of imported) text(v.lang ? `${property}@${v.lang}` : property, v.text, textIn(existing, v.lang));
+	};
+	perLanguage('definition', imp.definitions, ex.definitions);
+	perLanguage('scopeNote', imp.scopeNotes, ex.scopeNotes);
 	text('scheme', imp.schemeIri, ex.schemeIri);
 	if (imp.topConcept && !ex.topConcept) changes.push({ property: 'topConcept', before: 'no', after: 'yes' });
 	const addedValues = (property: string, imported: string[], existing: string[]) => {

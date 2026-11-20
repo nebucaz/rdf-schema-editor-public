@@ -18,7 +18,7 @@ const cls = (name: string, over: Partial<FetchedClass> = {}): FetchedClass => ({
 const concept = (name: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `${VOCAB}#${name}`,
 	prefLabels: [{ text: name, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	...over
@@ -79,7 +79,7 @@ describe('planBackfillWrites (STORY-326)', () => {
 		expect(writes[0]).toMatchObject({ classIri: `${GOV}/schema#Order`, namespaceBaseIri: GOV, conceptIri: `${VOCAB}#Order` });
 		expect(writes[0].create).toMatchObject({
 			prefLabels: [{ text: 'Order', lang: 'en' }],
-			definition: 'A purchase request.',
+			definitions: [{ text: 'A purchase request.', lang: '' }],
 			status: 'proposed'
 		});
 	});

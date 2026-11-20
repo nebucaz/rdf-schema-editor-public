@@ -25,11 +25,11 @@ describe('RationaleField (STORY-331)', () => {
 		expect(screen.getAllByLabelText(/Rationale/)).toHaveLength(1);
 	});
 
-	it('is offered by the relations editor', () => {
+	it('is offered by the relations editor when a relation can be removed', () => {
 		const concept = {
-			iri: 'urn:c', prefLabels: [{ text: 'C', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '',
+			iri: 'urn:c', prefLabels: [{ text: 'C', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [],
 			disambiguation: '', schemeIri: '', topConcept: false, status: 'active', source: '', authority: '', replacedBy: '',
-			deprecationReason: '', created: '', modified: '', deprecatedOn: ''
+			deprecationReason: '', created: '', modified: '', deprecatedOn: '', related: ['urn:d']
 		} as never;
 		render(ConceptRelations, { props: { concept, concepts: [concept], externals: [], onAdd: async () => {}, onRemove: async () => {} } });
 		expect(screen.getAllByLabelText(/Rationale/)).toHaveLength(1);

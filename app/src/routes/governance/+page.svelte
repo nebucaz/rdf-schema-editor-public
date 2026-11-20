@@ -7,6 +7,7 @@
 	import ChangeLogView from '#lib/components/ChangeLogView.svelte';
 	import ChangeRequestForm from '#lib/components/ChangeRequestForm.svelte';
 	import ChangeRequestList from '#lib/components/ChangeRequestList.svelte';
+	import type { BusinessUnit } from '#lib/services/business-unit.js';
 	import GovernanceSettingsForm from '#lib/components/GovernanceSettingsForm.svelte';
 	import Modal from '#lib/components/Modal.svelte';
 	import ReleaseDialog from '#lib/components/ReleaseDialog.svelte';
@@ -42,11 +43,14 @@
 	const readLog = (f: ChangeLogFilter = filter) => fetchChangeLog((...args) => fetch(...args), f);
 	const sinceRelease = $derived(entriesSinceLastRelease(fullLog));
 
+	let businessUnits = $state<BusinessUnit[]>([]);
+
 	async function load() {
 		error = null;
 		try {
 			core = await sparqlConnector.fetchVocabularyNamespace();
 			if (!core) return;
+			businessUnits = await sparqlConnector.fetchBusinessUnits(core).catch(() => []);
 			[governance, entries, fullLog, requests, questions] = await Promise.all([
 				sparqlConnector.fetchNamespaceGovernance(core),
 				readLog(),
@@ -62,7 +66,7 @@
 	async function saveGovernance(g: Governance) {
 		if (!core) return;
 		await sparqlConnector.updateNamespaceGovernance(core, g);
-		governance = g;
+		[governance, businessUnits] = await Promise.all([sparqlConnector.fetchNamespaceGovernance(core), sparqlConnector.fetchBusinessUnits(core)]);
 	}
 
 	/** The gate findings of now, over a fresh read of the model and the vocabulary. */
@@ -169,7 +173,7 @@
 			<h2>Owners and version</h2>
 			<button type="button" onclick={() => (releasing = true)} data-testid="open-release">Release…</button>
 			{#key governance}
-				<GovernanceSettingsForm initial={governance} onSave={saveGovernance} />
+				<GovernanceSettingsForm initial={governance} onSave={saveGovernance} {businessUnits} />
 			{/key}
 		</section>
 

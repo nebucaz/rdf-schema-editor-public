@@ -4,7 +4,7 @@
  * a repository without a vocabulary stays quiet. Findings are about the class and link to it.
  */
 import { SCHEMA_NAMESPACE } from '#lib/config.js';
-import { conceptTitle, type Concept } from '../skos-concept';
+import { conceptTitle, primaryText, type Concept } from '../skos-concept';
 import type { FetchedClass, FetchedSchema } from '../sparql-connector';
 import type { Gate, GateFinding, GateSeverity } from './types';
 
@@ -55,7 +55,7 @@ export const definitionDriftGate: Gate = {
 		const byIri = new Map((options.concepts ?? []).map((c) => [c.iri, c]));
 		return modelClasses(schema).flatMap((c) => {
 			const concept = c.definedByConcept ? byIri.get(c.definedByConcept) : undefined;
-			if (!concept || !concept.definition.trim() || !c.comment?.trim() || sameText(c.comment, concept.definition)) return [];
+			if (!concept || !primaryText(concept.definitions) || !c.comment?.trim() || sameText(c.comment, primaryText(concept.definitions))) return [];
 			return [
 				finding('definition-drift', 'warning', c, `The description of "${c.label}" differs from the definition of its concept "${conceptTitle(concept)}".`)
 			];

@@ -27,6 +27,7 @@ import {
 	type RelationKind,
 	MAPPING_KINDS
 } from './skos-concept';
+import { findBusinessUnit, type BusinessUnit } from './business-unit';
 import {
 	allowedOutcomes,
 	canStartReview,
@@ -109,7 +110,9 @@ import {
 	CONCEPT_DISAMBIGUATION_PREDICATE_IRI,
 	CONCEPT_STATUS_PREDICATE_IRI,
 	CONCEPT_SOURCE_PREDICATE_IRI,
+	BUSINESS_UNIT_CLASS_IRI,
 	CONCEPT_AUTHORITY_PREDICATE_IRI,
+	businessUnitIri,
 	CONCEPT_REPLACED_BY_PREDICATE_IRI,
 	CONCEPT_DEPRECATION_REASON_PREDICATE_IRI,
 	CONCEPT_DEPRECATED_ON_PREDICATE_IRI,
@@ -5303,33 +5306,54 @@ export class SparqlConnector {
 			const value = b.o.value;
 			switch (b.p.value) {
 				case NAMESPACE_STEWARD_PREDICATE_IRI: g.steward = value; break;
-				case NAMESPACE_AUTHORITY_PREDICATE_IRI: g.authority = value; break;
+				case NAMESPACE_AUTHORITY_PREDICATE_IRI:
+					g.authority = value;
+					if (b.o.type === 'uri') g.authorityIri = value;
+					break;
 				case NAMESPACE_MATURITY_PREDICATE_IRI:
 					if ((MATURITY_LEVELS as readonly string[]).includes(value)) g.maturity = value as MaturityLevel;
 					break;
 				case OWL_VERSION_INFO_IRI: g.version = value; break;
 			}
 		}
+		if (g.authorityIri) {
+			const unit = (await this.fetchBusinessUnits(baseIri).catch(() => [])).find((u) => u.iri === g.authorityIri);
+			g.authority = unit?.label ?? g.authorityIri.split(/[#/]/).pop() ?? g.authorityIri;
+		}
 		return g;
 	}
 
 	/** Replaces the four settings in one request; empty ones are removed. Recorded, not enforced. */
-	async updateNamespaceGovernance(baseIri: string, g: Governance): Promise<void> {
+	async updateNamespaceGovernance(baseIri: string, input: Governance): Promise<void> {
 		this.assertSafeSparqlIri(baseIri, 'namespace base IRI');
-		const problems = validateGovernance(g);
+		const problems = validateGovernance(input);
 		if (problems.length) throw new Error(problems[0]);
+		const { value: g, unitTriples } = await this.resolveAuthorityValue(baseIri, input);
 		const graphs = namespaceGraphs(DEFAULT_NAMESPACE_BASE_IRI);
 		const fields: [string, string][] = [
 			[NAMESPACE_STEWARD_PREDICATE_IRI, g.steward.trim()],
-			[NAMESPACE_AUTHORITY_PREDICATE_IRI, g.authority.trim()],
 			[NAMESPACE_MATURITY_PREDICATE_IRI, g.maturity],
 			[OWL_VERSION_INFO_IRI, g.version.trim()]
 		];
+		const authorityPredicates = `<${baseIri}> <${NAMESPACE_AUTHORITY_PREDICATE_IRI}>`;
+		let authorityTriple = '';
+		if (g.authorityIri) {
+			this.assertSafeSparqlIri(g.authorityIri, 'authority IRI');
+			authorityTriple = `${authorityPredicates} <${g.authorityIri}> .`;
+		} else if (g.authority.trim()) {
+			authorityTriple = `${authorityPredicates} "${this.escapeString(g.authority.trim())}" .`;
+		}
 		// Built before the template: the cross-graph guard's lexer cannot follow braces in a nested template.
-		const deletes = fields.map(([p]) => 'DELETE WHERE { ' + inGraph(`<${baseIri}> <${p}> ?old .`, graphs.schema) + ' } ;').join('\n');
-		const triples = fields.filter(([, v]) => v).map(([p, v]) => `<${baseIri}> <${p}> "${this.escapeString(v)}" .`).join(' ');
+		const deletes = [...fields.map(([p]) => p), NAMESPACE_AUTHORITY_PREDICATE_IRI]
+			.map((p) => 'DELETE WHERE { ' + inGraph(`<${baseIri}> <${p}> ?old .`, graphs.schema) + ' } ;')
+			.join('\n');
+		const triples = [
+			...fields.filter(([, v]) => v).map(([p, v]) => `<${baseIri}> <${p}> "${this.escapeString(v)}" .`),
+			authorityTriple
+		].filter(Boolean).join(' ');
+		const unit = unitTriples ? 'INSERT DATA { ' + inGraph(unitTriples, this.vocabGraph(baseIri)) + ' } ;' : '';
 		const insert = triples ? 'INSERT DATA { ' + inGraph(triples, graphs.schema) + ' }' : '';
-		await this.executeUpdate(`${PREFIXES} ${deletes} ${insert}`.replace(/;\s*$/, ''));
+		await this.executeUpdate(`${PREFIXES} ${unit} ${deletes} ${insert}`.replace(/;\s*$/, ''));
 	}
 
 	/**
@@ -6020,14 +6044,19 @@ export class SparqlConnector {
 		const text = (predicate: string, value: string) => {
 			if (value.trim()) parts.push(`<${predicate}> "${this.escapeString(value.trim())}"`);
 		};
-		text(SKOS.definition, d.definition);
-		text(SKOS.scopeNote, d.scopeNote);
+		labels(SKOS.definition, d.definitions);
+		labels(SKOS.scopeNote, d.scopeNotes);
 		for (const n of d.notation ?? []) text(SKOS.notation, n);
 		for (const n of d.example ?? []) text(SKOS.example, n);
 		for (const n of d.editorialNote ?? []) text(SKOS.editorialNote, n);
 		text(CONCEPT_DISAMBIGUATION_PREDICATE_IRI, d.disambiguation);
 		text(CONCEPT_SOURCE_PREDICATE_IRI, d.source);
-		text(CONCEPT_AUTHORITY_PREDICATE_IRI, d.authority);
+		if (d.authorityIri) {
+			this.assertSafeSparqlIri(d.authorityIri, 'authority IRI');
+			parts.push(`<${CONCEPT_AUTHORITY_PREDICATE_IRI}> <${d.authorityIri}>`);
+		} else {
+			text(CONCEPT_AUTHORITY_PREDICATE_IRI, d.authority);
+		}
 		text(CONCEPT_DEPRECATION_REASON_PREDICATE_IRI, d.deprecationReason);
 		parts.push(`<${CONCEPT_STATUS_PREDICATE_IRI}> "${d.status}"`);
 		if (d.schemeIri.trim()) {
@@ -6050,12 +6079,50 @@ export class SparqlConnector {
 		return `DELETE WHERE { ${inGraph(`?s <${SKOS.hasTopConcept}> <${conceptIri}> .`, vocab)} }`;
 	}
 
-	/** Stores a new concept, minted from its first preferred label and qualifier; refuses a taken IRI. */
-	async insertConcept(coreBaseIri: string, draft: ConceptDraft): Promise<string> {
+	/** Every business unit of the core vocabulary graph, by name. */
+	async fetchBusinessUnits(coreBaseIri: string): Promise<BusinessUnit[]> {
 		const vocab = this.vocabGraph(coreBaseIri);
-		const label = draft.prefLabels.find((l) => l.text.trim())?.text.trim() ?? '';
-		const iri = conceptIri(label, draft.disambiguation, coreBaseIri);
-		const triples = this.conceptTriples(iri, draft);
+		const results = await this.selectQuery(`
+			${PREFIXES}
+			SELECT ?u ?label ${fromClause(vocab)} WHERE {
+				?u a <${BUSINESS_UNIT_CLASS_IRI}> .
+				OPTIONAL { ?u rdfs:label ?label }
+			} ORDER BY LCASE(STR(?label)) ?u
+		`);
+		return results.results.bindings.map((b) => ({ iri: b.u.value, label: b.label?.value ?? (b.u.value.split(/[#/]/).pop() ?? b.u.value) }));
+	}
+
+	/** Settles an authority that is a new name: the unit of that name if there is one, else a new unit. The returned
+	 *  triples (empty when the unit exists) belong in the same update as the thing that points to it. */
+	private async resolveAuthorityValue<T extends { authority: string; authorityIri?: string; authorityCreate?: boolean }>(
+		coreBaseIri: string,
+		value: T
+	): Promise<{ value: T; unitTriples: string }> {
+		const name = value.authority.trim();
+		if (!value.authorityCreate || !name) return { value, unitTriples: '' };
+		const existing = findBusinessUnit(await this.fetchBusinessUnits(coreBaseIri), name);
+		const resolved = { ...value, authorityCreate: false };
+		if (existing) return { value: { ...resolved, authority: existing.label, authorityIri: existing.iri }, unitTriples: '' };
+		const iri = businessUnitIri(name, coreBaseIri);
+		this.assertSafeSparqlIri(iri, 'business unit IRI');
+		return {
+			value: { ...resolved, authority: name, authorityIri: iri },
+			unitTriples: `<${iri}> a <${BUSINESS_UNIT_CLASS_IRI}> ; <${RDFS.label}> "${this.escapeString(name)}" .`
+		};
+	}
+
+	private async resolveAuthority(coreBaseIri: string, draft: ConceptDraft): Promise<{ draft: ConceptDraft; unitTriples: string }> {
+		const { value, unitTriples } = await this.resolveAuthorityValue(coreBaseIri, draft);
+		return { draft: value, unitTriples };
+	}
+
+	/** Stores a new concept, minted from its first preferred label and qualifier; refuses a taken IRI. */
+	async insertConcept(coreBaseIri: string, input: ConceptDraft): Promise<string> {
+		const vocab = this.vocabGraph(coreBaseIri);
+		const label = input.prefLabels.find((l) => l.text.trim())?.text.trim() ?? '';
+		const iri = conceptIri(label, input.disambiguation, coreBaseIri);
+		const { draft, unitTriples } = await this.resolveAuthority(coreBaseIri, input);
+		const triples = `${this.conceptTriples(iri, draft)} ${unitTriples}`;
 		if (await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> ?p ?o }`)) {
 			throw new Error(`A concept "${label}" already exists (${iri}); add a disambiguation or reuse it`);
 		}
@@ -6067,9 +6134,11 @@ export class SparqlConnector {
 	}
 
 	/** Replaces the concept's fields in one request; the IRI, `dct:created` and `rse:deprecatedOn` stay. */
-	async updateConcept(coreBaseIri: string, iri: string, draft: ConceptDraft): Promise<void> {
+	async updateConcept(coreBaseIri: string, iri: string, input: ConceptDraft): Promise<void> {
 		const vocab = this.vocabGraph(coreBaseIri);
-		const replace = this.conceptReplaceOps(vocab, iri, draft);
+		const { draft, unitTriples } = await this.resolveAuthority(coreBaseIri, input);
+		const newUnit = unitTriples ? `INSERT DATA { ${inGraph(unitTriples, vocab)} } ;\n` : '';
+		const replace = newUnit + this.conceptReplaceOps(vocab, iri, draft);
 		if (!(await this.askQuery(`${PREFIXES} ASK ${fromClause(vocab)} { <${iri}> a <${SKOS.Concept}> }`))) {
 			throw new Error(`Concept ${iri} not found`);
 		}
@@ -6148,7 +6217,7 @@ export class SparqlConnector {
 				c = {
 					iri: b.c.value,
 					prefLabels: [], altLabels: [], hiddenLabels: [],
-					definition: '', scopeNote: '', notation: [], example: [], editorialNote: [], disambiguation: '', schemeIri: '', topConcept: false,
+					definitions: [], scopeNotes: [], notation: [], example: [], editorialNote: [], disambiguation: '', schemeIri: '', topConcept: false,
 					status: 'proposed', source: '', authority: '', replacedBy: '', deprecationReason: '',
 					created: '', modified: '', deprecatedOn: '', broader: [], related: [], mappings: []
 				};
@@ -6160,8 +6229,8 @@ export class SparqlConnector {
 				case SKOS.prefLabel: c.prefLabels.push({ text: value, lang }); break;
 				case SKOS.altLabel: c.altLabels.push({ text: value, lang }); break;
 				case SKOS.hiddenLabel: c.hiddenLabels.push({ text: value, lang }); break;
-				case SKOS.definition: c.definition = value; break;
-				case SKOS.scopeNote: c.scopeNote = value; break;
+				case SKOS.definition: c.definitions.push({ text: value, lang }); break;
+				case SKOS.scopeNote: c.scopeNotes.push({ text: value, lang }); break;
 				case SKOS.notation: (c.notation ??= []).push(value); break;
 				case SKOS.example: (c.example ??= []).push(value); break;
 				case SKOS.editorialNote: (c.editorialNote ??= []).push(value); break;
@@ -6177,13 +6246,20 @@ export class SparqlConnector {
 					if ((CONCEPT_STATUSES as readonly string[]).includes(value)) c.status = value as ConceptStatus;
 					break;
 				case CONCEPT_SOURCE_PREDICATE_IRI: c.source = value; break;
-				case CONCEPT_AUTHORITY_PREDICATE_IRI: c.authority = value; break;
+				case CONCEPT_AUTHORITY_PREDICATE_IRI:
+					c.authority = value;
+					if (b.o.type === 'uri') c.authorityIri = value;
+					break;
 				case CONCEPT_REPLACED_BY_PREDICATE_IRI: c.replacedBy = value; break;
 				case CONCEPT_DEPRECATION_REASON_PREDICATE_IRI: c.deprecationReason = value; break;
 				case CONCEPT_DEPRECATED_ON_PREDICATE_IRI: c.deprecatedOn = value; break;
 				case DCT.created: c.created = value; break;
 				case DCT.modified: c.modified = value; break;
 			}
+		}
+		if ([...byIri.values()].some((c) => c.authorityIri)) {
+			const names = new Map((await this.fetchBusinessUnits(coreBaseIri)).map((u) => [u.iri, u.label]));
+			for (const c of byIri.values()) if (c.authorityIri) c.authority = names.get(c.authorityIri) ?? c.authorityIri.split(/[#/]/).pop() ?? c.authorityIri;
 		}
 		const sortKey = (c: Concept) => c.prefLabels.map((l) => l.text.toLowerCase()).sort()[0] ?? '';
 		const sorted = [...byIri.values()].sort((a, b) => {

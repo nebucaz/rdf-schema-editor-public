@@ -104,8 +104,8 @@ export function skosExportQuads(vocab: SkosVocabulary, options: SkosExportOption
 		labels(c.iri, SKOS.prefLabel, c.prefLabels);
 		labels(c.iri, SKOS.altLabel, c.altLabels);
 		labels(c.iri, SKOS.hiddenLabel, c.hiddenLabels);
-		texts(c.iri, SKOS.definition, [c.definition]);
-		texts(c.iri, SKOS.scopeNote, [c.scopeNote]);
+		labels(c.iri, SKOS.definition, c.definitions);
+		labels(c.iri, SKOS.scopeNote, c.scopeNotes);
 		texts(c.iri, SKOS.notation, c.notation);
 		texts(c.iri, SKOS.example, c.example);
 		if (options.includeEditorialNotes) texts(c.iri, SKOS.editorialNote, c.editorialNote);

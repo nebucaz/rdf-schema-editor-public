@@ -29,6 +29,23 @@ describe('serializeSkosTurtle (STORY-411)', () => {
 		expect(has(out, c('Manager'), SKOS.inScheme, SCHEME)).toBe(true);
 	});
 
+	it('writes one language-tagged skos:definition and skos:scopeNote per language (STORY-481)', () => {
+		const vocab = { ...fixtureVocabulary(), concepts: [...fixtureVocabulary().concepts] };
+		vocab.concepts[0] = {
+			...vocab.concepts[0],
+			definitions: [{ text: 'A person employed.', lang: 'en' }, { text: 'Eine angestellte Person.', lang: 'de' }],
+			scopeNotes: [{ text: 'Staff only.', lang: 'en' }]
+		};
+		const ttl = serializeSkosTurtle(vocab, { schemeIri: SCHEME });
+		const defs = parse(ttl).filter((q) => q.subject.value === vocab.concepts[0].iri && q.predicate.value === SKOS.definition);
+		expect(defs.map((q) => [q.object.value, (q.object as { language: string }).language]).sort()).toEqual([
+			['A person employed.', 'en'],
+			['Eine angestellte Person.', 'de']
+		]);
+		expect(ttl).toContain('"Staff only."@en');
+		expect(serializeSkosTurtle(vocab, { schemeIri: SCHEME })).toBe(ttl);
+	});
+
 	it('writes top concepts both ways and scheme metadata as dct terms', () => {
 		expect(has(out, c('Employee'), SKOS.topConceptOf, SCHEME)).toBe(true);
 		expect(has(out, SCHEME, SKOS.hasTopConcept, c('Employee'))).toBe(true);

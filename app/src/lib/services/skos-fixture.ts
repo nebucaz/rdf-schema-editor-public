@@ -16,8 +16,8 @@ const concept = (id: string, label: string, over: Partial<Concept> = {}): Concep
 	prefLabels: [{ text: label, lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: '',
-	scopeNote: '',
+	definitions: [],
+	scopeNotes: [],
 	notation: [],
 	example: [],
 	editorialNote: [],
@@ -41,7 +41,7 @@ const concept = (id: string, label: string, over: Partial<Concept> = {}): Concep
 export const fixtureConcepts: Concept[] = [
 	concept('Employee', 'Employee', {
 		topConcept: true,
-		definition: 'A person employed by the organisation.',
+		definitions: [{ text: 'A person employed by the organisation.', lang: '' }],
 		altLabels: [{ text: 'Staff member', lang: 'en' }],
 		hiddenLabels: [{ text: 'Employe', lang: 'en' }],
 		notation: ['E-1'],
@@ -51,23 +51,23 @@ export const fixtureConcepts: Concept[] = [
 		authority: 'HR'
 	}),
 	concept('Manager', 'Manager', {
-		definition: 'An employee who leads others.',
-		scopeNote: 'Line management only.',
+		definitions: [{ text: 'An employee who leads others.', lang: '' }],
+		scopeNotes: [{ text: 'Line management only.', lang: '' }],
 		broader: [c('Employee')],
 		related: [c('Consultant')],
 		mappings: [{ kind: 'exactMatch', target: 'http://example.org/other#Manager' }]
 	}),
-	concept('Contractor', 'Contractor', { definition: 'A person hired for a fixed term.', broader: [c('Employee')] }),
-	concept('Consultant', 'Consultant', { definition: 'An external adviser.', schemeIri: SCHEME }),
+	concept('Contractor', 'Contractor', { definitions: [{ text: 'A person hired for a fixed term.', lang: '' }], broader: [c('Employee')] }),
+	concept('Consultant', 'Consultant', { definitions: [{ text: 'An external adviser.', lang: '' }], schemeIri: SCHEME }),
 	concept('TempWorker', 'Temp worker', {
 		status: 'deprecated',
-		definition: 'Replaced by Contractor.',
+		definitions: [{ text: 'Replaced by Contractor.', lang: '' }],
 		replacedBy: c('Contractor'),
 		deprecationReason: 'Merged',
 		deprecatedOn: '2026-11-10',
 		broader: [c('Employee')]
 	}),
-	concept('Cafeteria', 'Cafeteria', { schemeIri: OTHER_SCHEME, topConcept: true, definition: 'Staff restaurant.' })
+	concept('Cafeteria', 'Cafeteria', { schemeIri: OTHER_SCHEME, topConcept: true, definitions: [{ text: 'Staff restaurant.', lang: '' }] })
 ];
 
 export const fixtureCollections: SkosCollection[] = [

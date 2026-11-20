@@ -6,14 +6,15 @@ package glossary
 
 import "errors"
 
-// Concept is one served concept. Lists are never nil, so they encode as [] and not null.
+// Concept is one served concept. Lists are never nil, so they encode as [] and not null; the per-language maps
+// (labels, definition, scopeNote) are keyed by language tag, with "und" for text without a language, and encode as {}.
 type Concept struct {
 	ID         string              `json:"id"`
 	IRI        string              `json:"iri"`
 	PrefLabel  map[string]string   `json:"prefLabel"`
 	AltLabels  map[string][]string `json:"altLabels"`
-	Definition string              `json:"definition"`
-	ScopeNote  string              `json:"scopeNote"`
+	Definition map[string]string   `json:"definition"`
+	ScopeNote  map[string]string   `json:"scopeNote"`
 	Example    []string            `json:"example"`
 	Notation   []string            `json:"notation"`
 	Broader    []string            `json:"broader"`

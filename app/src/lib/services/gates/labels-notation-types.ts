@@ -20,35 +20,41 @@ const BCP47 =
 export const isWellFormedLanguageTag = (tag: string): boolean => BCP47.test(tag);
 
 const allLabels = (c: Concept): LangText[] => [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels];
+const allTexts = (c: Concept): LangText[] => [...c.prefLabels, ...c.altLabels, ...c.hiddenLabels, ...c.definitions, ...c.scopeNotes];
 
 export const invalidLanguageTagGate: Gate = {
 	id: 'invalid-language-tag',
 	stage: 'vocabulary',
 	run: (_schema, options) =>
 		(options.concepts ?? []).flatMap((c) => {
-			const bad = [...new Set(allLabels(c).map((l) => l.lang).filter((t) => t !== '' && !isWellFormedLanguageTag(t)))];
+			const bad = [...new Set(allTexts(c).filter((l) => l.text.trim()).map((l) => l.lang).filter((t) => t !== '' && !isWellFormedLanguageTag(t)))];
 			return bad.length
-				? [finding('invalid-language-tag', 'warning', c.iri, `"${conceptTitle(c)}" has a label with a language tag that is not well-formed BCP 47: ${bad.map((t) => `"${t}"`).join(', ')}.`)]
+				? [finding('invalid-language-tag', 'warning', c.iri, `"${conceptTitle(c)}" has a text with a language tag that is not well-formed BCP 47: ${bad.map((t) => `"${t}"`).join(', ')}.`)]
 				: [];
 		})
 };
 
+/** Per concept: within a scheme that uses two or more languages for preferred labels, the languages in which
+ *  the concept lacks a preferred label or a definition. */
 export const incompleteLanguageCoverageGate: Gate = {
 	id: 'incomplete-language-coverage',
 	stage: 'vocabulary',
 	run: (_schema, options) => {
 		const byScheme = new Map<string, Concept[]>();
 		for (const c of options.concepts ?? []) if (c.schemeIri) byScheme.set(c.schemeIri, [...(byScheme.get(c.schemeIri) ?? []), c]);
-		return [...byScheme].flatMap(([scheme, cs]) => {
-			const langsOf = (c: Concept) => new Set(c.prefLabels.filter((l) => l.text.trim() && l.lang).map((l) => l.lang.toLowerCase()));
-			const used = new Set(cs.flatMap((c) => [...langsOf(c)]));
-			const gaps = [...used].sort().flatMap((lang) => {
-				const missing = cs.filter((c) => !langsOf(c).has(lang)).length;
-				return missing ? [`${lang}: ${missing} of ${cs.length}`] : [];
+		const tags = (values: LangText[]) => new Set(values.filter((l) => l.text.trim() && l.lang.trim()).map((l) => l.lang.trim().toLowerCase()));
+		return [...byScheme.values()].flatMap((cs) => {
+			const set = [...new Set(cs.flatMap((c) => [...tags(c.prefLabels)]))].sort();
+			if (set.length < 2) return [];
+			return cs.flatMap((c) => {
+				const prefs = tags(c.prefLabels);
+				const defs = tags(c.definitions);
+				const gaps = set.flatMap((lang) => {
+					const missing = [...(prefs.has(lang) ? [] : ['preferred label']), ...(defs.has(lang) ? [] : ['definition'])];
+					return missing.length ? [`${lang}: ${missing.join(' and ')}`] : [];
+				});
+				return gaps.length ? [finding('incomplete-language-coverage', 'info', c.iri, `"${conceptTitle(c)}" is missing text in a language its scheme uses (${gaps.join('; ')}).`)] : [];
 			});
-			return gaps.length
-				? [finding('incomplete-language-coverage', 'info', scheme, `Concepts in this scheme lack a preferred label in a language others use (missing ${gaps.join('; ')}).`)]
-				: [];
 		});
 	}
 };

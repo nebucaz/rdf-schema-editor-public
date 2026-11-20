@@ -78,6 +78,23 @@ function emptyPlan(input: MergeInput, error: string, draft?: ConceptDraft): Merg
 	};
 }
 
+/** Per-language text of a merge: the survivor keeps its own language entries, languages only the duplicate has are
+ *  taken over, and a language both have with different text is a conflict (the survivor's text stays until decided). */
+function mergeLangTexts(survivor: LangText[], duplicate: LangText[]) {
+	const key = (v: LangText) => v.lang.trim().toLowerCase();
+	const values = survivor.filter((v) => v.text.trim());
+	const taken: string[] = [];
+	const conflicts: { survivor: LangText; duplicate: LangText }[] = [];
+	for (const dv of duplicate.filter((v) => v.text.trim())) {
+		const mine = values.find((v) => key(v) === key(dv));
+		if (!mine) {
+			values.push(dv);
+			taken.push(dv.lang);
+		} else if (mine.text.trim() !== dv.text.trim()) conflicts.push({ survivor: mine, duplicate: dv });
+	}
+	return { values, taken, conflicts };
+}
+
 export function planMerge(input: MergeInput): MergePlan {
 	const { concepts, survivor: sIri, duplicate: dIri } = input;
 	if (sIri === dIri) return emptyPlan(input, 'A concept cannot be merged into itself');
@@ -119,14 +136,22 @@ export function planMerge(input: MergeInput): MergePlan {
 	for (const l of d.hiddenLabels) take(l, hidden, 'Hidden label');
 
 	// -- Text fields -----------------------------------------------------------------------------------
-	let definition = s.definition;
-	if (!s.definition.trim()) {
-		definition = d.definition;
-		if (d.definition.trim()) moves.push('Definition');
-	} else if (d.definition.trim() && d.definition.trim() !== s.definition.trim()) {
+	const definitions = mergeLangTexts(s.definitions, d.definitions);
+	for (const lang of definitions.taken) moves.push(lang ? `Definition (${lang})` : 'Definition');
+	let definitionValues = definitions.values;
+	if (definitions.conflicts.length) {
 		const choice = decisions.definition;
-		conflicts.push({ field: 'definition', survivor: s.definition, duplicate: d.definition, resolved: choice !== undefined });
-		if (choice === 'duplicate') definition = d.definition;
+		const label = (texts: LangText[]) =>
+			texts.length === 1 ? texts[0].text.trim() : texts.map((t) => `${t.lang || 'none'}: ${t.text.trim()}`).join('\n');
+		conflicts.push({
+			field: 'definition',
+			survivor: label(definitions.conflicts.map((c) => c.survivor)),
+			duplicate: label(definitions.conflicts.map((c) => c.duplicate)),
+			resolved: choice !== undefined
+		});
+		if (choice === 'duplicate') {
+			definitionValues = definitionValues.map((v) => definitions.conflicts.find((c) => c.survivor === v)?.duplicate ?? v);
+		}
 	}
 	let notation = [...(s.notation ?? [])];
 	const dn = d.notation ?? [];
@@ -148,8 +173,8 @@ export function planMerge(input: MergeInput): MergePlan {
 	};
 	const example = union(s.example, d.example, 'Example');
 	const editorialNote = union(s.editorialNote, d.editorialNote, 'Editorial note');
-	const scopeNote = s.scopeNote.trim() ? s.scopeNote : d.scopeNote;
-	if (!s.scopeNote.trim() && d.scopeNote.trim()) moves.push('Scope note');
+	const scopeNotes = mergeLangTexts(s.scopeNotes, d.scopeNotes);
+	for (const lang of scopeNotes.taken) moves.push(lang ? `Scope note (${lang})` : 'Scope note');
 
 	// -- Scheme ---------------------------------------------------------------------------------------
 	let schemeIri = s.schemeIri;
@@ -163,9 +188,9 @@ export function planMerge(input: MergeInput): MergePlan {
 	}
 
 	const survivorDraft: ConceptDraft = {
-		prefLabels: pref, altLabels: alt, hiddenLabels: hidden, definition, scopeNote, notation, example, editorialNote,
+		prefLabels: pref, altLabels: alt, hiddenLabels: hidden, definitions: definitionValues, scopeNotes: scopeNotes.values, notation, example, editorialNote,
 		disambiguation: s.disambiguation, schemeIri, topConcept, status: s.status,
-		source: s.source || d.source, authority: s.authority || d.authority, replacedBy: s.replacedBy, deprecationReason: s.deprecationReason
+		source: s.source || d.source, authority: s.authority || d.authority, ...((s.authority ? s.authorityIri : d.authorityIri) ? { authorityIri: s.authority ? s.authorityIri : d.authorityIri } : {}), replacedBy: s.replacedBy, deprecationReason: s.deprecationReason
 	};
 
 	// -- Hierarchy: edges are tried against a working graph without the duplicate ---------------------------

@@ -64,7 +64,7 @@ describe('SparqlConnector concept relations (STORY-329)', () => {
 
 	it('updateConcept keeps the relations', async () => {
 		const draft = {
-			prefLabels: [{ text: 'Bank', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+			prefLabels: [{ text: 'Bank', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 			disambiguation: '', schemeIri: '', topConcept: false, status: 'proposed' as const, source: '',
 			authority: '', replacedBy: '', deprecationReason: ''
 		};

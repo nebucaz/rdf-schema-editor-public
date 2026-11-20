@@ -7,8 +7,8 @@ const c = (iri: string, over: Partial<Concept> = {}): Concept => ({
 	prefLabels: [{ text: iri, lang: 'en' }],
 	altLabels: [],
 	hiddenLabels: [],
-	definition: 'd',
-	scopeNote: '',
+	definitions: [{ text: 'd', lang: '' }],
+	scopeNotes: [],
 	disambiguation: '',
 	schemeIri: 's',
 	topConcept: false,
@@ -38,7 +38,7 @@ describe('searchGlossary', () => {
 		expect(searchGlossary(all, '  ')).toHaveLength(3);
 	});
 	it('does not search the definition or editorial notes', () => {
-		const x = c('X', { definition: 'secretword', editorialNote: ['internalonly'] });
+		const x = c('X', { definitions: [{ text: 'secretword', lang: '' }], editorialNote: ['internalonly'] });
 		expect(searchGlossary([x], 'secretword')).toEqual([]);
 		expect(searchGlossary([x], 'internalonly')).toEqual([]);
 	});

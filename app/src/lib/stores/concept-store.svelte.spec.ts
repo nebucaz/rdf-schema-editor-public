@@ -5,7 +5,7 @@ import type { Concept } from '#lib/services/skos-concept.js';
 const concept = (iri: string): Concept => ({
 	iri,
 	prefLabels: [{ text: iri, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: ''
 });

@@ -6,6 +6,7 @@
 	import {
 		conceptTitle,
 		filterConcepts,
+		primaryText,
 		findSimilarConcepts,
 		type Concept
 	} from '#lib/services/skos-concept.js';
@@ -54,7 +55,7 @@
 				{#if linked && (linked.status === 'deprecated' || linked.status === 'retired')}<span class="hint">({linked.status})</span>{/if}
 			</p>
 			{#if linked}
-				<p class="definition">{linked.definition || 'This concept has no definition yet.'}</p>
+				<p class="definition">{primaryText(linked.definitions) || 'This concept has no definition yet.'}</p>
 			{/if}
 			{#if replacement}
 				<p class="replacement">

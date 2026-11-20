@@ -4,7 +4,7 @@
  * the review prompts (depth, sibling overlap) are info and say so: they ask a person to look, they do not
  * claim an error. The two definition checks belong to the vocabulary stage.
  */
-import { conceptTitle, normaliseLabel, type Concept } from '../skos-concept';
+import { conceptTitle, normaliseLabel, primaryText, type Concept } from '../skos-concept';
 import { branchDepth, broaderCycleMembers, buildTaxonomy } from '../taxonomy-tree';
 import type { Gate, GateFinding, GateSeverity, PipelineStage } from './types';
 
@@ -100,8 +100,8 @@ export const siblingOverlapGate: Gate = {
 					const [a, b] = [sorted[i], sorted[j]];
 					const key = `${a.iri}|${b.iri}`;
 					if (seen.has(key)) continue;
-					const wa = significantWords(a.definition);
-					const wb = significantWords(b.definition);
+					const wa = significantWords(primaryText(a.definitions));
+					const wb = significantWords(primaryText(b.definitions));
 					if (wa.size < MIN_OVERLAP_WORDS || wb.size < MIN_OVERLAP_WORDS) continue;
 					const shared = [...wa].filter((w) => wb.has(w)).length;
 					if (shared / (wa.size + wb.size - shared) < OVERLAP_THRESHOLD) continue;
@@ -128,8 +128,9 @@ export const definitionCircularGate: Gate = {
 	run: (_schema, options) =>
 		live(options.concepts)
 			.filter((c) => {
-				const def = ` ${normaliseLabel(c.definition)} `;
-				return c.definition.trim() !== '' && c.prefLabels.some((l) => normaliseLabel(l.text) !== '' && def.includes(` ${normaliseLabel(l.text)} `));
+				const text = primaryText(c.definitions);
+				const def = ` ${normaliseLabel(text)} `;
+				return text !== '' && c.prefLabels.some((l) => normaliseLabel(l.text) !== '' && def.includes(` ${normaliseLabel(l.text)} `));
 			})
 			.map((c) => finding('definition-circular', 'vocabulary', 'warning', c, `The definition of "${conceptTitle(c)}" uses the term itself; define it with other words.`))
 };
@@ -143,7 +144,7 @@ export const definitionLengthGate: Gate = {
 	stage: 'vocabulary',
 	run: (_schema, options) =>
 		live(options.concepts)
-			.filter((c) => sentenceCount(c.definition) > MAX_SENTENCES)
+			.filter((c) => sentenceCount(primaryText(c.definitions)) > MAX_SENTENCES)
 			.map((c) => finding('definition-length', 'vocabulary', 'warning', c, `The definition of "${conceptTitle(c)}" has more than ${MAX_SENTENCES} sentences; keep it short and move the rest to the scope note.`))
 };
 

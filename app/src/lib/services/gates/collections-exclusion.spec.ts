@@ -8,7 +8,7 @@ import { buildTaxonomy } from '../taxonomy-tree';
 /** skos-support STORY-410: a collection groups concepts for navigation and implies no hierarchy, so no gate may
  *  report it as an orphan, a concept without scheme or anything else (the book warns concept validators do). */
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
-	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+	iri: `urn:c:${id}`, prefLabels: [{ text: id, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 	disambiguation: '', schemeIri: 'urn:scheme:a', topConcept: false, status: 'active', source: 'src', authority: 'auth', replacedBy: '',
 	deprecationReason: '', created: '2026-11-01', modified: '2026-11-01', deprecatedOn: '', broader: [], related: [], mappings: [], ...over
 });

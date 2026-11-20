@@ -5,7 +5,7 @@ import { DEFAULT_LIST_STATE, type ListUrlState } from '#lib/services/list-url-st
 import type { Concept } from '#lib/services/skos-concept.js';
 
 const concept = (iri: string, label: string, schemeIri = 'urn:s1'): Concept => ({
-	iri, prefLabels: [{ text: label, lang: 'en' }], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', disambiguation: '',
+	iri, prefLabels: [{ text: label, lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], disambiguation: '',
 	schemeIri, topConcept: false, status: 'active', source: '', authority: '', replacedBy: '', deprecationReason: '',
 	created: '', modified: '', deprecatedOn: ''
 });

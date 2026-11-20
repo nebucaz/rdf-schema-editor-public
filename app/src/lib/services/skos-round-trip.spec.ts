@@ -68,7 +68,7 @@ describe('round trip with the workforce thesaurus (STORY-419)', () => {
 					alt: x.altLabels.map((l) => `${l.text}@${l.lang}`).sort(),
 					broader: [...(x.broader ?? [])].sort(),
 					related: [...(x.related ?? [])].sort(),
-					definition: x.definition,
+					definition: x.definitions.map((d) => d.text),
 					notation: x.notation ?? []
 				}))
 				.sort((a, b) => (a.iri < b.iri ? -1 : 1));

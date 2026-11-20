@@ -1,11 +1,12 @@
 <script lang="ts">
+	import { reviewConceptUrl } from '#lib/services/review-links.js';
 	/** The glossary as a reader sees it (skos-support STORY-425): search, a tree and an A-Z list of the same concepts,
 	 *  and a detail panel. Presentational and read-only. Hidden labels are matched by the search but never rendered,
 	 *  and neither are editorial notes. */
 	import { relationsOf } from '#lib/services/concept-relations.js';
 	import { alphabeticalList, glossaryLabel, glossaryTree, searchGlossary } from '#lib/services/glossary-search.js';
 	import type { SkosCollection } from '#lib/services/skos-collection.js';
-	import type { Concept } from '#lib/services/skos-concept.js';
+	import { primaryText, type Concept } from '#lib/services/skos-concept.js';
 	import type { TaxonomyNode } from '#lib/services/taxonomy-tree.js';
 	import { appUrl } from '#lib/utils/urls.js';
 
@@ -83,14 +84,22 @@
 
 	<article class="detail">
 		{#if selected}
-			<h2 class:deprecated={isDeprecated(selected)}>{glossaryLabel(selected, lang)}</h2>
+			<h2 class:deprecated={isDeprecated(selected)}>
+				{glossaryLabel(selected, lang)}
+				<a class="share" href={reviewConceptUrl(selected.iri)} title="Page of this term to share" aria-label="Page of this term to share">
+					<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" />
+						<line x1="8.6" y1="13.5" x2="15.4" y2="17.5" /><line x1="15.4" y1="6.5" x2="8.6" y2="10.5" />
+					</svg>
+				</a>
+			</h2>
 			{#if selected.altLabels.length}
 				<p class="hint">Also called: {selected.altLabels.map((l) => l.text).join(', ')}</p>
 			{/if}
 			<dl>
 				<dt>Definition</dt>
-				<dd>{selected.definition || '—'}</dd>
-				{#if selected.scopeNote}<dt>Scope note</dt><dd>{selected.scopeNote}</dd>{/if}
+				<dd>{primaryText(selected.definitions, lang) || '—'}</dd>
+				{#if primaryText(selected.scopeNotes, lang)}<dt>Scope note</dt><dd>{primaryText(selected.scopeNotes, lang)}</dd>{/if}
 				{#if selected.example?.length}<dt>Examples</dt><dd>{selected.example.join('; ')}</dd>{/if}
 				{#if selected.broader?.length}
 					<dt>Broader</dt>
@@ -172,6 +181,12 @@
 		cursor: pointer;
 		text-align: left;
 		font: inherit;
+	}
+
+	.share {
+		color: var(--color-text-muted);
+		margin-left: 0.4rem;
+		vertical-align: middle;
 	}
 
 	.link {

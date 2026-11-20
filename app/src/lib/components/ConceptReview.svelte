@@ -1,17 +1,25 @@
 <script lang="ts">
 	/** One concept as a reader sees it (ontology-pipeline STORY-335): label, status, definition, hierarchy,
-	 *  related concepts and mappings. Presentational and read-only: it renders no control. */
+	 *  related concepts, mappings and the neighbourhood graph. Presentational and read-only: it renders links to other read-only pages, no control. */
 	import { relationsOf } from '#lib/services/concept-relations.js';
-	import { conceptTitle, type Concept } from '#lib/services/skos-concept.js';
+	import { reviewConceptUrl } from '#lib/services/review-links.js';
+	import { conceptTitle, primaryText, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
+	import ConceptNeighborhood from './ConceptNeighborhood.svelte';
 
 	interface Props {
 		concept: Concept;
 		/** The whole vocabulary, to name the concepts this one points to. */
 		concepts: Concept[];
 		schemeName?: string;
+		/** The read-only page of the concept's scheme, when it can be linked. */
+		schemeHref?: string;
+		/** The schemes, so a concept without a broader concept shows its scheme in the graph. */
+		schemes?: ConceptScheme[];
+		/** The read-only page of a scheme by its IRI. */
+		schemeUrl?: (schemeIri: string) => string;
 	}
 
-	let { concept, concepts, schemeName = '' }: Props = $props();
+	let { concept, concepts, schemeName = '', schemeHref = '', schemes = [], schemeUrl }: Props = $props();
 
 	const titleOf = (iri: string) => {
 		const c = concepts.find((x) => x.iri === iri);
@@ -25,13 +33,13 @@
 	<h2>{conceptTitle(concept)}</h2>
 	<p class="status-line">
 		<span class="badge">{concept.status}</span>
-		{#if schemeName}in {schemeName}{/if}
+		{#if schemeName}in {#if schemeHref}<a href={schemeHref}>{schemeName}</a>{:else}{schemeName}{/if}{/if}
 		{#if concept.topConcept}<span class="hint">(top concept)</span>{/if}
 	</p>
 	<dl>
 		<dt>Definition</dt>
-		<dd>{concept.definition || '—'}</dd>
-		{#if concept.scopeNote}<dt>Scope note</dt><dd>{concept.scopeNote}</dd>{/if}
+		<dd>{primaryText(concept.definitions) || '—'}</dd>
+		{#if primaryText(concept.scopeNotes)}<dt>Scope note</dt><dd>{primaryText(concept.scopeNotes)}</dd>{/if}
 		{#if concept.example?.length}
 			<dt>Examples</dt>
 			<dd>{#each concept.example as e, i (e + i)}{#if i > 0}; {/if}<span>{e}</span>{/each}</dd>
@@ -42,15 +50,15 @@
 		{/if}
 		{#if concept.broader?.length}
 			<dt>Broader</dt>
-			<dd>{#each concept.broader as iri, i (iri)}{#if i > 0}, {/if}<span>{titleOf(iri)}</span>{/each}</dd>
+			<dd>{#each concept.broader as iri, i (iri)}{#if i > 0}, {/if}<a href={reviewConceptUrl(iri)}>{titleOf(iri)}</a>{/each}</dd>
 		{/if}
 		{#if narrower.length}
 			<dt>Narrower</dt>
-			<dd>{#each narrower as c, i (c.iri)}{#if i > 0}, {/if}<span>{conceptTitle(c)}</span>{/each}</dd>
+			<dd>{#each narrower as c, i (c.iri)}{#if i > 0}, {/if}<a href={reviewConceptUrl(c.iri)}>{conceptTitle(c)}</a>{/each}</dd>
 		{/if}
 		{#if relations.related.length}
 			<dt>Related</dt>
-			<dd>{#each relations.related as iri, i (iri)}{#if i > 0}, {/if}<span>{titleOf(iri)}</span>{/each}</dd>
+			<dd>{#each relations.related as iri, i (iri)}{#if i > 0}, {/if}<a href={reviewConceptUrl(iri)}>{titleOf(iri)}</a>{/each}</dd>
 		{/if}
 		{#each relations.mappings as m (m.kind + m.target)}
 			<dt>{m.kind}</dt>
@@ -64,10 +72,11 @@
 			<dt>Deprecated</dt>
 			<dd>
 				{concept.deprecationReason}{#if concept.deprecatedOn} ({concept.deprecatedOn}){/if}
-				{#if concept.replacedBy} · replaced by <span>{titleOf(concept.replacedBy)}</span>{/if}
+				{#if concept.replacedBy} · replaced by <a href={reviewConceptUrl(concept.replacedBy)}>{titleOf(concept.replacedBy)}</a>{/if}
 			</dd>
 		{/if}
 	</dl>
+	<ConceptNeighborhood {concepts} iri={concept.iri} href={reviewConceptUrl} {schemes} schemeHref={schemeUrl} />
 </article>
 
 <style>

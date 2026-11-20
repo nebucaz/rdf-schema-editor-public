@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SparqlConnector } from './sparql-connector';
 import { DEFAULT_NAMESPACE_BASE_IRI, namespaceGraphs } from '#lib/config.js';
 import {
+	BUSINESS_UNIT_CLASS_IRI,
 	NAMESPACE_AUTHORITY_PREDICATE_IRI,
 	NAMESPACE_MATURITY_PREDICATE_IRI,
 	NAMESPACE_STEWARD_PREDICATE_IRI,
@@ -61,5 +62,36 @@ describe('SparqlConnector governance (STORY-331)', () => {
 		vi.stubGlobal('fetch', mockFetch().fn);
 		await expect(connector().updateNamespaceGovernance(CORE, { steward: '', authority: '', maturity: '', version: 'x' })).rejects.toThrow(/version/i);
 		await expect(connector().updateNamespaceGovernance('http://x/> }', { steward: '', authority: '', maturity: '', version: '' })).rejects.toThrow();
+	});
+});
+
+describe('SparqlConnector governance authority as a business unit', () => {
+	const VOCAB = namespaceGraphs(CORE, { vocab: true }).vocab!;
+	const unitIri = `${VOCAB}#DataOfficeBusinessUnit`;
+	const withUnits = (q: string) =>
+		q.includes(`<${BUSINESS_UNIT_CLASS_IRI}>`)
+			? [{ u: { value: unitIri }, label: { value: 'Data Office' } }]
+			: [{ p: { value: NAMESPACE_AUTHORITY_PREDICATE_IRI }, o: { type: 'uri', value: unitIri } as never }];
+
+	it('reads a linked authority with its name', async () => {
+		vi.stubGlobal('fetch', mockFetch(withUnits).fn);
+		expect(await connector().fetchNamespaceGovernance(CORE)).toMatchObject({ authority: 'Data Office', authorityIri: unitIri });
+	});
+
+	it('writes a linked authority as a node', async () => {
+		const { fn, updates } = mockFetch(withUnits);
+		vi.stubGlobal('fetch', fn);
+		await connector().updateNamespaceGovernance(CORE, { steward: '', authority: 'Data Office', authorityIri: unitIri, maturity: '', version: '' });
+		expect(updates[0]).toContain(`<${CORE}> <${NAMESPACE_AUTHORITY_PREDICATE_IRI}> <${unitIri}>`);
+		expect(updates[0]).not.toContain(`a <${BUSINESS_UNIT_CLASS_IRI}>`);
+	});
+
+	it('creates the unit of a new name in the vocabulary graph in the same request', async () => {
+		const { fn, updates } = mockFetch();
+		vi.stubGlobal('fetch', fn);
+		await connector().updateNamespaceGovernance(CORE, { steward: '', authority: 'Legal', authorityCreate: true, maturity: '', version: '' });
+		expect(updates).toHaveLength(1);
+		expect(updates[0]).toContain(`<${VOCAB}#LegalBusinessUnit> a <${BUSINESS_UNIT_CLASS_IRI}>`);
+		expect(updates[0]).toContain(`<${CORE}> <${NAMESPACE_AUTHORITY_PREDICATE_IRI}> <${VOCAB}#LegalBusinessUnit>`);
 	});
 });

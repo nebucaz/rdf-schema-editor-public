@@ -114,7 +114,7 @@ const GUIDES: Guide[] = [
 			{ text: 'Related and mapped', file: 'lib/components/ConceptRelations.svelte' },
 			{ text: 'Add relation', file: 'lib/components/ConceptRelations.svelte' },
 			{ text: 'skos:related', file: 'lib/components/ConceptRelations.svelte' },
-			{ text: '(enter a full IRI)', file: 'lib/components/ConceptRelations.svelte' },
+			{ text: '(enter a full IRI)', file: 'lib/components/AddRelationModal.svelte' },
 			{ text: 'External Vocabularies', file: 'routes/+layout.svelte' },
 			{ text: 'Model checks', file: 'lib/components/OntologyTabs.svelte' },
 			{ text: 'Alternative labels', file: 'lib/components/ConceptForm.svelte' },

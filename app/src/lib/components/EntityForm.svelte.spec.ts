@@ -92,7 +92,7 @@ describe('EntityForm — defining concept (ontology-pipeline STORY-325)', () => 
 	const concept: Concept = {
 		iri: 'http://e/core/vocab#Customer',
 		prefLabels: [{ text: 'Customer', lang: 'en' }],
-		altLabels: [], hiddenLabels: [], definition: 'A party that buys.', scopeNote: '', disambiguation: '',
+		altLabels: [], hiddenLabels: [], definitions: [{ text: 'A party that buys.', lang: '' }], scopeNotes: [], disambiguation: '',
 		schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 		replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: ''
 	};
@@ -126,7 +126,7 @@ describe('EntityForm — defining concept when editing (ontology-pipeline STORY-
 		const concept: Concept = {
 			iri: 'http://e/core/vocab#Customer',
 			prefLabels: [{ text: 'Customer', lang: 'en' }],
-			altLabels: [], hiddenLabels: [], definition: 'A party that buys.', scopeNote: '', disambiguation: '',
+			altLabels: [], hiddenLabels: [], definitions: [{ text: 'A party that buys.', lang: '' }], scopeNotes: [], disambiguation: '',
 			schemeIri: '', topConcept: false, status: 'active', source: '', authority: '',
 			replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: ''
 		};

@@ -59,9 +59,20 @@ const union = <T>(a: T[], b: T[], key: (x: T) => string = String as unknown as (
 	return [...a, ...b.filter((x) => !have.has(key(x)))];
 };
 
+/** `existing` with each non-empty imported text replacing the entry of its language, or added when there is none. */
+const withTexts = (existing: LangText[], imported: LangText[]): LangText[] => {
+	let out = existing;
+	for (const v of imported.filter((x) => x.text.trim())) {
+		const same = (x: LangText) => x.lang.toLowerCase() === v.lang.toLowerCase();
+		const t = { text: v.text.trim(), lang: v.lang };
+		out = out.some(same) ? out.map((x) => (same(x) ? t : x)) : [...out, t];
+	}
+	return out;
+};
+
 function draftOf(c: Concept): ConceptDraft {
-	const { prefLabels, altLabels, hiddenLabels, definition, scopeNote, notation, example, editorialNote, disambiguation, schemeIri, topConcept, status, source, authority, replacedBy, deprecationReason } = c;
-	return { prefLabels, altLabels, hiddenLabels, definition, scopeNote, notation: notation ?? [], example: example ?? [], editorialNote: editorialNote ?? [], disambiguation, schemeIri, topConcept, status, source, authority, replacedBy, deprecationReason };
+	const { prefLabels, altLabels, hiddenLabels, definitions, scopeNotes, notation, example, editorialNote, disambiguation, schemeIri, topConcept, status, source, authority, authorityIri, replacedBy, deprecationReason } = c;
+	return { prefLabels, altLabels, hiddenLabels, definitions, scopeNotes, notation: notation ?? [], example: example ?? [], editorialNote: editorialNote ?? [], disambiguation, schemeIri, topConcept, status, source, authority, ...(authorityIri ? { authorityIri } : {}), replacedBy, deprecationReason };
 }
 
 /** The existing concept with the imported values merged in: additions for lists, replacement for texts and for a label
@@ -78,8 +89,8 @@ function mergeConcept(existing: ConceptDraft, imp: ImportedConcept, takeLabels: 
 		prefLabels,
 		altLabels: union(existing.altLabels, imp.altLabels, labelKey),
 		hiddenLabels: union(existing.hiddenLabels, imp.hiddenLabels, labelKey),
-		definition: imp.definition.trim() || existing.definition,
-		scopeNote: imp.scopeNote.trim() || existing.scopeNote,
+		definitions: withTexts(existing.definitions, imp.definitions),
+		scopeNotes: withTexts(existing.scopeNotes, imp.scopeNotes),
 		notation: union(existing.notation ?? [], imp.notation),
 		example: union(existing.example ?? [], imp.example),
 		editorialNote: union(existing.editorialNote ?? [], imp.editorialNote),
@@ -121,7 +132,7 @@ export function selectImportWrites(plan: ImportPlan, existing: SkosVocabulary, d
 		if (e.status === 'new' && target) {
 			const base = working.get(target)?.draft ?? (existingConcepts.get(target) ? draftOf(existingConcepts.get(target)!) : null);
 			if (!base) { writes.rejected.push({ iri: e.iri, reason: `The concept ${target} it is marked the same as does not exist` }); continue; }
-			const labelsAsAlt: ImportedConcept = { ...imp, prefLabels: [], altLabels: union(imp.prefLabels, imp.altLabels, labelKey), definition: '', scopeNote: '', schemeIri: '', topConcept: false };
+			const labelsAsAlt: ImportedConcept = { ...imp, prefLabels: [], altLabels: union(imp.prefLabels, imp.altLabels, labelKey), definitions: [], scopeNotes: [], schemeIri: '', topConcept: false };
 			const draft = mergeConcept(base, labelsAsAlt, false);
 			const prev = working.get(target)?.write;
 			const write: ConceptWrite = {
@@ -151,7 +162,7 @@ export function selectImportWrites(plan: ImportPlan, existing: SkosVocabulary, d
 }
 
 const emptyDraft = (): ConceptDraft => ({
-	prefLabels: [], altLabels: [], hiddenLabels: [], definition: '', scopeNote: '', notation: [], example: [], editorialNote: [], disambiguation: '',
+	prefLabels: [], altLabels: [], hiddenLabels: [], definitions: [], scopeNotes: [], notation: [], example: [], editorialNote: [], disambiguation: '',
 	schemeIri: '', topConcept: false, status: 'proposed', source: '', authority: '', replacedBy: '', deprecationReason: ''
 });
 

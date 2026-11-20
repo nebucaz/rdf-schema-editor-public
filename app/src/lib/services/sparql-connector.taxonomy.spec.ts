@@ -94,7 +94,7 @@ describe('SparqlConnector taxonomy writes (STORY-328)', () => {
 
 	it('updateConcept keeps broader links, except when it makes the concept a top concept', async () => {
 		const draft = {
-			prefLabels: [{ text: 'Dog', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+			prefLabels: [{ text: 'Dog', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 			disambiguation: '', schemeIri: SCHEME, topConcept: false, status: 'proposed' as const, source: '',
 			authority: '', replacedBy: '', deprecationReason: ''
 		};

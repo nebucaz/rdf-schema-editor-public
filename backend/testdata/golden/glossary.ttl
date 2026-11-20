@@ -17,7 +17,7 @@
 <http://example.org/core/vocab#Doctor>
     a skos:Concept ;
     skos:prefLabel "Doctor"@en ;
-    skos:definition "A physician." ;
+    skos:definition "A physician."@en ;
     dct:created "2026-01-04"^^xsd:date ;
     dct:modified "2026-01-04"^^xsd:date ;
     skos:inScheme <http://example.org/core/vocab#Workforce> ;
@@ -42,7 +42,8 @@
     skos:prefLabel "Personal"@de ;
     skos:prefLabel "Staff"@en ;
     skos:altLabel "Personnel"@en ;
-    skos:definition "People employed by the hospital." ;
+    skos:definition "Beschäftigte des Spitals."@de ;
+    skos:definition "People employed by the hospital."@en ;
     skos:scopeNote "Includes contractors.\nExcludes volunteers." ;
     skos:notation "S-1" ;
     skos:example "Ward staff" ;

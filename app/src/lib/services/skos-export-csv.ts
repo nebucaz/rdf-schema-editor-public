@@ -1,8 +1,8 @@
 /**
  * SKOS CSV export in the book's spreadsheet shape (skos-support STORY-412, Table 10 p. 123). Pure; reuses the
  * workbench's CSV writer (`utils/csv.ts`: BOM, CRLF, RFC 4180 quoting, formula neutralising).
- * Columns: `scheme`, `iri`, `notation`, then `prefLabel@<lang>` per language, `definition`, `altLabel@<lang>`,
- * `hiddenLabel@<lang>`, `broader`, `related`. `definition` carries no language tag because the model stores one text.
+ * Columns: `scheme`, `iri`, `notation`, then `prefLabel@<lang>` per language, `definition@<lang>` per language in use
+ * (a plain `definition` for untagged text), `altLabel@<lang>`, `hiddenLabel@<lang>`, `broader`, `related`.
  * The import (STORY-416) reads exactly this format back.
  */
 import { toCsv } from '#lib/utils/csv.js';
@@ -18,19 +18,25 @@ export interface SkosCsvOptions {
 const langsOf = (concepts: Concept[], pick: (c: Concept) => LangText[]) =>
 	[...new Set(concepts.flatMap((c) => pick(c).map((l) => l.lang)))].sort();
 
+/** Languages of the non-empty texts only, so an empty definition adds no column. */
+const textLangsOf = (concepts: Concept[], pick: (c: Concept) => LangText[]) =>
+	langsOf(concepts, (c) => pick(c).filter((l) => l.text.trim()));
+
 export function serializeSkosCsv(vocab: SkosVocabulary, options: SkosCsvOptions = {}): string {
 	const concepts = vocab.concepts.filter((c) => !options.schemeIri || c.schemeIri === options.schemeIri);
 	const schemeName = new Map(vocab.schemes.map((s) => [s.iri, s.name]));
 	const byIri = new Map(vocab.concepts.map((c) => [c.iri, c]));
 	const prefLangs = langsOf(concepts, (c) => c.prefLabels);
 	if (!prefLangs.length) prefLangs.push('en');
+	const definitionLangs = textLangsOf(concepts, (c) => c.definitions);
+	if (!definitionLangs.length) definitionLangs.push('');
 	const altLangs = langsOf(concepts, (c) => c.altLabels);
 	const hiddenLangs = langsOf(concepts, (c) => c.hiddenLabels);
 	const tag = (name: string, lang: string) => (lang ? `${name}@${lang}` : name);
 	const columns = [
 		'scheme', 'iri', 'notation',
 		...prefLangs.map((l) => tag('prefLabel', l)),
-		'definition',
+		...definitionLangs.map((l) => tag('definition', l)),
 		...(altLangs.length ? altLangs : ['en']).map((l) => tag('altLabel', l)),
 		...(hiddenLangs.length ? hiddenLangs : ['en']).map((l) => tag('hiddenLabel', l)),
 		'broader', 'related'
@@ -47,7 +53,7 @@ export function serializeSkosCsv(vocab: SkosVocabulary, options: SkosCsvOptions 
 			c.iri,
 			joinValues(c.notation ?? []),
 			...prefLangs.map((l) => labelsIn(c.prefLabels, l)),
-			c.definition,
+			...definitionLangs.map((l) => c.definitions.find((d) => d.lang === l && d.text.trim())?.text.trim() ?? ''),
 			...(altLangs.length ? altLangs : ['en']).map((l) => labelsIn(c.altLabels, l)),
 			...(hiddenLangs.length ? hiddenLangs : ['en']).map((l) => labelsIn(c.hiddenLabels, l)),
 			joinValues((c.broader ?? []).map(ref)),

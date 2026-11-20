@@ -20,6 +20,24 @@ describe('parseCsv (STORY-416)', () => {
 	});
 });
 
+describe('per-language definitions (STORY-481)', () => {
+	it('round-trips definition@de and definition@en through the CSV export and import', () => {
+		const vocab = { ...fixtureVocabulary(), concepts: [...fixtureVocabulary().concepts] };
+		vocab.concepts[0] = { ...vocab.concepts[0], definitions: [{ text: 'A person; employed.', lang: 'en' }, { text: 'Eine Person.', lang: 'de' }] };
+		const csv = serializeSkosCsv(vocab, {});
+		const back = parseSkosCsv(csv, opts).concepts.find((c) => c.iri === vocab.concepts[0].iri)!;
+		expect([...back.definitions].sort((a, b) => a.lang.localeCompare(b.lang))).toEqual([
+			{ text: 'Eine Person.', lang: 'de' },
+			{ text: 'A person; employed.', lang: 'en' }
+		]);
+	});
+
+	it('still reads an old CSV with a plain definition column as untagged text', () => {
+		const parsed = parseSkosCsv('prefLabel@en,definition\r\nDog,A pet\r\n', opts);
+		expect(parsed.concepts[0].definitions).toEqual([{ text: 'A pet', lang: '' }]);
+	});
+});
+
 describe('parseSkosCsv (STORY-416)', () => {
 	const indented = 'scheme,L1,L2,L3,definition@en,altLabel\r\nGlossary,Animal,,,A living thing,Creature;Beast\r\nGlossary,,Dog,,A pet,Hound\r\nGlossary,,,Puppy,A young dog,\r\nGlossary,,Cat,,,\r\n';
 	const flat = 'scheme,prefLabel@en,definition,altLabel@en,broader\r\nGlossary,Animal,A living thing,Creature;Beast,\r\nGlossary,Dog,A pet,Hound,Animal\r\nGlossary,Puppy,A young dog,,Dog\r\nGlossary,Cat,,,Animal\r\n';
@@ -28,7 +46,7 @@ describe('parseSkosCsv (STORY-416)', () => {
 		const parsed = parseSkosCsv(indented, opts);
 		expect(parsed.errors).toEqual([]);
 		const byIri = new Map(parsed.concepts.map((c) => [c.iri, c]));
-		expect(byIri.get(ci('Animal'))).toMatchObject({ topConcept: true, schemeIri: conceptSchemeIri('Glossary', CORE), altLabels: [{ text: 'Creature', lang: '' }, { text: 'Beast', lang: '' }], definition: 'A living thing' });
+		expect(byIri.get(ci('Animal'))).toMatchObject({ topConcept: true, schemeIri: conceptSchemeIri('Glossary', CORE), altLabels: [{ text: 'Creature', lang: '' }, { text: 'Beast', lang: '' }], definitions: [{ text: 'A living thing', lang: 'en' }] });
 		expect(byIri.get(ci('Dog'))!.broader).toEqual([ci('Animal')]);
 		expect(byIri.get(ci('Puppy'))!.broader).toEqual([ci('Dog')]);
 		expect(byIri.get(ci('Cat'))!.broader).toEqual([ci('Animal')]);
@@ -92,7 +110,7 @@ describe('parseSkosCsv (STORY-416)', () => {
 	it('trims cells and strips unprintable characters, saying so', () => {
 		const parsed = parseSkosCsv('prefLabel,definition\r\n  Spaced  ,"bad\u0007char"\r\n', opts);
 		expect(parsed.concepts[0].prefLabels[0].text).toBe('Spaced');
-		expect(parsed.concepts[0].definition).toBe('badchar');
+		expect(parsed.concepts[0].definitions).toEqual([{ text: 'badchar', lang: '' }]);
 		expect(parsed.info.some((i) => i.code === 'stripped-characters' && i.row === 2)).toBe(true);
 	});
 
@@ -104,7 +122,7 @@ describe('parseSkosCsv (STORY-416)', () => {
 		const csv = 'Begriff,Erklaerung\r\nTerm,Meaning\r\n';
 		expect(readCsvHeaders(csv).unknown).toEqual(['Begriff', 'Erklaerung']);
 		const mapped = parseSkosCsv(csv, { ...opts, columnMap: { Begriff: 'prefLabel@de', Erklaerung: 'definition' } });
-		expect(mapped.concepts[0]).toMatchObject({ prefLabels: [{ text: 'Term', lang: 'de' }], definition: 'Meaning' });
+		expect(mapped.concepts[0]).toMatchObject({ prefLabels: [{ text: 'Term', lang: 'de' }], definitions: [{ text: 'Meaning', lang: '' }] });
 		expect(parseSkosCsv(csv, opts).errors[0].code).toBe('missing-label');
 	});
 

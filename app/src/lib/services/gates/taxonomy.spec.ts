@@ -8,7 +8,7 @@ const S = 'urn:scheme:a';
 const concept = (id: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `urn:c:${id}`,
 	prefLabels: [{ text: id, lang: 'en' }],
-	altLabels: [], hiddenLabels: [], definition: 'A thing that is described elsewhere.', scopeNote: '', disambiguation: '',
+	altLabels: [], hiddenLabels: [], definitions: [{ text: 'A thing that is described elsewhere.', lang: '' }], scopeNotes: [], disambiguation: '',
 	schemeIri: S, topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 	broader: [], related: [], mappings: [],
@@ -31,8 +31,8 @@ describe('taxonomy gates (STORY-330)', () => {
 		const concepts = [
 			top('Pet'),
 			top('Wild'),
-			under('Fox', ['Pet', 'Wild'], { definition: 'A small wild canine kept by few.' }),
-			under('Cat', ['Pet'], { definition: 'A domestic feline.' })
+			under('Fox', ['Pet', 'Wild'], { definitions: [{ text: 'A small wild canine kept by few.', lang: '' }] }),
+			under('Cat', ['Pet'], { definitions: [{ text: 'A domestic feline.', lang: '' }] })
 		];
 		expect(run(concepts)).toEqual([]);
 	});
@@ -58,21 +58,21 @@ describe('taxonomy gates (STORY-330)', () => {
 	});
 
 	it('flags a definition that contains the term, as a warning', () => {
-		const found = run([top('Customer', { definition: 'A customer is a person who buys.' })], 'definition-circular');
+		const found = run([top('Customer', { definitions: [{ text: 'A customer is a person who buys.', lang: '' }] })], 'definition-circular');
 		expect(found).toHaveLength(1);
 		expect(found[0]).toMatchObject({ severity: 'warning', stage: 'vocabulary', elementIri: 'urn:c:Customer' });
-		expect(run([top('Customer', { definition: 'A person who buys goods.' })], 'definition-circular')).toEqual([]);
+		expect(run([top('Customer', { definitions: [{ text: 'A person who buys goods.', lang: '' }] })], 'definition-circular')).toEqual([]);
 	});
 
 	it('does not read a longer word as the term', () => {
-		expect(run([top('Car', { definition: 'A carpet-like cover for floors.' })], 'definition-circular')).toEqual([]);
+		expect(run([top('Car', { definitions: [{ text: 'A carpet-like cover for floors.', lang: '' }] })], 'definition-circular')).toEqual([]);
 	});
 
 	it('flags a definition of more than two sentences', () => {
 		const long = 'It is one. It is two. It is three.';
-		expect(run([top('Thing', { definition: long })], 'definition-length')).toHaveLength(1);
-		expect(run([top('Thing', { definition: 'It is one. It is two.' })], 'definition-length')).toEqual([]);
-		expect(run([top('Thing', { definition: 'Costs about 3.5 euros e.g. per unit' })], 'definition-length')).toEqual([]);
+		expect(run([top('Thing', { definitions: [{ text: long, lang: '' }] })], 'definition-length')).toHaveLength(1);
+		expect(run([top('Thing', { definitions: [{ text: 'It is one. It is two.', lang: '' }] })], 'definition-length')).toEqual([]);
+		expect(run([top('Thing', { definitions: [{ text: 'Costs about 3.5 euros e.g. per unit', lang: '' }] })], 'definition-length')).toEqual([]);
 	});
 
 	it('asks for review when branches differ much in depth, as info for human judgement', () => {
@@ -92,9 +92,9 @@ describe('taxonomy gates (STORY-330)', () => {
 	it('asks for review of siblings whose definitions overlap, as info for human judgement', () => {
 		const concepts = [
 			top('Vehicle'),
-			under('Car', ['Vehicle'], { definition: 'A wheeled motor vehicle used for transporting passengers on roads.' }),
-			under('Automobile', ['Vehicle'], { definition: 'A wheeled motor vehicle used for transporting passengers on roads.' }),
-			under('Boat', ['Vehicle'], { definition: 'A craft that floats and carries cargo over water.' })
+			under('Car', ['Vehicle'], { definitions: [{ text: 'A wheeled motor vehicle used for transporting passengers on roads.', lang: '' }] }),
+			under('Automobile', ['Vehicle'], { definitions: [{ text: 'A wheeled motor vehicle used for transporting passengers on roads.', lang: '' }] }),
+			under('Boat', ['Vehicle'], { definitions: [{ text: 'A craft that floats and carries cargo over water.', lang: '' }] })
 		];
 		const found = run(concepts, 'sibling-overlap');
 		expect(found).toHaveLength(1);

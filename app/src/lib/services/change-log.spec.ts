@@ -5,7 +5,7 @@ import type { Concept } from './skos-concept';
 
 const concept = (over: Partial<Concept> = {}): Concept => ({
 	iri: 'urn:c:Bank',
-	prefLabels: [{ text: 'Bank', lang: 'en' }], altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '',
+	prefLabels: [{ text: 'Bank', lang: 'en' }], altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [],
 	disambiguation: '', schemeIri: 's', topConcept: false, status: 'active', source: '', authority: '',
 	replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '', ...over
 });
@@ -16,10 +16,15 @@ describe('changeKindForConceptEdit (STORY-331)', () => {
 		expect(changeKindForConceptEdit(before, { ...before, altLabels: [{ text: 'Credit house', lang: 'en' }] })).toBe('label');
 	});
 
+	it('is a comment change when only the linked business unit changed', () => {
+		const before = { ...concept(), authority: 'Data Office', authorityIri: 'urn:bu:a' };
+		expect(changeKindForConceptEdit(before, { ...before, authorityIri: 'urn:bu:b' })).toBe('comment');
+	});
+
 	it('is a comment change when texts changed', () => {
 		const before = concept();
-		expect(changeKindForConceptEdit(before, { ...before, definition: 'new' })).toBe('comment');
-		expect(changeKindForConceptEdit(before, { ...before, scopeNote: 'n' })).toBe('comment');
+		expect(changeKindForConceptEdit(before, { ...before, definitions: [{ text: 'new', lang: '' }] })).toBe('comment');
+		expect(changeKindForConceptEdit(before, { ...before, scopeNotes: [{ text: 'n', lang: '' }] })).toBe('comment');
 	});
 
 	it('is other for structure, and the label wins over nothing', () => {

@@ -86,7 +86,7 @@ interface Row {
 	iri: string;
 	label: LangText[];
 	notation: string[];
-	definition: string;
+	definitions: LangText[];
 	alt: LangText[];
 	hidden: LangText[];
 	broader: string[];
@@ -117,7 +117,7 @@ export function parseSkosCsv(text: string, options: CsvImportOptions): ParsedImp
 			errors.push({ code: 'unreadable-row', row: number, message: `Row ${number}: the line has ${cells.length} cells but the header has ${headers.length}` });
 			continue;
 		}
-		const row: Row = { number, scheme: '', iri: '', label: [], notation: [], definition: '', alt: [], hidden: [], broader: [], related: [], level: 0, levelLabel: '' };
+		const row: Row = { number, scheme: '', iri: '', label: [], notation: [], definitions: [], alt: [], hidden: [], broader: [], related: [], level: 0, levelLabel: '' };
 		let stripped = false;
 		cells.forEach((raw, i) => {
 			const col = columns[i];
@@ -132,7 +132,7 @@ export function parseSkosCsv(text: string, options: CsvImportOptions): ParsedImp
 				case 'iri': row.iri = value; break;
 				case 'notation': row.notation.push(...splitValues(value)); break;
 				case 'prefLabel': row.label.push({ text: value, lang: col.lang }); break;
-				case 'definition': row.definition = value; break;
+				case 'definition': row.definitions.push({ text: value, lang: col.lang }); break;
 				case 'altLabel': labels(row.alt); break;
 				case 'hiddenLabel': labels(row.hidden); break;
 				case 'broader': row.broader.push(...splitValues(value)); break;
@@ -167,7 +167,7 @@ export function parseSkosCsv(text: string, options: CsvImportOptions): ParsedImp
 		const schemeIri = row.scheme ? conceptSchemeIri(row.scheme, options.coreBaseIri) : '';
 		if (row.scheme && !schemes.has(schemeIri)) schemes.set(schemeIri, { iri: schemeIri, name: row.scheme, description: '', title: '', creator: '', publisher: '', rights: '' });
 		concepts.set(iri, {
-			iri, prefLabels: row.label, altLabels: row.alt, hiddenLabels: row.hidden, definition: row.definition, scopeNote: '', notation: row.notation,
+			iri, prefLabels: row.label, altLabels: row.alt, hiddenLabels: row.hidden, definitions: row.definitions, scopeNotes: [], notation: row.notation,
 			example: [], editorialNote: [], schemeIri, topConcept: false, broader: [], related: [], mappings: []
 		});
 		iriOfRow.set(row, iri);

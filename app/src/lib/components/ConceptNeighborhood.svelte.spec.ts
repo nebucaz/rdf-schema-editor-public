@@ -8,7 +8,7 @@ const concept = (id: string, over: Partial<Concept> = {}): Concept =>
 	({
 		iri: `urn:c:${id}`,
 		prefLabels: [{ text: id, lang: 'en' }],
-		altLabels: [], hiddenLabels: [], definition: 'd', scopeNote: '', disambiguation: '',
+		altLabels: [], hiddenLabels: [], definitions: [{ text: 'd', lang: '' }], scopeNotes: [], disambiguation: '',
 		schemeIri: 'urn:scheme:a', topConcept: false, status: 'active', source: '', authority: '',
 		replacedBy: '', deprecationReason: '', created: '', modified: '', deprecatedOn: '',
 		broader: [],
@@ -56,5 +56,40 @@ describe('ConceptNeighborhood', () => {
 	it('issues no writes: no connector in the source', () => {
 		const source = readFileSync('src/lib/components/ConceptNeighborhood.svelte', 'utf8');
 		expect(source).not.toMatch(/sparql-connector|sparqlConnector|fetch\(/);
+	});
+});
+const flat = (id: string, over: Partial<Concept> = {}): Concept => concept(id, { schemeIri: 'urn:s:life', ...over });
+const schemes = [{ iri: 'urn:s:life', name: 'Lifecycle', description: '', scope: { purpose: '', decisionsSupported: '', outOfScope: '', stakeholders: '' } }];
+
+describe('ConceptNeighborhood scheme node', () => {
+	it('draws a flat concept hanging off its scheme, where there used to be nothing', () => {
+		render(ConceptNeighborhood, { props: { concepts: [flat('Draft')], iri: 'urn:c:Draft', schemes } });
+		expect(screen.getByRole('group', { name: /Neighbourhood of Draft/ })).toBeTruthy();
+		expect(screen.getByRole('button', { name: 'Select Lifecycle (scheme)' })).toBeTruthy();
+	});
+
+	it('reports the scheme to onSelectScheme, not onSelect', async () => {
+		const onSelect = vi.fn();
+		const onSelectScheme = vi.fn();
+		render(ConceptNeighborhood, { props: { concepts: [flat('Draft')], iri: 'urn:c:Draft', schemes, onSelect, onSelectScheme } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Select Lifecycle (scheme)' }));
+		expect(onSelectScheme).toHaveBeenCalledWith('urn:s:life');
+		expect(onSelect).not.toHaveBeenCalled();
+	});
+
+	it('links the scheme node on read-only pages', () => {
+		render(ConceptNeighborhood, { props: { concepts: [flat('Draft')], iri: 'urn:c:Draft', schemes, href: (i: string) => `/c/${i}`, schemeHref: (i: string) => `/s/${i}` } });
+		expect(screen.getByRole('link', { name: 'Select Lifecycle (scheme)' }).getAttribute('href')).toBe('/s/urn:s:life');
+	});
+
+	it('shows no scheme node when a broader concept exists, and nothing at all without relations or schemes', () => {
+		const cs = [flat('Top', { topConcept: true }), flat('Kid', { broader: ['urn:c:Top'] })];
+		render(ConceptNeighborhood, { props: { concepts: cs, iri: 'urn:c:Kid', schemes } });
+		expect(screen.queryByRole('button', { name: /\(scheme\)/ })).toBeNull();
+	});
+
+	it('stays hidden for a concept with no relations when no schemes are given', () => {
+		const { container } = render(ConceptNeighborhood, { props: { concepts: [flat('Draft')], iri: 'urn:c:Draft' } });
+		expect(container.querySelector('svg')).toBeNull();
 	});
 });

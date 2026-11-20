@@ -4,12 +4,15 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import ConceptReview from '#lib/components/ConceptReview.svelte';
+	import { reviewGlossaryUrl, reviewSchemeUrl } from '#lib/services/review-links.js';
+	import { schemeIdForIri } from '#lib/services/scheme-id.js';
 	import { schemeDisplayName, type Concept, type ConceptScheme } from '#lib/services/skos-concept.js';
 	import { sparqlConnector } from '#lib/services/sparql-connector.js';
 	import { loadAllConcepts } from '#lib/services/vocabulary-actions.js';
 
 	let concepts = $state<Concept[]>([]);
 	let schemes = $state<ConceptScheme[]>([]);
+	let core = $state('');
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
@@ -20,12 +23,15 @@
 		return scheme ? schemeDisplayName(scheme) : '';
 	});
 
+	const schemeHref = $derived(concept?.schemeIri && core ? reviewSchemeUrl(schemeIdForIri(concept.schemeIri, core)) : '');
+
 	onMount(async () => {
 		if (!page.data.user) return;
 		try {
-			const core = await sparqlConnector.fetchVocabularyNamespace();
-			if (core) {
-				[concepts, schemes] = await Promise.all([loadAllConcepts(sparqlConnector).then((c) => c ?? []), sparqlConnector.fetchConceptSchemes(core)]);
+			const base = await sparqlConnector.fetchVocabularyNamespace();
+			if (base) {
+				core = base;
+				[concepts, schemes] = await Promise.all([loadAllConcepts(sparqlConnector).then((c) => c ?? []), sparqlConnector.fetchConceptSchemes(base)]);
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Failed to load the concept';
@@ -45,7 +51,8 @@
 	{:else if loading}
 		<p>Loading…</p>
 	{:else if concept}
-		<ConceptReview {concept} {concepts} {schemeName} />
+		<p class="back"><a href={reviewGlossaryUrl()}>← All concepts</a></p>
+		<ConceptReview {concept} {concepts} {schemeName} {schemeHref} {schemes} schemeUrl={(iri) => reviewSchemeUrl(schemeIdForIri(iri, core))} />
 	{:else}
 		<p>This concept was not found. It may have been deleted, or the link is incomplete.</p>
 	{/if}
@@ -57,6 +64,17 @@
 		overflow-y: auto;
 		height: 100%;
 		box-sizing: border-box;
+	}
+
+	.back {
+		margin: 0 0 0.75rem;
+		font-size: 0.9rem;
+	}
+
+	@media print {
+		.back {
+			display: none;
+		}
 	}
 
 	.error {
