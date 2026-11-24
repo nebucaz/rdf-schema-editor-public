@@ -6,6 +6,7 @@ import {
 	conceptOptionsMoreKey,
 	mergeKeptValues
 } from './concept-value-options';
+import { resolveRelationTargetIri } from '#lib/utils/relation-values.js';
 
 const concept = (id: string, label: string, over: Partial<Concept> = {}): Concept => ({
 	iri: `http://example.org/core/vocab#${id}`,
@@ -45,6 +46,17 @@ describe('buildConceptOptions (STORY-438)', () => {
 		]);
 		expect(options.map((o) => o.label)).toEqual(['Open [O-1]', 'Open [Open2]', 'Other']);
 		expect(new Set(options.map((o) => o.label)).size).toBe(3);
+	});
+});
+
+describe('buildConceptOptions — equal label and qualifier', () => {
+	it('keeps two concepts with the same label and notation distinct and separately resolvable', () => {
+		const options = buildConceptOptions([
+			concept('Open1', 'Open', { notation: ['O-1'] }),
+			concept('Open2', 'Open', { notation: ['O-1'] })
+		]);
+		expect(new Set(options.map((o) => o.label)).size).toBe(2);
+		for (const o of options) expect(resolveRelationTargetIri(options, o.label)).toBe(o.iri);
 	});
 });
 

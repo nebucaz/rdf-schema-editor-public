@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import MemberForm from './MemberForm.svelte';
+import type { NameableEntity } from '#lib/services/sparql-connector.js';
 
 const classOptions = [
 	{ iri: 'urn:A', label: '[core] Alpha' },
@@ -109,19 +110,60 @@ describe('MemberForm assertion suggestions (loop-issues STORY-315)', () => {
 		expect(screen.getByLabelText('Class')).toBeInTheDocument();
 		await open();
 		expect(screen.getByRole('status')).toHaveTextContent('Loading suggestions');
-		expect(screen.getByLabelText('Predicate')).toBeInTheDocument();
+		expect(screen.getByPlaceholderText('e.g. isMasterFor')).toBeInTheDocument();
 	});
 
 	it('shows an error but keeps the inputs usable when the suggestions failed', async () => {
 		setup({ optionsStatus: 'error' });
 		await open();
 		expect(screen.getByRole('alert')).toHaveTextContent('could not be loaded');
-		expect(screen.getByLabelText('Object')).toBeInTheDocument();
+		expect(screen.getByPlaceholderText('e.g. SchutzobjektID')).toBeInTheDocument();
 	});
 
 	it('shows no notice once ready', async () => {
 		setup();
 		await open();
 		expect(screen.queryByRole('status')).toBeNull();
+	});
+});
+
+describe('MemberForm generic assertion picker', () => {
+	async function openPicker(objectOptions: NameableEntity[]) {
+		const onAddAssertion = vi.fn(async () => {});
+		render(MemberForm, {
+			props: {
+				mode: 'edit',
+				initialLabel: 'Thing',
+				submitLabel: 'Save',
+				individualIri: 'urn:i',
+				onSubmit: vi.fn(async () => {}),
+				onCancel: vi.fn(),
+				assertions: [],
+				predicateOptions: [],
+				objectOptions,
+				onAddAssertion
+			}
+		});
+		await fireEvent.click(screen.getByRole('button', { name: '+ Add assertion' }));
+		await fireEvent.input(screen.getByPlaceholderText('e.g. isMasterFor'), { target: { value: 'knows' } });
+		return onAddAssertion;
+	}
+
+	it('adds the assertion for a unique object label', async () => {
+		const onAddAssertion = await openPicker([{ iri: 'urn:o1', label: 'One', kind: 'individual' }]);
+		await fireEvent.input(screen.getByPlaceholderText('e.g. SchutzobjektID'), { target: { value: 'One' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+		await waitFor(() => expect(onAddAssertion).toHaveBeenCalledWith('knows', 'urn:o1'));
+	});
+
+	it('rejects an ambiguous object label and writes nothing', async () => {
+		const onAddAssertion = await openPicker([
+			{ iri: 'urn:o1', label: 'Same', kind: 'individual' },
+			{ iri: 'urn:o2', label: 'Same', kind: 'individual' }
+		]);
+		await fireEvent.input(screen.getByPlaceholderText('e.g. SchutzobjektID'), { target: { value: 'Same' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Add' }));
+		expect(await screen.findByText('Object must be selected from the list')).toBeTruthy();
+		expect(onAddAssertion).not.toHaveBeenCalled();
 	});
 });

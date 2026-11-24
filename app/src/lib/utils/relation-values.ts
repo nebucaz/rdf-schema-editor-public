@@ -79,11 +79,60 @@ export function mergeRelationFormValues(
 	return values;
 }
 
+function localNameOf(iri: string): string {
+	const cut = Math.max(iri.lastIndexOf('#'), iri.lastIndexOf('/'));
+	return cut >= 0 && cut < iri.length - 1 ? iri.slice(cut + 1) : iri;
+}
+
+/** Makes typeahead option labels unique: a label occurring more than once gets the IRI local name
+ *  appended (`"[api] Meter (DelayMeter)"`), plus a counter when local names collide too. Unique labels
+ *  stay byte-identical, order and IRIs are kept, the input is not mutated. Labels are the resolution key
+ *  (`resolveRelationTargetIri`), so every list feeding a label-resolved typeahead goes through this. */
+export function disambiguateOptionLabels<T extends RelationTargetOption>(options: T[]): T[] {
+	const counts = new Map<string, number>();
+	for (const o of options) counts.set(o.label, (counts.get(o.label) ?? 0) + 1);
+	const taken = new Set(options.filter((o) => counts.get(o.label) === 1).map((o) => o.label));
+	return options.map((o) => {
+		if (counts.get(o.label) === 1) return { ...o };
+		const base = `${o.label} (${localNameOf(o.iri)})`;
+		let label = base;
+		for (let n = 2; taken.has(label); n++) label = `${o.label} (${localNameOf(o.iri)} ${n})`;
+		taken.add(label);
+		return { ...o, label };
+	});
+}
+
+/** Typeahead options for the individuals of a relation's target class: `"[prefix] label"` (the prefix keeps
+ *  same-label individuals of different namespaces apart), then `disambiguateOptionLabels` for any that still
+ *  collide inside one namespace. */
+export function relationTargetOptionsFromIndividuals(
+	individuals: Array<{ iri: string; label: string; namespaceBaseIri: string }>,
+	prefixFor: (namespaceBaseIri: string) => string
+): RelationTargetOption[] {
+	return disambiguateOptionLabels(
+		individuals.map((o) => ({ iri: o.iri, label: `[${prefixFor(o.namespaceBaseIri)}] ${o.label}` }))
+	);
+}
+
+/** The single option whose label equals `label`, or `undefined` when none or **several** match —
+ *  labels are the resolution key of every typeahead, so an ambiguous one must not silently pick the
+ *  first individual (`disambiguateOptionLabels` keeps real lists unambiguous). */
+export function findUniqueByLabel<T extends { label: string }>(options: T[], label: string): T | undefined {
+	let found: T | undefined;
+	for (const o of options) {
+		if (o.label !== label) continue;
+		if (found) return undefined;
+		found = o;
+	}
+	return found;
+}
+
 /** Exact-label lookup against a relation field's own target options — the same "must match the list
  *  exactly" rule the existing Assertions object picker already enforces (`MemberForm.svelte`'s
- *  `submitAddAssertion`), applied per relation field instead of globally. */
+ *  `submitAddAssertion`), applied per relation field instead of globally. An ambiguous label
+ *  (several options share it) is unresolved, so validation reports the field instead of linking one. */
 export function resolveRelationTargetIri(options: RelationTargetOption[], label: string): string | undefined {
-	return options.find((o) => o.label === label)?.iri;
+	return findUniqueByLabel(options, label)?.iri;
 }
 
 /** Relation field IRIs that fail validation: either required with no resolvable non-blank selection,

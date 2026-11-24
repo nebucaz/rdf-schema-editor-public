@@ -3,6 +3,8 @@ import {
 	emptyRelationFormValues,
 	mergeRelationFormValues,
 	resolveRelationTargetIri,
+	disambiguateOptionLabels,
+	relationTargetOptionsFromIndividuals,
 	validateRelationSelections,
 	reconcileRelationValues,
 	type RelationFieldSpecLike,
@@ -48,6 +50,25 @@ describe('resolveRelationTargetIri', () => {
 
 	it('returns undefined when nothing matches', () => {
 		expect(resolveRelationTargetIri([opt('iri1', 'BP1')], 'Unknown')).toBeUndefined();
+	});
+
+	it('returns undefined when two options share the label (never the first match)', () => {
+		expect(resolveRelationTargetIri([opt('iri1', 'BP'), opt('iri2', 'BP')], 'BP')).toBeUndefined();
+	});
+
+	it('still resolves a unique label next to an ambiguous pair', () => {
+		expect(resolveRelationTargetIri([opt('iri1', 'BP'), opt('iri2', 'BP'), opt('iri3', 'Other')], 'Other')).toBe('iri3');
+	});
+});
+
+describe('validateRelationSelections — ambiguous label', () => {
+	it('reports a required field with an ambiguous label as invalid, not missing', () => {
+		const result = validateRelationSelections(
+			[rel('a', { required: true })],
+			{ a: 'BP' },
+			{ a: [opt('iri1', 'BP'), opt('iri2', 'BP')] }
+		);
+		expect(result).toEqual({ missing: [], invalid: ['a'] });
 	});
 });
 
@@ -152,5 +173,80 @@ describe('reconcileRelationValues — multiple fields', () => {
 			{ a: [opt('iri1', 'BP1')], b: [opt('iriX', 'BPX'), opt('iriY', 'BPY')] }
 		);
 		expect(submissions).toEqual([{ predicateIri: 'b', predicateLabel: 'blockedBy', added: ['iriY'], removed: ['iriX'] }]);
+	});
+});
+
+describe('disambiguateOptionLabels', () => {
+	const NS = 'https://example.org/api#';
+
+	it('returns an empty list unchanged', () => {
+		expect(disambiguateOptionLabels([])).toEqual([]);
+	});
+
+	it('leaves unique labels byte-identical', () => {
+		const input = [opt(`${NS}A`, '[api] A'), opt(`${NS}B`, '[api] B')];
+		expect(disambiguateOptionLabels(input)).toEqual(input);
+	});
+
+	it('appends the local name to colliding labels only', () => {
+		const out = disambiguateOptionLabels([
+			opt(`${NS}One`, '[api] Meter'),
+			opt(`${NS}Solo`, '[api] Solo'),
+			opt(`${NS}Two`, '[api] Meter')
+		]);
+		expect(out).toEqual([
+			{ iri: `${NS}One`, label: '[api] Meter (One)' },
+			{ iri: `${NS}Solo`, label: '[api] Solo' },
+			{ iri: `${NS}Two`, label: '[api] Meter (Two)' }
+		]);
+	});
+
+	it('adds a stable counter when local names collide too', () => {
+		const out = disambiguateOptionLabels([
+			opt('https://a.org/x#Same', 'L'),
+			opt('https://b.org/y#Same', 'L'),
+			opt('https://c.org/z#Same', 'L')
+		]);
+		expect(out.map((o) => o.label)).toEqual(['L (Same)', 'L (Same 2)', 'L (Same 3)']);
+		expect(new Set(out.map((o) => o.label)).size).toBe(3);
+		expect(out.map((o) => o.iri)).toEqual(['https://a.org/x#Same', 'https://b.org/y#Same', 'https://c.org/z#Same']);
+	});
+
+	it('does not mutate its input', () => {
+		const input = [opt(`${NS}One`, 'M'), opt(`${NS}Two`, 'M')];
+		const copy = JSON.parse(JSON.stringify(input));
+		disambiguateOptionLabels(input);
+		expect(input).toEqual(copy);
+	});
+
+	it('never collides with an existing unique label that equals a suffixed one', () => {
+		const out = disambiguateOptionLabels([opt(`${NS}One`, 'M'), opt(`${NS}Two`, 'M'), opt(`${NS}Three`, 'M (One)')]);
+		expect(new Set(out.map((o) => o.label)).size).toBe(3);
+	});
+});
+
+describe('relationTargetOptionsFromIndividuals', () => {
+	const prefixFor = (ns: string) => (ns === 'https://e.org/api' ? 'api' : 'core');
+
+	it('prefixes the namespace prefix to each label', () => {
+		const out = relationTargetOptionsFromIndividuals(
+			[{ iri: 'https://e.org/api#A', label: 'A', namespaceBaseIri: 'https://e.org/api' }],
+			prefixFor
+		);
+		expect(out).toEqual([{ iri: 'https://e.org/api#A', label: '[api] A' }]);
+	});
+
+	it('keeps two same-label individuals of one namespace distinct, each resolving to its own IRI', () => {
+		const ns = 'https://e.org/api';
+		const out = relationTargetOptionsFromIndividuals(
+			[
+				{ iri: `${ns}#X1`, label: 'DelayMeter Public API', namespaceBaseIri: ns },
+				{ iri: `${ns}#X2`, label: 'DelayMeter Public API', namespaceBaseIri: ns }
+			],
+			prefixFor
+		);
+		expect(new Set(out.map((o) => o.label)).size).toBe(2);
+		expect(resolveRelationTargetIri(out, out[0].label)).toBe(`${ns}#X1`);
+		expect(resolveRelationTargetIri(out, out[1].label)).toBe(`${ns}#X2`);
 	});
 });

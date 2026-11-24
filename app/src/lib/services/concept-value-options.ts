@@ -8,7 +8,7 @@
  */
 import { conceptTitle, type Concept } from './skos-concept';
 import { extractLocalName } from '#lib/utils/iri.js';
-import type { RelationTargetOption } from '#lib/utils/relation-values.js';
+import { disambiguateOptionLabels, type RelationTargetOption } from '#lib/utils/relation-values.js';
 
 /** The most concepts one field lists (`fetchConcepts` caps a page at 1000). */
 export const CONCEPT_OPTION_LIMIT = 1000;
@@ -21,11 +21,13 @@ export const conceptOptionsMoreKey = (fieldIri: string): string => `${fieldIri}\
 export function buildConceptOptions(concepts: Concept[]): RelationTargetOption[] {
 	const offered = concepts.filter((c) => c.status !== 'deprecated' && c.status !== 'retired');
 	const titles = offered.map((c) => conceptTitle(c));
-	return offered.map((c, i) => {
-		const shared = titles.filter((t) => t === titles[i]).length > 1;
-		const suffix = c.notation?.[0]?.trim() || extractLocalName(c.iri);
-		return { iri: c.iri, label: shared ? `${titles[i]} [${suffix}]` : titles[i] };
-	});
+	return disambiguateOptionLabels(
+		offered.map((c, i) => {
+			const shared = titles.filter((t) => t === titles[i]).length > 1;
+			const suffix = c.notation?.[0]?.trim() || extractLocalName(c.iri);
+			return { iri: c.iri, label: shared ? `${titles[i]} [${suffix}]` : titles[i] };
+		})
+	);
 }
 
 /** Adds the values an individual already holds to each field's options, so editing never drops one that is no

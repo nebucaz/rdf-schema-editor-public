@@ -11,6 +11,7 @@
 		type AttributeValueSubmission
 	} from '#lib/utils/attribute-values.js';
 	import {
+		findUniqueByLabel,
 		mergeRelationFormValues,
 		reconcileRelationValues,
 		validateRelationSelections,
@@ -141,8 +142,13 @@
 		warnDuplicateKeys('MemberForm assertions', assertions, (a) => a.predicateIri + a.objectIri);
 		for (const [predicateIri, options] of Object.entries(relationTargetOptions)) {
 			warnDuplicateKeys(`MemberForm relation targets ${predicateIri}`, options, (o) => o.iri);
+			// Labels are the resolution key (`resolveRelationTargetIri`): a repeat is ambiguous, not just a repeat.
+			warnDuplicateKeys(`MemberForm relation target labels ${predicateIri}`, options, (o) => o.label);
 		}
+		warnDuplicateKeys('MemberForm assertion object labels', objectOptions, (o) => o.label);
 	});
+
+	const relationListId = (rel: { iri: string }) => `relation-target-options-${rel.iri.replace(/[^A-Za-z0-9]/g, '-')}`;
 
 	// -- Relation fields (STORY-114) ---------------------------------------------------------------
 	// Schema-declared owl:ObjectProperty relations, rendered as typeahead fields alongside Attributes
@@ -156,7 +162,10 @@
 	for (const rel of relationFields) {
 		const matches = assertions.filter((a) => a.predicateIri === rel.iri);
 		originalRelationObjectIris[rel.iri] = matches.map((a) => a.objectIri);
-		relationAssertedLabels[rel.iri] = matches.map((a) => objectDisplayLabel(a));
+		// The label the field's own option list shows for the object wins, so a value that collides with another
+		// target is seeded under its disambiguated label (resolvable), not the plain one (ambiguous).
+		const fieldOptions = relationTargetOptions[rel.iri] ?? [];
+		relationAssertedLabels[rel.iri] = matches.map((a) => fieldOptions.find((o) => o.iri === a.objectIri)?.label ?? objectDisplayLabel(a));
 	}
 	// A concept field keeps the values the individual already holds selectable under the label shown for them, even
 	// when the concept is no longer offered (deprecated, retired), so editing never drops one (STORY-438).
@@ -338,7 +347,7 @@
 			assertionError = 'Predicate and object must not be empty';
 			return;
 		}
-		const match = objectOptions.find((o) => o.label === objectLabelValue);
+		const match = findUniqueByLabel(objectOptions, objectLabelValue);
 		if (!match) {
 			assertionError = 'Object must be selected from the list';
 			return;
@@ -389,16 +398,20 @@
 
 {#snippet relationInput(rel: CanvasRelationFieldSpec, rowIndex: number | null)}
 	{@const rawValue = rowIndex === null ? (relationFormValues[rel.iri] as string | undefined) : ((relationFormValues[rel.iri] as string[] | undefined)?.[rowIndex])}
-	{@const listId = `relation-target-options-${rel.iri.replace(/[^A-Za-z0-9]/g, '-')}`}
 	<input
 		type="text"
 		value={rawValue ?? ''}
-		list={listId}
+		list={relationListId(rel)}
 		placeholder={rel.valueSchemeIri ? 'Select a concept…' : `Select a ${rel.targetClassName}…`}
 		oninput={(e) => setRelationValue(rel.iri, rowIndex, (e.currentTarget as HTMLInputElement).value)}
 	/>
-	<datalist id={listId}>
-		{#each effectiveRelationTargetOptions[rel.iri] ?? [] as option (option.label)}
+{/snippet}
+
+<!-- One datalist per field, not per row: "Add another" must not repeat the DOM id. Keyed by IRI, which is
+     unique; the label is the resolution key and is kept unique by `disambiguateOptionLabels`. -->
+{#snippet relationDatalist(rel: CanvasRelationFieldSpec)}
+	<datalist id={relationListId(rel)}>
+		{#each effectiveRelationTargetOptions[rel.iri] ?? [] as option (option.iri)}
 			<option value={option.label}></option>
 		{/each}
 	</datalist>
@@ -532,6 +545,7 @@
 						{:else}
 							{@render relationInput(rel, null)}
 						{/if}
+						{@render relationDatalist(rel)}
 						{#if missingRelationFields.has(rel.iri)}
 							<p class="error attribute-error">{rel.name} is required.</p>
 						{/if}

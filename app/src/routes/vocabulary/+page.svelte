@@ -7,6 +7,7 @@
 	import BackfillConceptsModal from '#lib/components/BackfillConceptsModal.svelte';
 	import VocabularyCollectionsTab from '#lib/components/VocabularyCollectionsTab.svelte';
 	import CopyLinkButton from '#lib/components/CopyLinkButton.svelte';
+	import TaggedTextList from '#lib/components/TaggedTextList.svelte';
 	import ImportVocabularyModal from '#lib/components/ImportVocabularyModal.svelte';
 	import ExportVocabularyModal from '#lib/components/ExportVocabularyModal.svelte';
 	import type { BusinessUnit } from '#lib/services/business-unit.js';
@@ -537,10 +538,10 @@
 					</p>
 					<dl>
 						<dt>Definition <code>skos:definition</code></dt>
-						{#each taggedTexts(selected.definitions) as text (text)}<dd>{text}</dd>{:else}<dd>—</dd>{/each}
+						<TaggedTextList texts={taggedTexts(selected.definitions)} empty="—" />
 						{#if taggedTexts(selected.scopeNotes).length}
 							<dt>Scope note <code>skos:scopeNote</code></dt>
-							{#each taggedTexts(selected.scopeNotes) as text (text)}<dd>{text}</dd>{/each}
+							<TaggedTextList texts={taggedTexts(selected.scopeNotes)} />
 						{/if}
 						<dt>Preferred <code>skos:prefLabel</code></dt>
 						<dd>{taggedTexts(selected.prefLabels).join(', ')}</dd>

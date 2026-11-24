@@ -89,6 +89,8 @@
 	import ViewModeToggle from '#lib/components/ViewModeToggle.svelte';
 	import CanvasViewToggles from '#lib/components/CanvasViewToggles.svelte';
 	import { schemaStore } from '#lib/stores/schema-store.js';
+	import { createLatestRun, relationOptionsKey } from '#lib/utils/latest-run.js';
+	import { loadAssertionOptions } from '#lib/services/assertion-options.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
 	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
@@ -102,7 +104,11 @@
 	} from '#lib/stores/layout-store.js';
 	import { NOTE_PASTEL_COLORS } from '#lib/utils/color-palette.js';
 	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
-	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
+	import {
+		relationTargetOptionsFromIndividuals,
+		type RelationTargetOption,
+		type RelationValueSubmission
+	} from '#lib/utils/relation-values.js';
 	import { nodeColorStore } from '#lib/stores/node-color-store.js';
 	import { viewFrameStore } from '#lib/stores/view-frame-store.js';
 	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '#lib/stores/active-namespace-store.js';
@@ -1381,12 +1387,16 @@
 	async function ensureAssertionOptionsLoaded() {
 		if (assertionOptionsLoaded) return;
 		assertionOptionsLoaded = true;
-		const [predicateOptions, objectOptions] = await Promise.all([
-			sparqlConnector.fetchRelationPredicateOptions(),
-			sparqlConnector.fetchNameableEntities()
-		]);
-		assertionPredicateOptions = predicateOptions;
-		assertionObjectOptions = objectOptions;
+		try {
+			const { predicateOptions, objectOptions } = await loadAssertionOptions(sparqlConnector, () =>
+				schemaStore.ensureLoaded('full')
+			);
+			assertionPredicateOptions = predicateOptions;
+			assertionObjectOptions = objectOptions;
+		} catch {
+			// Let the next open retry instead of leaving the lists empty for the whole session.
+			assertionOptionsLoaded = false;
+		}
 	}
 
 	/**
@@ -1554,9 +1564,7 @@
 			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
 				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
 				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
-				return [
-					[rel.iri, options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))]
-				];
+				return [[rel.iri, relationTargetOptionsFromIndividuals(options, namespacePrefixFor)]];
 			})
 		);
 		return Object.fromEntries(entries.flat());
@@ -1564,12 +1572,30 @@
 
 	let editIndividualRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
 
-	async function reloadEditIndividualRelationTargetOptions() {
-		if (editIndividualRelationFields.length === 0) {
-			editIndividualRelationTargetOptions = {};
+	// Latest wins, and no refetch while the fields and the connector's write count are unchanged
+	// (every canvas rebuild re-runs the effects below): spec/instance-mgmt-issue STORY-614.
+	const editRelationOptionsRun = createLatestRun();
+	const manageRelationOptionsRun = createLatestRun();
+
+	async function reloadRelationTargetOptions(
+		run: ReturnType<typeof createLatestRun>,
+		fields: EntityConceptFieldVM[],
+		assign: (options: Record<string, RelationTargetOption[]>) => void
+	) {
+		if (fields.length === 0) {
+			run.reset();
+			assign({});
 			return;
 		}
-		editIndividualRelationTargetOptions = await loadRelationTargetOptions(editIndividualRelationFields);
+		const token = run.begin(relationOptionsKey(fields, sparqlConnector.writeCount));
+		if (!token) return;
+		try {
+			const options = await loadRelationTargetOptions(fields);
+			if (token.isCurrent()) assign(options);
+		} catch (error) {
+			token.fail();
+			throw error;
+		}
 	}
 
 	$effect(() => {
@@ -1577,8 +1603,13 @@
 			void ensureAssertionOptionsLoaded();
 			void reloadEditIndividualAssertions();
 			void reloadEditIndividualAttributeValues();
-			void reloadEditIndividualRelationTargetOptions();
+			void reloadRelationTargetOptions(
+				editRelationOptionsRun,
+				editIndividualRelationFields,
+				(o) => (editIndividualRelationTargetOptions = o)
+			);
 		} else {
+			editRelationOptionsRun.reset();
 			editIndividualAssertions = [];
 			editIndividualAttributeValues = {};
 			editIndividualRelationTargetOptions = {};
@@ -1590,15 +1621,13 @@
 	$effect(() => {
 		if (manageMembersClassIri) {
 			void ensureAssertionOptionsLoaded();
-			const relationFields = memberFormFields(manageMembersNode?.data);
-			if (relationFields.length === 0) {
-				manageMembersRelationTargetOptions = {};
-			} else {
-				void loadRelationTargetOptions(relationFields).then((options) => {
-					manageMembersRelationTargetOptions = options;
-				});
-			}
+			void reloadRelationTargetOptions(
+				manageRelationOptionsRun,
+				memberFormFields(manageMembersNode?.data),
+				(o) => (manageMembersRelationTargetOptions = o)
+			);
 		} else {
+			manageRelationOptionsRun.reset();
 			manageMembersRelationTargetOptions = {};
 		}
 	});
