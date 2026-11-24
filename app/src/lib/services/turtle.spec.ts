@@ -913,3 +913,57 @@ describe('nestBlankNodes (STORY-016)', () => {
 		expect(shapeAObj).toBe(shapeBObj);
 	});
 });
+
+describe('strict tab ↔ graph partitions (triples-tabs STORY-601)', () => {
+	const personIri = classIri('Person');
+	const aliceIri = individualIri('Person', 'alice');
+	const stmtIri = `${DEFAULT_NAMESPACE_BASE_IRI}#stmt1`;
+	const quads = parseTurtle(`
+		@prefix owl: <http://www.w3.org/2002/07/owl#> .
+		@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+		@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+		@prefix sh: <http://www.w3.org/ns/shacl#> .
+		<${personIri}> a owl:Class ; rdfs:label "Person" .
+		<${nodeShapeIri(personIri)}> a sh:NodeShape ; sh:targetClass <${personIri}> .
+		<${aliceIri}> a <${personIri}> ; rdfs:label "Alice" .
+		<${stmtIri}> a rdf:Statement ; rdf:subject <${aliceIri}> ; rdf:predicate rdfs:seeAlso ; rdf:object <${personIri}> .
+	`);
+
+	const subjects = (qs: Quad[]) => new Set(qs.map((q) => q.subject.value));
+
+	it.each([
+		['schema', [personIri]],
+		['instances', [aliceIri, stmtIri]],
+		['shapes', [nodeShapeIri(personIri)]]
+	] as const)('selectScope(null, %s) returns exactly that tab\'s subjects', (partition, expected) => {
+		expect(subjects(selectScope(quads, null, partition))).toEqual(new Set(expected));
+	});
+
+	it("'vocab' is never part of a whole-graph selection", () => {
+		expect(selectScope(quads, null, 'vocab')).toEqual([]);
+	});
+
+	it('the three tabs together cover every quad exactly once', () => {
+		const parts = (['schema', 'instances', 'shapes'] as const).flatMap((p) => selectScope(quads, null, p));
+		expect(parts).toHaveLength(quads.length);
+	});
+
+	it('a class node scope puts its individuals in Instances, not Schema', () => {
+		expect(subjects(selectScope(quads, personIri, 'schema'))).toEqual(new Set([personIri]));
+		expect(subjects(selectScope(quads, personIri, 'instances'))).toEqual(new Set([aliceIri]));
+	});
+
+	it('an individual node scope lives entirely in Instances', () => {
+		expect(selectScope(quads, aliceIri, 'schema')).toEqual([]);
+		expect(subjects(selectScope(quads, aliceIri, 'instances'))).toEqual(new Set([aliceIri]));
+	});
+
+	it('a subject typed both as a meta type and something else stays in Schema', () => {
+		const mixed = parseTurtle(`
+			@prefix owl: <http://www.w3.org/2002/07/owl#> .
+			<${personIri}> a owl:DatatypeProperty , owl:FunctionalProperty .
+		`);
+		expect(selectScope(mixed, null, 'schema')).toHaveLength(2);
+		expect(selectScope(mixed, null, 'instances')).toEqual([]);
+	});
+});

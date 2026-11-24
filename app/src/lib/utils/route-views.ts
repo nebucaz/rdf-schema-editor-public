@@ -29,6 +29,8 @@ export interface RouteView {
 	/** `/reports/<id>` — a saved query's live report page (query-workbench STORY-198). */
 	isReportView: boolean;
 	isCanvasView: boolean;
+	/** The settings menu's View Triples entry: every page except the read-only `/review/*` ones. */
+	canViewTriples: boolean;
 }
 
 export function resolveRouteView(browserPathname: string): RouteView {
@@ -58,6 +60,7 @@ export function resolveRouteView(browserPathname: string): RouteView {
 		isGovernanceView,
 		isPipelineArea: isPipelineView || isQuestionsView || isVocabularyView || isTaxonomyView || isGovernanceView,
 		isReviewView,
+		canViewTriples: !isReviewView,
 		isCanvasView:
 			!isIdentitiesView &&
 			!isValidationView &&

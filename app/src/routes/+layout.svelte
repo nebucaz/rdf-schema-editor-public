@@ -38,6 +38,9 @@
 	import { quadsToNQuads } from '#lib/services/turtle.js';
 	import { SchemaValidationError } from '#lib/services/validation.js';
 	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
+	import { triplesPanel } from '#lib/stores/triples-panel-store.svelte.js';
+	import { triplesDefaultsForPath } from '#lib/services/triples-panel-defaults.js';
+	import TriplesPanel from '#lib/components/TriplesPanel.svelte';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { validationReportFilterStore } from '#lib/stores/validation-report-filter-store.svelte.js';
 	import { workspaceStore } from '#lib/stores/workspace-store.svelte.js';
@@ -99,6 +102,22 @@
 
 	let showProfile = $state(false);
 
+	// The one Triples panel (triples-tabs T5). A page change closes it; the next page opens it again
+	// through the menu (or its own request).
+	let lastPath = page.url.pathname;
+	$effect(() => {
+		const path = page.url.pathname;
+		if (path !== lastPath) {
+			lastPath = path;
+			triplesPanel.close();
+		}
+	});
+
+	/** The request the menu's View Triples opens with: the page's default tab (STORY-604). */
+	function menuTriplesRequest() {
+		const vocabulary = namespaceStore.namespaces.find((n) => n.vocabulary)?.baseIri ?? null;
+		return triplesDefaultsForPath(page.url.pathname, vocabulary);
+	}
 	async function handleLogout() {
 		const result = await devLogout();
 		if (result.ok) await refreshAll();
@@ -320,9 +339,9 @@
 								{workbenchActions.loading ? 'Loading…' : '⟳ Reload from GraphDB'}
 							</button>
 						{/if}
-						{#if isCanvasView}
-							<button type="button" class="menu-item" onclick={() => workbenchActions.toggleTriples()}>
-								{workbenchActions.triplesOpen ? 'Hide Triples' : 'View Triples'}
+						{#if routeView.canViewTriples}
+							<button type="button" class="menu-item" onclick={() => triplesPanel.toggle(menuTriplesRequest())}>
+								{triplesPanel.open ? 'Hide Triples' : 'View Triples'}
 							</button>
 						{/if}
 						<hr class="menu-divider" />
@@ -378,6 +397,19 @@
 			<SignInRequired devLoginEnabled={DEV_LOGIN_ENABLED} onSignedIn={() => refreshAll()} />
 		{/if}
 	</main>
+	{#if triplesPanel.open && page.data.user && routeView.canViewTriples}
+		<TriplesPanel
+			scope={triplesPanel.request.scope}
+			namespaces={namespaceStore.namespaces}
+			initialNamespaceBaseIri={triplesPanel.request.namespaceBaseIri ??
+				workbenchActions.activeNamespace ??
+				DEFAULT_NAMESPACE_BASE_IRI}
+			showCatalogTab={triplesPanel.request.showCatalogTab ?? false}
+			initialTab={triplesPanel.request.initialTab}
+			onClose={() => triplesPanel.close()}
+			onSaved={() => void triplesPanel.notifySaved()}
+		/>
+	{/if}
 </div>
 
 <ActivityIndicator busy={requestActivity.busy} suppressed={workbenchActions.loading} />

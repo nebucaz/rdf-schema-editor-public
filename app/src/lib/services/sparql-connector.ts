@@ -197,11 +197,14 @@ import {
 	SCHEMA_GRAPH,
 	type NamespaceGraphs
 } from '#lib/config.js';
+import { DataFactory } from 'n3';
 import {
 	parseTurtle,
 	quadsToTurtle,
 	quadsToGroundTriples,
 	selectScope,
+	looksLikeIndividual,
+	partitionByGraph,
 	groupSchemaQuads,
 	partitionQuads,
 	nestBlankNodes,
@@ -1116,44 +1119,6 @@ function VOCAB_FILTER(variable: string): string {
 		' && '
 	);
 	return `FILTER(isBlank(${variable}) || (${conditions}))`;
-}
-
-/** Vocabulary types that mark a subject as schema/shapes metadata rather than an enumerated
- *  individual — mirrors `fetchAllIndividuals`'s `?type a owl:Class` join: anything typed one of
- *  these is a class/property/shape declaration, not an instance. */
-const META_TYPES = new Set<string>([OWL.Class, OWL.DatatypeProperty, OWL.ObjectProperty, SH.NodeShape]);
-
-/** True if `subjectIri` (given its own quads within some already-scoped `Quad[]`) looks like an
- *  enumerated individual (STORY-019) rather than a class/property declaration: it carries an
- *  `rdf:type` triple whose object isn't one of the meta-vocabulary types above. */
-function looksLikeIndividual(quads: Quad[], subjectIri: string): boolean {
-	return quads.some(
-		(q) => q.subject.value === subjectIri && q.predicate.value === RDF.type && !META_TYPES.has(q.object.value)
-	);
-}
-
-/**
- * Splits `turtle.ts`'s `partitionQuads()` "schema" bucket (classes/properties **and**
- * individuals, mixed together — see its own doc comment) further into instances vs. schema, using
- * the same individual-detection rule `fetchAllIndividuals`/`looksLikeIndividual` use. Grouped by
- * subject first so a multi-triple individual (`rdf:type` + `rdfs:label`, ...) moves as one unit.
- */
-function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; schema: Quad[] } {
-	const bySubject = new Map<string, Quad[]>();
-	for (const q of schemaBucket) {
-		const key = `${q.subject.termType}|${q.subject.value}`;
-		const list = bySubject.get(key) ?? [];
-		list.push(q);
-		bySubject.set(key, list);
-	}
-
-	const instances: Quad[] = [];
-	const schema: Quad[] = [];
-	for (const quads of bySubject.values()) {
-		const subjectIri = quads[0].subject.value;
-		(looksLikeIndividual(quads, subjectIri) ? instances : schema).push(...quads);
-	}
-	return { instances, schema };
 }
 
 /**
@@ -9424,6 +9389,22 @@ export class SparqlConnector {
 		return results.results.bindings.map((b) => bindingToQuad(b, graph));
 	}
 
+	/** Triples-tabs STORY-602: the asserted triples of one namespace's `<base>/vocab` graph, for the
+	 *  read-only Vocab tab. One graph, `infer: false`, same `VOCAB_FILTER` as the other raw reads. */
+	async fetchVocabGraphQuads(namespaceBaseIri: string): Promise<Quad[]> {
+		return this.fetchGraphQuads(this.vocabGraph(namespaceBaseIri));
+	}
+
+	/** The Vocab tab's Turtle (never written back: `saveScopedTurtle` refuses `'vocab'`). */
+	async fetchVocabTurtle(namespaceBaseIri: string): Promise<string> {
+		const [quads, namespaces, externalVocabularies] = await Promise.all([
+			this.fetchVocabGraphQuads(namespaceBaseIri),
+			this.fetchNamespaces(),
+			this.fetchExternalVocabularies()
+		]);
+		return quadsToTurtle(groupSchemaQuads(quads), buildDisplayPrefixes(namespaces, externalVocabularies));
+	}
+
 	/**
 	 * STORY-036: every registered namespace's instance/schema/shapes graph triples, each quad
 	 * graph-tagged with its originating graph IRI — the "Export quads" settings menu action's data
@@ -9523,7 +9504,7 @@ export class SparqlConnector {
 	async fetchScopedTurtlePair(
 		iri: string | null,
 		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
-	): Promise<{ schema: string; shapes: string }> {
+	): Promise<{ schema: string; instances: string; shapes: string; instancesTripleCount: number }> {
 		if (iri !== null) this.assertSafeSparqlIri(iri, 'resource IRI');
 		const [allQuads, namespaces, externalVocabularies] = await Promise.all([
 			this.fetchWholeGraphQuads(namespaceBaseIri),
@@ -9535,13 +9516,19 @@ export class SparqlConnector {
 				? await this.fetchCrossNamespaceIncomingRelationQuads(iri, allQuads, namespaceBaseIri, namespaces)
 				: [];
 		const prefixes = buildDisplayPrefixes(namespaces, externalVocabularies);
-		const { schema: crossSchema, shapes: crossShapes } = partitionQuads(crossNamespaceQuads);
+		const {
+			schema: crossSchema,
+			instances: crossInstances,
+			shapes: crossShapes
+		} = partitionByGraph(crossNamespaceQuads);
 		const schema = await quadsToTurtle(
 			groupSchemaQuads([...selectScope(allQuads, iri, 'schema'), ...crossSchema]),
 			prefixes
 		);
+		const instanceQuads = [...selectScope(allQuads, iri, 'instances'), ...crossInstances];
+		const instances = await quadsToTurtle(groupSchemaQuads(instanceQuads), prefixes);
 		const shapes = nestBlankNodes([...selectScope(allQuads, iri, 'shapes'), ...crossShapes], prefixes);
-		return { schema, shapes };
+		return { schema, instances, shapes, instancesTripleCount: instanceQuads.length };
 	}
 
 	/**
@@ -9559,7 +9546,9 @@ export class SparqlConnector {
 	 * membership row (its element deleted without STORY-081's cascade cleanup somehow running) is
 	 * silently skipped rather than erroring, since it names no known class/individual to look up.
 	 */
-	async fetchScopedTurtleForWorkspace(workspaceIriValue: string): Promise<{ schema: string; shapes: string }> {
+	async fetchScopedTurtleForWorkspace(
+		workspaceIriValue: string
+	): Promise<{ schema: string; instances: string; shapes: string }> {
 		this.assertSafeSparqlIri(workspaceIriValue, 'workspace IRI');
 		const [members, schema, namespaces, externalVocabularies] = await Promise.all([
 			this.fetchWorkspaceMembers(workspaceIriValue),
@@ -9583,15 +9572,22 @@ export class SparqlConnector {
 
 		const prefixes = buildDisplayPrefixes(namespaces, externalVocabularies);
 		const schemaParts: string[] = [];
+		const instancesParts: string[] = [];
 		const shapesParts: string[] = [];
 		for (const [namespaceBaseIri, memberIris] of memberIrisByNamespace) {
 			const allQuads = await this.fetchWholeGraphQuads(namespaceBaseIri);
 			const schemaQuads = dedupeQuads(memberIris.flatMap((iri) => selectScope(allQuads, iri, 'schema')));
+			const instancesQuads = dedupeQuads(memberIris.flatMap((iri) => selectScope(allQuads, iri, 'instances')));
+			instancesParts.push(await quadsToTurtle(groupSchemaQuads(instancesQuads), prefixes));
 			const shapesQuads = dedupeQuads(memberIris.flatMap((iri) => selectScope(allQuads, iri, 'shapes')));
 			schemaParts.push(await quadsToTurtle(groupSchemaQuads(schemaQuads), prefixes));
 			shapesParts.push(nestBlankNodes(shapesQuads, prefixes));
 		}
-		return { schema: schemaParts.join('\n'), shapes: shapesParts.join('\n') };
+		return {
+			schema: schemaParts.join('\n'),
+			instances: instancesParts.join('\n'),
+			shapes: shapesParts.join('\n')
+		};
 	}
 
 	/** Hand-formats a Workspace's own declaration triple, mirroring `insertWorkspace`'s `INSERT DATA`
@@ -9733,7 +9729,13 @@ export class SparqlConnector {
 			}
 
 			const scopedIris = [...memberIris, ...closure];
-			const schemaQuads = dedupeQuads(scopedIris.flatMap((iri) => selectScope(allQuads, iri, 'schema')));
+			// A bundle is one file: TBox and individuals together.
+			const schemaQuads = dedupeQuads(
+				scopedIris.flatMap((iri) => [
+					...selectScope(allQuads, iri, 'schema'),
+					...selectScope(allQuads, iri, 'instances')
+				])
+			);
 			const shapesQuads = dedupeQuads(scopedIris.flatMap((iri) => selectScope(allQuads, iri, 'shapes')));
 			schemaParts.push(await quadsToTurtle(groupSchemaQuads(schemaQuads), prefixes));
 			shapesParts.push(nestBlankNodes(shapesQuads, prefixes));
@@ -9755,6 +9757,23 @@ export class SparqlConnector {
 			.join('\n');
 
 		return { turtle, truncatedDependencyCount };
+	}
+
+	/** Every `owl:Class` declared in the schema graphs of the registered namespaces other than
+	 *  `namespaceBaseIri`, in one query — used so a save validates cross-namespace `rdf:type`s. */
+	private async fetchClassIrisOfOtherNamespaces(namespaceBaseIri: string): Promise<string[]> {
+		const namespaces = await this.fetchNamespaces();
+		const graphs = namespaces
+			.map((ns) => ns.baseIri)
+			.filter((base) => base !== namespaceBaseIri)
+			.map((base) => namespaceGraphs(base).schema)
+			.filter((g) => isSafeSparqlIri(g));
+		if (graphs.length === 0) return [];
+		const results = await this.selectQuery(
+			`SELECT DISTINCT ?c WHERE { VALUES ?g { ${graphs.map((g) => `<${g}>`).join(' ')} } GRAPH ?g { ?c a <${OWL.Class}> } }`,
+			{ infer: false }
+		);
+		return results.results.bindings.flatMap((b) => (b.c?.value ? [b.c.value] : []));
 	}
 
 	/**
@@ -9786,6 +9805,14 @@ export class SparqlConnector {
 		partition: Partition = 'all',
 		namespaceBaseIri: string = DEFAULT_NAMESPACE_BASE_IRI
 	): Promise<void> {
+		if (partition === 'vocab') {
+			throw new SchemaValidationError([
+				{
+					layer: 'structural',
+					message: 'The Vocab tab is read-only; edit concepts and schemes on the Vocabulary page.'
+				}
+			]);
+		}
 		if (iri !== null) this.assertSafeSparqlIri(iri, 'resource IRI');
 		const graphs = namespaceGraphs(namespaceBaseIri);
 
@@ -9807,15 +9834,41 @@ export class SparqlConnector {
 			]);
 		}
 
+		// One tab edits exactly one graph: Turtle that belongs to another tab is rejected, never
+		// silently written into a different graph (triples-tabs T1).
+		if (partition !== 'all') {
+			const strays = Object.entries(partitionByGraph(newQuads))
+				.filter(([bucket]) => bucket !== partition)
+				.flatMap(([bucket, qs]) => qs.map((q) => ({ bucket, q })));
+			if (strays.length > 0) {
+				const names = [...new Set(strays.map(({ q }) => extractLocalName(q.subject.value)))].slice(0, 3);
+				const tabs = [...new Set(strays.map(({ bucket }) => bucket))].join('/');
+				throw new SchemaValidationError([
+					{
+						layer: 'structural',
+						message: `The ${partition} tab only holds ${partition} triples; ${strays.length} triple(s) (${names.join(', ')}) belong in the ${tabs} tab.`
+					}
+				]);
+			}
+		}
+
 		const mergedGraph = [...restOfGraph, ...newQuads];
-		const declaredClasses = new Set(
-			mergedGraph.filter((q) => isRdfType(q, OWL.Class)).map((q) => q.subject.value)
-		);
+		// Classes declared in the repository's other namespaces count as declared: an individual in
+		// `core` may be typed with a class of `arm` (cross-namespace typing is allowed).
+		const otherClassIris = await this.fetchClassIrisOfOtherNamespaces(namespaceBaseIri);
+		const declaredClasses = new Set([
+			...mergedGraph.filter((q) => isRdfType(q, OWL.Class)).map((q) => q.subject.value),
+			...otherClassIris
+		]);
+		const validationGraph = [
+			...mergedGraph,
+			...otherClassIris.map((c) => DataFactory.quad(DataFactory.namedNode(c), DataFactory.namedNode(RDF.type), DataFactory.namedNode(OWL.Class)))
+		];
 
 		const authoritativeEntityClassIri = await this.fetchAuthoritativeEntityClassIri();
 		const issues = [
 			...checkShaclWellFormedness(newQuads, declaredClasses),
-			...checkStructural(mergedGraph, authoritativeEntityClassIri)
+			...checkStructural(validationGraph, authoritativeEntityClassIri)
 		];
 		// Backstage-mapping Story 005: `severity: 'warning'` issues (e.g. a `backstageKind`'d class
 		// missing catalog-marker ancestry) are surfaced but must not block the save.
@@ -10209,15 +10262,10 @@ export class SparqlConnector {
 	 *  individual-detection so a manual Turtle edit that includes both lands each in
 	 *  `graphs.instances`, not silently dropped. */
 	private async buildScopeInsertOp(newQuads: Quad[], graphs: NamespaceGraphs): Promise<string> {
-		const {
-			schema: schemaAndInstances,
-			shapes: shapeQuads,
-			instances: reifiedInstanceQuads
-		} = partitionQuads(newQuads);
-		const { instances: instanceQuads, schema: schemaQuads } = splitInstancesFromSchema(schemaAndInstances);
+		const { schema: schemaQuads, instances: instanceQuads, shapes: shapeQuads } = partitionByGraph(newQuads);
 
 		const [instancesBody, schemaBody, shapesBody] = await Promise.all([
-			quadsToGroundTriples([...instanceQuads, ...reifiedInstanceQuads]),
+			quadsToGroundTriples(instanceQuads),
 			quadsToGroundTriples(schemaQuads),
 			quadsToGroundTriples(shapeQuads)
 		]);
@@ -10243,54 +10291,65 @@ export class SparqlConnector {
 		graphs: NamespaceGraphs
 	): string[] {
 		if (iri === null) {
-			// Each of the namespace's three graphs is now physically separate (Decision 1), so the
-			// old single-graph `FILTER(!isBlank(?s) || !STRSTARTS(...SHAPES_NAMESPACE...))` dance that
-			// used to distinguish schema from shapes content *within* one mixed graph is no longer
-			// needed — clearing "schema" or "shapes" is just clearing that one graph outright. `WITH`
-			// (not a `GRAPH` block) is used so `VOCAB_FILTER`'s `FILTER` — not accepted inside the
-			// `DELETE WHERE { ... }` shorthand's plain `QuadPattern` grammar — can still apply.
+			// Each of the namespace's three graphs is physically separate (Decision 1), so clearing a
+			// tab is clearing exactly that graph. `WITH` (not a `GRAPH` block) is used so
+			// `VOCAB_FILTER`'s `FILTER` — not accepted inside the `DELETE WHERE { ... }` shorthand's
+			// plain `QuadPattern` grammar — can still apply.
 			const graphsToClear =
 				partition === 'schema'
 					? [graphs.schema]
-					: partition === 'shapes'
-						? [graphs.shapes]
-						: [graphs.instances, graphs.schema, graphs.shapes];
+					: partition === 'instances'
+						? [graphs.instances]
+						: partition === 'shapes'
+							? [graphs.shapes]
+							: partition === 'vocab'
+								? []
+								: [graphs.instances, graphs.schema, graphs.shapes];
 			return graphsToClear.map(
 				(g) => `${withGraph(g)} DELETE { ?s ?p ?o } WHERE { ?s ?p ?o . ${VOCAB_FILTER('?s')} }`
 			);
 		}
 
 		const isClass = scopeQuads.some((q) => isRdfType(q, OWL.Class) && q.subject.value === iri);
+		const isIndividual = !isClass && looksLikeIndividual(scopeQuads, iri);
+
+		// Instances: the node itself if it is an individual, else the individuals typed with this class.
+		const instanceSubjects = isIndividual
+			? [iri]
+			: isClass
+				? [...new Set(scopeQuads.filter((q) => isRdfType(q, iri)).map((q) => q.subject.value))]
+				: [];
+		const instancesOps = instanceSubjects
+			.filter((s) => !s.startsWith('_:') && isSafeSparqlIri(s))
+			.map((s) => `DELETE WHERE { ${inGraph(`<${s}> ?p ?o .`, graphs.instances)} }`);
+
+		const shapesOps: string[] = [];
 		if (isClass) {
 			const shapeIri = nodeShapeIri(iri, graphs.shapes);
-			const shapesOps = [
+			shapesOps.push(
 				`DELETE WHERE { ${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape ?p ?o .`, graphs.shapes)} }`,
 				`DELETE WHERE { ${inGraph(`<${shapeIri}> ?p ?o .`, graphs.shapes)} }`
-			];
-			const schemaOps = [`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.schema)} }`];
-			if (partition === 'schema') return schemaOps;
-			if (partition === 'shapes') return shapesOps;
-			return [...shapesOps, ...schemaOps];
-		}
-
-		// Not a class: either a property (has `rdfs:domain`, lives in `/schema`) or an individual
-		// (typed with a non-meta `rdf:type`, lives in the plain instance graph) — see
-		// `looksLikeIndividual`.
-		const ownGraph = looksLikeIndividual(scopeQuads, iri) ? graphs.instances : graphs.schema;
-		const schemaOps = [`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, ownGraph)} }`];
-		const domainQuad = scopeQuads.find(
-			(q) => q.subject.value === iri && q.predicate.value === RDFS.domain
-		);
-		const shapesOps: string[] = [];
-		if (domainQuad) {
-			const shapeIri = nodeShapeIri(domainQuad.object.value, graphs.shapes);
-			shapesOps.push(
-				`DELETE WHERE { ${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape sh:path <${iri}> . ?propShape ?p ?o .`, graphs.shapes)} }`
 			);
+		} else if (!isIndividual) {
+			const domainQuad = scopeQuads.find((q) => q.subject.value === iri && q.predicate.value === RDFS.domain);
+			if (domainQuad) {
+				const shapeIri = nodeShapeIri(domainQuad.object.value, graphs.shapes);
+				shapesOps.push(
+					`DELETE WHERE { ${inGraph(`<${shapeIri}> sh:property ?propShape . ?propShape sh:path <${iri}> . ?propShape ?p ?o .`, graphs.shapes)} }`
+				);
+			}
 		}
+		// Class and property declarations live in `/schema`; an individual's own triples are an
+		// Instances-tab concern only.
+		const schemaOps = isIndividual
+			? []
+			: [`DELETE WHERE { ${inGraph(`<${iri}> ?p ?o .`, graphs.schema)} }`];
+
 		if (partition === 'schema') return schemaOps;
+		if (partition === 'instances') return instancesOps;
 		if (partition === 'shapes') return shapesOps;
-		return [...schemaOps, ...shapesOps];
+		if (partition === 'vocab') return [];
+		return isClass ? [...shapesOps, ...schemaOps] : [...schemaOps, ...shapesOps, ...instancesOps];
 	}
 
 

@@ -8,18 +8,10 @@
 	import { canvasModelToLinkML } from '#lib/services/linkml.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
+	import type { TriplesPanelScope as StoreScope } from '#lib/stores/triples-panel-store.svelte.js';
 	import CatalogMetadataForm from './CatalogMetadataForm.svelte';
 
-	/**
-	 * The panel's scope (STORY-082 widens this from a bare `selectedIri: string | null`): a single
-	 * node (editable), the whole schema graph (editable, `selectedIri === null`'s old meaning), or a
-	 * Workspace (read-only — a multi-node union has no single addressable subject to structurally
-	 * replace the way node-level `saveScopedTurtle` does, research §9).
-	 */
-	type TriplesPanelScope =
-		| { kind: 'node'; iri: string; namespaceBaseIri: string }
-		| { kind: 'workspace'; workspaceIri: string; label: string }
-		| { kind: 'all' };
+	type TriplesPanelScope = StoreScope;
 
 	interface Props {
 		scope: TriplesPanelScope;
@@ -67,11 +59,21 @@
 	 *  level (research §9), so the pencil/save controls are absent, not merely disabled. */
 	const editingAllowed = $derived(scope.kind !== 'workspace');
 
+	/** Triples-tabs T3/T4: the `<base>/vocab` graph is shown for the namespace flagged as the
+	 *  vocabulary namespace, whole-graph scope only, and never edited here. */
+	const showVocabTab = $derived(
+		scope.kind === 'all' && namespaces.some((n) => n.baseIri === selectedNamespace && n.vocabulary)
+	);
+
+	/** Triples-tabs T7: above this many triples the Instances tab is shown but not editable — a
+	 *  free-text replace of a very large graph is slow and one slip deletes it. */
+	const INSTANCES_EDIT_ROW_CAP = 5000;
+
 	/** STORY-018's Schema/Shapes tabs, plus Story 009's Catalog tab — unlike Schema/Shapes (a
 	 *  `turtle.ts` `Partition` filtered out of one whole-graph fetch), Catalog lives in its own
 	 *  graph entirely and is fetched/saved through its own dedicated connector methods, so it isn't
 	 *  a `Partition` value. */
-	type TabPartition = 'schema' | 'shapes' | 'catalog';
+	type TabPartition = 'schema' | 'instances' | 'shapes' | 'vocab' | 'catalog';
 
 	interface TabState {
 		editing: boolean;
@@ -87,12 +89,25 @@
 
 	let activeTab = $state<TabPartition>(initialTab);
 	let schemaTab = $state<TabState>(makeTabState());
+	let instancesTab = $state<TabState>(makeTabState());
+	let instancesTripleCount = $state(0);
 	let shapesTab = $state<TabState>(makeTabState());
+	let vocabTab = $state<TabState>(makeTabState());
 	let catalogTab = $state<TabState>(makeTabState());
 	let generatingCatalog = $state(false);
 	const currentTab = $derived(
-		activeTab === 'schema' ? schemaTab : activeTab === 'shapes' ? shapesTab : catalogTab
+		activeTab === 'schema'
+			? schemaTab
+			: activeTab === 'instances'
+				? instancesTab
+				: activeTab === 'shapes'
+					? shapesTab
+					: activeTab === 'vocab'
+						? vocabTab
+						: catalogTab
 	);
+	const instancesTooLarge = $derived(activeTab === 'instances' && instancesTripleCount > INSTANCES_EDIT_ROW_CAP);
+	const canEditTab = $derived(editingAllowed && !instancesTooLarge && activeTab !== 'vocab');
 
 	let loading = $state(true);
 	let loadError = $state<string | null>(null);
@@ -109,11 +124,13 @@
 		highlightEl.scrollLeft = textareaEl.scrollLeft;
 	}
 
-	async function load(currentScope: TriplesPanelScope, namespaceBaseIri: string) {
+	async function load(currentScope: TriplesPanelScope, namespaceBaseIri: string, pickTab = false) {
 		loading = true;
 		loadError = null;
 		schemaTab.issues = [];
 		schemaTab.editing = false;
+		instancesTab.issues = [];
+		instancesTab.editing = false;
 		shapesTab.issues = [];
 		shapesTab.editing = false;
 		catalogTab.issues = [];
@@ -123,6 +140,9 @@
 				const pair = await sparqlConnector.fetchScopedTurtleForWorkspace(currentScope.workspaceIri);
 				schemaTab.savedText = pair.schema;
 				schemaTab.draftText = pair.schema;
+				instancesTab.savedText = pair.instances;
+				instancesTab.draftText = pair.instances;
+				instancesTripleCount = 0;
 				shapesTab.savedText = pair.shapes;
 				shapesTab.draftText = pair.shapes;
 				catalogTab.savedText = '';
@@ -130,6 +150,13 @@
 				return;
 			}
 			const iri = currentScope.kind === 'node' ? currentScope.iri : null;
+			const vocabText =
+				currentScope.kind === 'all' && namespaces.some((n) => n.baseIri === namespaceBaseIri && n.vocabulary)
+					? await sparqlConnector.fetchVocabTurtle(namespaceBaseIri)
+					: '';
+			vocabTab.savedText = vocabText;
+			vocabTab.draftText = vocabText;
+			vocabTab.editing = false;
 			const [pair, catalogText] = await Promise.all([
 				sparqlConnector.fetchScopedTurtlePair(iri, namespaceBaseIri),
 				iri !== null && showCatalogTab
@@ -138,8 +165,15 @@
 			]);
 			schemaTab.savedText = pair.schema;
 			schemaTab.draftText = pair.schema;
+			instancesTab.savedText = pair.instances;
+			instancesTab.draftText = pair.instances;
+			instancesTripleCount = pair.instancesTripleCount;
 			shapesTab.savedText = pair.shapes;
 			shapesTab.draftText = pair.shapes;
+			// A node with no TBox of its own is an individual: open on its Instances tab.
+			if (pickTab && currentScope.kind === 'node' && activeTab === 'schema' && !pair.schema.trim() && pair.instances.trim()) {
+				activeTab = 'instances';
+			}
 			catalogTab.savedText = catalogText;
 			catalogTab.draftText = catalogText;
 		} catch (err) {
@@ -184,7 +218,7 @@
 
 	// Re-fetches whenever the scope or the chosen namespace changes while the panel is open.
 	$effect(() => {
-		void load(scope, selectedNamespace);
+		void load(scope, selectedNamespace, true);
 	});
 
 	// Jumps to the requested tab whenever the caller passes a new `initialTab` — e.g. clicking "View
@@ -274,10 +308,25 @@
 	const scopeLabel = $derived(
 		scope.kind === 'node' ? extractLocalName(scope.iri) : scope.kind === 'workspace' ? scope.label : 'Whole schema graph'
 	);
-	const tabLabel: Record<TabPartition, string> = { schema: 'Schema', shapes: 'Shapes', catalog: 'Catalog' };
-	const visibleTabs = $derived(
-		showCatalogTab ? (['schema', 'shapes', 'catalog'] as const) : (['schema', 'shapes'] as const)
-	);
+	const tabLabel: Record<TabPartition, string> = {
+		schema: 'Schema',
+		instances: 'Instances',
+		shapes: 'Shapes',
+		vocab: 'Vocab',
+		catalog: 'Catalog'
+	};
+	const visibleTabs = $derived<TabPartition[]>([
+		'schema',
+		'instances',
+		'shapes',
+		...(showVocabTab ? (['vocab'] as const) : []),
+		...(showCatalogTab ? (['catalog'] as const) : [])
+	]);
+
+	// Leaving the vocabulary namespace (or scope) while on the Vocab tab falls back to Schema.
+	$effect(() => {
+		if (activeTab === 'vocab' && !showVocabTab) activeTab = 'schema';
+	});
 </script>
 
 <div class="triples-panel">
@@ -344,6 +393,13 @@
 				<CatalogMetadataForm classIri={nodeIri() ?? ''} namespaceBaseIri={selectedNamespace} onSaved={reloadCatalogTab} />
 			{/if}
 
+			{#if instancesTooLarge}
+				<p class="status" role="note">
+					This graph has {instancesTripleCount.toLocaleString()} triples (more than {INSTANCES_EDIT_ROW_CAP.toLocaleString()}),
+					so it is shown read-only here. Download it, or edit the individuals on their own pages.
+				</p>
+			{/if}
+
 			<div class="editor-wrap">
 				<pre class="turtle-highlight" bind:this={highlightEl} aria-hidden="true"><code>{@html highlightedHtml}</code></pre>
 				<textarea
@@ -376,7 +432,7 @@
 					</button>
 				{/if}
 				<div class="spacer"></div>
-				{#if editingAllowed}
+				{#if canEditTab}
 					{#if currentTab.editing}
 						<button class="secondary" onclick={cancelEdit} disabled={currentTab.saving}>Cancel</button>
 						<button class="primary" onclick={save} disabled={currentTab.saving}>

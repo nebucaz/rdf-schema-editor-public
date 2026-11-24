@@ -1,5 +1,5 @@
 /**
- * Bridges page-owned canvas actions — reload from GraphDB, toggle the Triples panel — into
+ * Bridges page-owned canvas actions — reload from GraphDB — into
  * `+layout.svelte`'s settings menu (STORY-034), plus the reverse direction: opening the
  * layout-owned "External Vocabularies" modal (STORY-046) from `ExternalClassForm`'s "Manage
  * vocabularies" link, which lives inside `+page.svelte`'s canvas modals. Either way, the layout and
@@ -10,7 +10,6 @@
  */
 function createWorkbenchActionsStore() {
 	let loading = $state(false);
-	let triplesOpen = $state(false);
 	let externalVocabManagementOpen = $state(false);
 	let queryConsoleOpen = $state(false);
 	/** STORY-193: one-shot SPARQL text for the console to load when opened from the workbench. A fresh
@@ -22,14 +21,7 @@ function createWorkbenchActionsStore() {
 	let viewMode = $state<'schema' | 'instances'>('schema');
 	let activeWorkspace = $state<string | null>(null);
 	let activeNamespace = $state<string | null>(null);
-	/** STORY-082: a one-shot request to open the Triples panel scoped to one Workspace — set by
-	 *  `WorkspaceManagementView`'s "View triples" button (rendered inside `+layout.svelte`), read and
-	 *  cleared by `+page.svelte` (which owns `showTriplesPanel`/`TriplesPanel`), mirroring
-	 *  `externalVocabManagementOpen`'s cross-sibling bridge shape. A fresh object every call (even for
-	 *  the same Workspace clicked twice in a row) so `+page.svelte`'s `$effect` reliably re-fires. */
-	let triplesWorkspaceScope = $state<{ workspaceIri: string; label: string } | null>(null);
 	let onReload: () => void = () => {};
-	let onToggleTriples: () => void = () => {};
 	let onExportSvg: () => void = () => {};
 	let onExportErd: () => void = () => {};
 	let onToggleNamespaceVisibility: (baseIri: string) => void = () => {};
@@ -44,12 +36,6 @@ function createWorkbenchActionsStore() {
 		},
 		set loading(value: boolean) {
 			loading = value;
-		},
-		get triplesOpen() {
-			return triplesOpen;
-		},
-		set triplesOpen(value: boolean) {
-			triplesOpen = value;
 		},
 		get externalVocabManagementOpen() {
 			return externalVocabManagementOpen;
@@ -127,17 +113,8 @@ function createWorkbenchActionsStore() {
 		set activeNamespace(value: string | null) {
 			activeNamespace = value;
 		},
-		get triplesWorkspaceScope() {
-			return triplesWorkspaceScope;
-		},
-		set triplesWorkspaceScope(value: { workspaceIri: string; label: string } | null) {
-			triplesWorkspaceScope = value;
-		},
 		registerReload(fn: () => void) {
 			onReload = fn;
-		},
-		registerToggleTriples(fn: () => void) {
-			onToggleTriples = fn;
 		},
 		registerExportSvg(fn: () => void) {
 			onExportSvg = fn;
@@ -162,9 +139,6 @@ function createWorkbenchActionsStore() {
 		},
 		reload() {
 			onReload();
-		},
-		toggleTriples() {
-			onToggleTriples();
 		},
 		exportSvg() {
 			onExportSvg();

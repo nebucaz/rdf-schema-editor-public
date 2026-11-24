@@ -16,6 +16,7 @@ describe('resolveRouteView', () => {
 			isGovernanceView: false,
 			isPipelineArea: false,
 			isReviewView: false,
+			canViewTriples: true,
 			isCanvasView: true
 		});
 	});
@@ -106,5 +107,25 @@ describe('resolveRouteView /issues (validation-issues-tracker STORY-388)', () =>
 		expect(v.isCanvasView).toBe(false);
 		expect(v.isValidationView).toBe(false);
 		expect(resolveRouteView('/').isIssuesView).toBe(false);
+	});
+});
+
+describe('resolveRouteView canViewTriples (triples-tabs STORY-603)', () => {
+	it.each([
+		['/', true],
+		['/identities', true],
+		['/validation', true],
+		['/issues', true],
+		['/pipeline', true],
+		['/workbench', true],
+		['/reports/abc', true],
+		['/questions', true],
+		['/vocabulary', true],
+		['/taxonomy', true],
+		['/governance', true],
+		['/review/glossary', false],
+		['/review/scheme', false]
+	])('%s → %s', (path, visible) => {
+		expect(resolveRouteView(path).canViewTriples).toBe(visible);
 	});
 });

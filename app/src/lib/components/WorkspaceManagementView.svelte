@@ -3,6 +3,7 @@
 	import { sparqlConnector, type FetchedWorkspace } from '#lib/services/sparql-connector.js';
 	import { workspaceStore } from '#lib/stores/workspace-store.svelte.js';
 	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+	import { triplesPanel } from '#lib/stores/triples-panel-store.svelte.js';
 	import { workbenchActions } from '#lib/stores/workbench-actions.svelte.js';
 	import { extractLocalName, kebabCase } from '#lib/utils/iri.js';
 	import { downloadFile } from '#lib/utils/download.js';
@@ -132,7 +133,10 @@
 	}
 
 	function handleViewTriples(ws: FetchedWorkspace) {
-		workbenchActions.triplesWorkspaceScope = { workspaceIri: ws.iri, label: labelOf(ws) };
+		triplesPanel.show({
+			scope: { kind: 'workspace', workspaceIri: ws.iri, label: labelOf(ws) },
+			initialTab: 'schema'
+		});
 	}
 
 	/** STORY-093: downloads STORY-090's `exportWorkspaceBundle` output as `workspace-<slug>.ttl` — a

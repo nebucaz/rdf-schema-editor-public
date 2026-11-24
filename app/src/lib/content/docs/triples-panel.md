@@ -1,23 +1,43 @@
 # Triples Panel
 
-The **Triples Panel** shows the raw generated Turtle behind a class, a Workspace, or the whole graph —
-and, for a single class, lets you edit it directly. Opened from an Entity/Individual Node's "View
-triples" menu entry, or the whole-graph entry in the Settings menu (cog).
+The **Triples Panel** shows the raw Turtle behind a class, an individual, a Workspace, or a whole
+namespace, one tab per graph, and lets you edit it directly. It is reachable from every page except the
+read-only review pages: **View Triples** in the Settings menu (cog), plus an Entity/Individual Node's
+"View triples" entry on the canvas. The menu entry opens on the tab that fits the page:
+
+| Page | Opens on |
+|------|----------|
+| Schema (canvas), Ontology, Governance | Schema |
+| Identities, Workbench, Reports, Questions | Instances |
+| Validation, Issues | Shapes |
+| Vocabulary, Taxonomy | Vocab (Schema if no vocabulary namespace exists) |
 
 ## Scope
 
-- **One node** — a single class's or individual's own triples. Editable.
+- **One node** — a single class's or individual's own triples. Editable. A class opens on Schema, an
+  individual on Instances.
 - **A Workspace** — every node currently in that Workspace, unioned together. Read-only — a
   multi-node union has no single subject to structurally save back.
-- **The whole graph** — everything across every namespace. Editable.
+- **The whole graph** — one namespace's graphs. Editable (except Vocab).
 
 ## Tabs
 
-- **Schema** — `owl:Class`/`owl:ObjectProperty`/`owl:DatatypeProperty` triples.
-- **Shapes** — the corresponding SHACL `sh:NodeShape`/`sh:PropertyShape` triples.
+Each tab is exactly one graph of the selected namespace, and a save can only touch that graph.
+
+- **Schema** — `owl:Class`/`owl:ObjectProperty`/`owl:DatatypeProperty` triples (`<base>/schema`).
+- **Instances** — individuals and the reified statements behind annotations (`<base>`). Read-only above
+  5,000 triples.
+- **Shapes** — the corresponding SHACL `sh:NodeShape`/`sh:PropertyShape` triples (`<base>/shapes`).
+- **Vocab** *(only for the vocabulary namespace, whole-graph scope)* — the SKOS concepts and schemes
+  (`<base>/vocab`). **Read-only**: concepts carry linked triples (`skos:broader`, top concepts, collections)
+  that free text could break; edit them on the Vocabulary page.
 - **Catalog** *(only for a catalog-authoritative class)* — the generated DCAT catalog entry, plus the
   [Catalog Metadata Form](catalog-metadata-form) for per-class publisher/license/distribution
   overrides.
+
+Turtle that belongs to another tab (for example a class pasted into Instances) is rejected with a message
+naming the tab it belongs in. A class declared in another namespace is accepted as the type of an
+individual.
 
 ## What you can do
 

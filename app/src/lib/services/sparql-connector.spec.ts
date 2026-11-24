@@ -6909,7 +6909,7 @@ describe('SparqlConnector — Workspace-scoped Triples export (STORY-082)', () =
 		const result = await connector.fetchScopedTurtleForWorkspace(workspaceIri('Project Overview'));
 
 		expect(result.schema).toContain('Person');
-		expect(result.schema).toContain('SomeIndividual');
+		expect(result.instances).toContain('SomeIndividual');
 	});
 
 	it('fetchScopedTurtleForWorkspace returns empty text for a Workspace with no members', async () => {
@@ -6930,7 +6930,7 @@ describe('SparqlConnector — Workspace-scoped Triples export (STORY-082)', () =
 
 		const result = await connector.fetchScopedTurtleForWorkspace(workspaceIri('Empty Workspace'));
 
-		expect(result).toEqual({ schema: '', shapes: '' });
+		expect(result).toEqual({ schema: '', instances: '', shapes: '' });
 		expect(fetchWholeGraphQuadsSpy).not.toHaveBeenCalled();
 	});
 });
@@ -11259,5 +11259,171 @@ describe('SparqlConnector — individual-individual relation queries skip litera
 		const q = bodies[0];
 		expect(q.indexOf('FILTER(isIRI(?o))')).toBeGreaterThan(-1);
 		expect(q.indexOf('FILTER(isIRI(?o))')).toBeLessThan(q.indexOf('GRAPH ?og { ?o a ?otype }'));
+	});
+});
+
+describe('SparqlConnector — strict tab ↔ graph saves (triples-tabs STORY-601)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	const personIri = classIri('Person');
+	const aliceIri = individualIri('Person', 'alice');
+	const rdfType = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+	const fixture = () => [
+		{
+			s: { type: 'uri' as const, value: personIri },
+			p: { type: 'uri' as const, value: rdfType },
+			o: { type: 'uri' as const, value: 'http://www.w3.org/2002/07/owl#Class' }
+		},
+		{
+			s: { type: 'uri' as const, value: aliceIri },
+			p: { type: 'uri' as const, value: rdfType },
+			o: { type: 'uri' as const, value: personIri }
+		}
+	];
+	// Same graph without the individual's class dependency (the structural check refuses to leave
+	// an individual whose class was just emptied away): a reified statement is an Instances triple.
+	const stmtFixture = () => [
+		fixture()[0],
+		{
+			s: { type: 'uri' as const, value: `${aliceIri}Stmt` },
+			p: { type: 'uri' as const, value: rdfType },
+			o: { type: 'uri' as const, value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#Statement' }
+		}
+	];
+
+	const clearedGraphs = (update: string) =>
+		Object.entries(DEFAULT_GRAPHS)
+			.filter(([, g]) => update.includes(`WITH <${g}>`))
+			.map(([k]) => k)
+			.sort();
+
+	it.each([
+		['schema', ['schema']],
+		['instances', ['instances']],
+		['shapes', ['shapes']],
+		['all', ['instances', 'schema', 'shapes']]
+	] as const)('emptying the %s tab at namespace scope clears exactly %j', async (partition, expected) => {
+		const { fn, updates } = mockWholeGraphFetch(partition === 'instances' ? fixture() : stmtFixture());
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').saveScopedTurtle(null, '', partition);
+		expect(clearedGraphs(updates.join(' ; '))).toEqual([...expected]);
+	});
+
+	it('saving the Instances tab deletes the individuals typed with a class node and leaves its schema alone', async () => {
+		const { fn, updates } = mockWholeGraphFetch(fixture());
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').saveScopedTurtle(personIri, '', 'instances');
+		expect(updates[0]).toContain(
+			`DELETE WHERE { ${inGraph(`<${aliceIri}> ?p ?o .`, DEFAULT_GRAPHS.instances)} }`
+		);
+		expect(updates[0]).not.toContain(DEFAULT_GRAPHS.schema);
+	});
+
+	it('Turtle for another tab is rejected with a validation issue and nothing is sent', async () => {
+		const { fn, updates } = mockWholeGraphFetch(fixture());
+		vi.stubGlobal('fetch', fn);
+		await expect(
+			new SparqlConnector('/api/sparql').saveScopedTurtle(
+				null,
+				`@prefix owl: <http://www.w3.org/2002/07/owl#> . <${personIri}> a owl:Class .`,
+				'instances'
+			)
+		).rejects.toBeInstanceOf(SchemaValidationError);
+		expect(updates).toHaveLength(0);
+	});
+
+	it('an Instances save writes only to the instances graph', async () => {
+		const { fn, updates } = mockWholeGraphFetch(fixture());
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').saveScopedTurtle(
+			null,
+			`<${aliceIri}> a <${personIri}> .`,
+			'instances'
+		);
+		expect(updates[0]).toContain(`GRAPH <${DEFAULT_GRAPHS.instances}>`);
+		expect(updates[0]).not.toContain(`GRAPH <${DEFAULT_GRAPHS.schema}>`);
+	});
+});
+
+describe('SparqlConnector — read-only vocab graph (triples-tabs STORY-602)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+	const base = DEFAULT_NAMESPACE_BASE_IRI;
+
+	it('fetchVocabTurtle reads only <base>/vocab, asserted triples, one query', async () => {
+		const { fn } = mockWholeGraphFetch([
+			{
+				s: { type: 'uri', value: `${base}#c1` },
+				p: { type: 'uri', value: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type' },
+				o: { type: 'uri', value: 'http://www.w3.org/2004/02/skos/core#Concept' }
+			}
+		]);
+		vi.stubGlobal('fetch', fn);
+		const turtle = await new SparqlConnector('/api/sparql').fetchVocabTurtle(base);
+		const queries: string[] = fn.mock.calls.map(
+			(c) => JSON.parse((c[1] as { body: string }).body).query ?? ''
+		);
+		const triplesQuery = queries.find((q) => q.includes('?s ?p ?o'))!;
+		expect(triplesQuery).toContain(`FROM <${base}/vocab>`);
+		expect(triplesQuery).not.toContain('GRAPH ?g');
+		expect(turtle).toContain('Concept');
+	});
+
+	it("saveScopedTurtle rejects the 'vocab' partition and sends nothing", async () => {
+		const { fn, updates } = mockWholeGraphFetch([]);
+		vi.stubGlobal('fetch', fn);
+		await expect(
+			new SparqlConnector('/api/sparql').saveScopedTurtle(null, '', 'vocab')
+		).rejects.toBeInstanceOf(SchemaValidationError);
+		expect(updates).toHaveLength(0);
+		expect(fn).not.toHaveBeenCalled();
+	});
+});
+
+describe('SparqlConnector — cross-namespace typing on save (triples-tabs)', () => {
+	afterEach(() => vi.unstubAllGlobals());
+
+	it('accepts an individual typed with a class declared in another namespace', async () => {
+		const armBase = 'https://lida.pnet.ch/arm/schema';
+		const coreBase = 'https://lida.pnet.ch/core';
+		const bladibla = `${armBase}#Bladibla`;
+		const updates: string[] = [];
+		const fn = vi.fn(async (_u: string, opts: { body: string }) => {
+			const body = JSON.parse(opts.body);
+			if (body.update !== undefined) {
+				updates.push(body.update);
+				return new Response('{}', { status: 200 });
+			}
+			const q: string = body.query ?? '';
+			if (q.includes('?ns ?prefix ?desc')) {
+				return new Response(
+					JSON.stringify({
+						head: { vars: ['ns', 'prefix', 'desc', 'color'] },
+						results: {
+							bindings: [armBase, coreBase].map((b, i) => ({
+								ns: { type: 'uri', value: b },
+								prefix: { type: 'literal', value: i ? 'core_i' : 'arm' }
+							}))
+						}
+					}),
+					{ status: 200 }
+				);
+			}
+			if (q.includes('SELECT DISTINCT ?c')) {
+				return new Response(
+					JSON.stringify({ head: { vars: ['c'] }, results: { bindings: [{ c: { type: 'uri', value: bladibla } }] } }),
+					{ status: 200 }
+				);
+			}
+			return new Response(JSON.stringify({ head: { vars: [] }, results: { bindings: [] } }), { status: 200 });
+		});
+		vi.stubGlobal('fetch', fn);
+		await new SparqlConnector('/api/sparql').saveScopedTurtle(
+			null,
+			`@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+			 <${coreBase}#t1> a <${bladibla}> ; rdfs:label "t1" .`,
+			'instances',
+			coreBase
+		);
+		expect(updates[0]).toContain(`GRAPH <${coreBase}>`);
 	});
 });

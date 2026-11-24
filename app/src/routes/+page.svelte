@@ -56,7 +56,7 @@
 	import AssociationForm from '#lib/components/AssociationForm.svelte';
 	import AssociationEditForm, { type AssociationEditLinkRow } from '#lib/components/AssociationEditForm.svelte';
 	import ExternalClassForm from '#lib/components/ExternalClassForm.svelte';
-	import TriplesPanel from '#lib/components/TriplesPanel.svelte';
+	import { triplesPanel } from '#lib/stores/triples-panel-store.svelte.js';
 	import CanvasGrid from '#lib/components/CanvasGrid.svelte';
 	import CanvasReadout from '#lib/components/CanvasReadout.svelte';
 	import LoadingOverlay from '#lib/components/LoadingOverlay.svelte';
@@ -529,49 +529,22 @@
 
 	// -- Raw triples view (STORY-011/012/013) ----------------------------------------------------
 
-	let showTriplesPanel = $state(false);
-
-	/** STORY-039: the Triples panel's scope is intentionally decoupled from canvas selection — the
-	 *  settings menu's "View Triples" always opens to the whole graph (`null`) regardless of what's
-	 *  selected on canvas, so a stale canvas selection can't silently filter the panel.
-	 *  STORY-043's per-entity Triples icon will set this explicitly instead. */
-	let triplesPanelScopeIri = $state<string | null>(null);
-
-	/** The namespace of whatever node `triplesPanelScopeIri` points at — set alongside it by every
-	 *  per-node "View triples"/"View catalog" opener, so the panel fetches *that* node's own
-	 *  namespace rather than whatever namespace happens to be globally "active" in the workbench
-	 *  (`activeNamespaceBaseIri()`, unrelated to canvas selection). `undefined` when scoped to the
-	 *  whole graph (`triplesPanelScopeIri === null`), which correctly falls back to the active
-	 *  namespace since there's no specific node to derive one from. */
-	let triplesPanelNamespaceBaseIri = $state<string | undefined>(undefined);
-
-	/** Data-catalog Story 014: which tab the Triples panel opens onto. Only "View catalog" ever
-	 *  requests `'catalog'`; every other opener (settings menu "View Triples", per-node "View triples")
-	 *  requests `'schema'`, matching pre-Story-014 behavior. */
-	let triplesPanelInitialTab = $state<'schema' | 'shapes' | 'catalog'>('schema');
-
-	/** STORY-082: set only by the Workspace-scoped "View triples" entry point
-	 *  (`WorkspaceManagementView`, via the `workbenchActions.triplesWorkspaceScope` bridge above) —
-	 *  every other opener clears this back to `null` alongside setting `triplesPanelScopeIri`, so the
-	 *  two scope kinds stay mutually exclusive. */
-	let triplesPanelWorkspaceScope = $state<{ workspaceIri: string; label: string } | null>(null);
+	/** Opens the layout's Triples panel on a node (the canvas keeps per-node entry points). */
+	function openNodeTriples(iri: string, namespaceBaseIri: string | undefined, initialTab: 'schema' | 'catalog' = 'schema') {
+		const namespace = namespaceBaseIri ?? activeNamespaceBaseIri();
+		triplesPanel.show({
+			scope: { kind: 'node', iri, namespaceBaseIri: namespace },
+			initialTab,
+			namespaceBaseIri: namespace,
+			showCatalogTab: lastAuthoritativeEntityIris.has(iri)
+		});
+	}
 
 	// -- Provenance report (Sprint 4 Story 013) --------------------------------------------------
 
 	/** The class the Provenance report modal is currently open for — `null` when closed, mirroring
 	 *  `deleteEntityId`'s "IRI-as-open-flag" pattern rather than a separate boolean. */
 	let provenanceReportClassIri = $state<string | null>(null);
-
-	/** The discriminated scope `TriplesPanel` renders (STORY-082) — memoized via `$derived` so it
-	 *  only produces a new object when one of the three underlying state values actually changes,
-	 *  not on every unrelated re-render (which would otherwise retrigger the panel's fetch). */
-	const triplesPanelScope = $derived(
-		triplesPanelWorkspaceScope
-			? ({ kind: 'workspace', workspaceIri: triplesPanelWorkspaceScope.workspaceIri, label: triplesPanelWorkspaceScope.label } as const)
-			: triplesPanelScopeIri !== null
-				? ({ kind: 'node', iri: triplesPanelScopeIri, namespaceBaseIri: triplesPanelNamespaceBaseIri ?? activeNamespaceBaseIri() } as const)
-				: ({ kind: 'all' } as const)
-	);
 
 	function findNode(id: string | null): CanvasNode | undefined {
 		return id ? nodes.find((n) => n.id === id) : undefined;
@@ -819,18 +792,10 @@
 				});
 			},
 			onViewTriples: () => {
-				triplesPanelWorkspaceScope = null;
-				triplesPanelScopeIri = classIriValue;
-				triplesPanelNamespaceBaseIri = namespaceBaseIri;
-				triplesPanelInitialTab = 'schema';
-				showTriplesPanel = true;
+				openNodeTriples(classIriValue, namespaceBaseIri);
 			},
 			onViewCatalog: () => {
-				triplesPanelWorkspaceScope = null;
-				triplesPanelScopeIri = classIriValue;
-				triplesPanelNamespaceBaseIri = namespaceBaseIri;
-				triplesPanelInitialTab = 'catalog';
-				showTriplesPanel = true;
+				openNodeTriples(classIriValue, namespaceBaseIri, 'catalog');
 			},
 			onViewProvenance: () => {
 				provenanceReportClassIri = classIriValue;
@@ -3007,11 +2972,7 @@
 							deleteIndividualTarget = { iri: spec.iri, label: spec.label, classIri: spec.classIri };
 						},
 						onViewTriples: () => {
-							triplesPanelWorkspaceScope = null;
-							triplesPanelScopeIri = spec.iri;
-							triplesPanelNamespaceBaseIri = spec.namespace;
-							triplesPanelInitialTab = 'schema';
-							showTriplesPanel = true;
+							openNodeTriples(spec.iri, spec.namespace);
 						}
 					} satisfies IndividualNodeData
 				} satisfies IndividualNodeType;
@@ -3564,9 +3525,6 @@
 		workbenchActions.loading = loading;
 	});
 	$effect(() => {
-		workbenchActions.triplesOpen = showTriplesPanel;
-	});
-	$effect(() => {
 		workbenchActions.exportingSvg = exportingSvg;
 	});
 	$effect(() => {
@@ -3587,15 +3545,7 @@
 
 	onMount(() => {
 		workbenchActions.registerReload(() => void loadSchemaFromGraphDB());
-		workbenchActions.registerToggleTriples(() => {
-			if (!showTriplesPanel) {
-				triplesPanelWorkspaceScope = null;
-				triplesPanelScopeIri = null;
-				triplesPanelNamespaceBaseIri = undefined;
-				triplesPanelInitialTab = 'schema';
-			}
-			showTriplesPanel = !showTriplesPanel;
-		});
+		triplesPanel.registerOnSaved(() => loadSchemaFromGraphDB());
 		workbenchActions.registerExportSvg(() => void handleExportSvg());
 		workbenchActions.registerExportErd(() => (showExportErd = true));
 		workbenchActions.registerToggleNamespaceVisibility(toggleNamespaceVisibility);
@@ -3604,22 +3554,7 @@
 		workbenchActions.registerSetActiveWorkspace((iri) => void handleActiveWorkspaceChange(iri));
 		workbenchActions.registerSetActiveNamespace(handleActiveNamespaceChange);
 		void loadSchemaFromGraphDB({ force: false }).then(focusFromUrl);
-	});
-
-	// -- Workspace-scoped Triples entry point (STORY-082) -------------------------------------------
-	// `WorkspaceManagementView` (rendered inside `+layout.svelte`, a sibling) sets
-	// `workbenchActions.triplesWorkspaceScope` as a one-shot request; this page owns
-	// `showTriplesPanel`/`TriplesPanel` and consumes + clears the request here, mirroring the
-	// `externalVocabManagementOpen` bridge shape used elsewhere.
-	$effect(() => {
-		const request = workbenchActions.triplesWorkspaceScope;
-		if (!request) return;
-		triplesPanelWorkspaceScope = request;
-		triplesPanelScopeIri = null;
-		triplesPanelNamespaceBaseIri = undefined;
-		triplesPanelInitialTab = 'schema';
-		showTriplesPanel = true;
-		workbenchActions.triplesWorkspaceScope = null;
+		return () => triplesPanel.registerOnSaved(null);
 	});
 
 	// -- Active-Workspace fallback when the active one is deleted elsewhere (STORY-079 AC) -----------
@@ -3804,17 +3739,6 @@
 		/>
 		{#if canvasSearchCss}{@html `<style>${canvasSearchCss}</style>`}{/if}
 	</div>
-	{#if showTriplesPanel}
-		<TriplesPanel
-			scope={triplesPanelScope}
-			namespaces={namespaceStore.namespaces}
-			initialNamespaceBaseIri={triplesPanelNamespaceBaseIri ?? activeNamespaceBaseIri()}
-			showCatalogTab={triplesPanelScopeIri !== null && lastAuthoritativeEntityIris.has(triplesPanelScopeIri)}
-			initialTab={triplesPanelInitialTab}
-			onClose={() => (showTriplesPanel = false)}
-			onSaved={() => void loadSchemaFromGraphDB()}
-		/>
-	{/if}
 </div>
 
 {#if provenanceReportClassIri}

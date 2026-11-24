@@ -571,7 +571,51 @@ export function bindingToQuad(b: SparqlBinding, graph?: string): Quad {
  *  combined behavior; `'schema'`/`'shapes'` filter the same selection through STORY-014's
  *  `partitionQuads` rule (STORY-017), letting the Schema and Shapes tabs (STORY-018) save
  *  independently. */
-export type Partition = 'schema' | 'shapes' | 'all';
+/**
+ * Triples-tabs STORY-601: one tab per graph. `'schema'` = `<base>/schema` (TBox), `'instances'` =
+ * `<base>` (individuals + reified statements), `'shapes'` = `<base>/shapes`, `'vocab'` =
+ * `<base>/vocab` (read-only; never part of a whole-graph selection), `'all'` = the first three.
+ */
+export type Partition = 'schema' | 'instances' | 'shapes' | 'vocab' | 'all';
+
+/** Vocabulary types that mark a subject as schema/shapes metadata rather than an enumerated
+ *  individual: anything typed one of these is a class/property/shape declaration. */
+const META_TYPES = new Set<string>([OWL.Class, OWL.DatatypeProperty, OWL.ObjectProperty, SH.NodeShape]);
+
+/** True if `subjectIri` (given its own quads within some already-scoped `Quad[]`) looks like an
+ *  enumerated individual (STORY-019): it carries an `rdf:type` whose object isn't a meta type, and
+ *  no meta type at all (so `a owl:DatatypeProperty, owl:FunctionalProperty` stays schema). */
+export function looksLikeIndividual(quads: Quad[], subjectIri: string): boolean {
+	const types = quads
+		.filter((q) => q.subject.value === subjectIri && q.predicate.value === RDF.type)
+		.map((q) => q.object.value);
+	return types.some((t) => !META_TYPES.has(t)) && !types.some((t) => META_TYPES.has(t));
+}
+
+/** Splits `partitionQuads()`'s schema bucket (classes/properties **and** individuals) into
+ *  individuals vs. TBox, grouped by subject so a multi-triple individual moves as one unit. */
+export function splitInstancesFromSchema(schemaBucket: Quad[]): { instances: Quad[]; schema: Quad[] } {
+	const bySubject = new Map<string, Quad[]>();
+	for (const q of schemaBucket) {
+		const key = `${q.subject.termType}|${q.subject.value}`;
+		const list = bySubject.get(key) ?? [];
+		list.push(q);
+		bySubject.set(key, list);
+	}
+	const instances: Quad[] = [];
+	const schema: Quad[] = [];
+	for (const quads of bySubject.values()) {
+		(looksLikeIndividual(quads, quads[0].subject.value) ? instances : schema).push(...quads);
+	}
+	return { instances, schema };
+}
+
+/** The strict tab ↔ graph classification: every quad lands in exactly one of the three graphs. */
+export function partitionByGraph(quads: Quad[]): { schema: Quad[]; instances: Quad[]; shapes: Quad[] } {
+	const { schema: mixed, shapes, instances: reified } = partitionQuads(quads);
+	const { instances, schema } = splitInstancesFromSchema(mixed);
+	return { schema, instances: [...instances, ...reified], shapes };
+}
 
 /**
  * Selects the triples in scope for a given canvas selection, out of the full set of quads for the
@@ -595,8 +639,8 @@ export type Partition = 'schema' | 'shapes' | 'all';
 export function selectScope(allQuads: Quad[], iri: string | null, partition: Partition = 'all'): Quad[] {
 	const scoped = selectScopeUnfiltered(allQuads, iri);
 	if (partition === 'all') return scoped;
-	const { schema, shapes } = partitionQuads(scoped);
-	return partition === 'schema' ? schema : shapes;
+	if (partition === 'vocab') return [];
+	return partitionByGraph(scoped)[partition];
 }
 
 /**
