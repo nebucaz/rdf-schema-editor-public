@@ -19,8 +19,9 @@ class; they are grouped under "Unclassified" and are not included in **All class
 Selecting an individual opens a read-only resource page: its label, type(s), and every outgoing
 property grouped into a readable table — repeatable attributes respect the [Attribute
 Form](attribute-form)'s "group on one line"/"display as chips" display markers. A breadcrumb trail
-tracks how you navigated between individuals. An **Edit** action opens the same [Member
-Form](member-form) used elsewhere in the app.
+tracks how you navigated between individuals. An **Edit** action opens the same edit dialog ([Member
+Form](member-form)) the canvas uses; here it also offers the **Class** selector. **Add identity** opens the
+shared create dialog.
 
 ## Neighborhood graph
 

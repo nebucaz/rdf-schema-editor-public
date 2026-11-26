@@ -8,10 +8,8 @@
 	 */
 	import {
 		sparqlConnector,
-		type FetchedAssertion,
 		type FetchedClass,
 		type FetchedNamespace,
-		type NameableEntity,
 		type ResourcePage
 	} from '#lib/services/sparql-connector.js';
 	import {
@@ -25,16 +23,8 @@
 	import { contrastTextColor } from '#lib/utils/contrast.js';
 	import Modal from '#lib/components/Modal.svelte';
 	import IdentityNeighborhoodGraph from '#lib/components/IdentityNeighborhoodGraph.svelte';
-	import MemberForm from '#lib/components/MemberForm.svelte';
-	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
-	import { schemaStore } from '#lib/stores/schema-store.js';
-	import { resolveEditFormSpec, resolveGoverningClass } from '#lib/utils/identity-schema-index.js';
-	import { editIdentity } from '#lib/utils/identity-mutations.js';
-	import { SYNC_SOURCE_PREDICATE_IRI } from '#lib/utils/iri.js';
-	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
-	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
-	import { conceptOptionEntries } from '#lib/services/concept-value-options.js';
-
+	import IdentityEditDialog from '#lib/components/IdentityEditDialog.svelte';
+								
 	const EMPTY_CLASS_HIERARCHY_INDEX: ClassHierarchyIndex = {
 		classNamespaceByIri: new Map(),
 		parentsByClassIri: new Map()
@@ -73,10 +63,6 @@
 		 *  (`resolveClassColor`). */
 		classHierarchyIndex?: ClassHierarchyIndex;
 		namespaceColorByBaseIri?: Map<string, string>;
-		/** STORY-124: `identities/+page.svelte`'s STORY-121 schema index, reused to resolve the
-		 *  Edit modal's `attributes`/`relationFields`/`labelRequired` for this identity's governing
-		 *  class — no second query, same index the "Add identity" flow already builds. */
-		entityNodeByClassIri?: Map<string, EntityNodeSpec>;
 		/** STORY-124: the Identities view's currently active class facet (`lastFacets.classIri`),
 		 *  fed into `resolveGoverningClass` (research.md §6 decision 1) alongside this identity's own
 		 *  `rdf:type`s. */
@@ -97,7 +83,6 @@
 		namespaces = [],
 		classHierarchyIndex = EMPTY_CLASS_HIERARCHY_INDEX,
 		namespaceColorByBaseIri = new Map(),
-		entityNodeByClassIri = new Map(),
 		activeClassFacet = null
 	}: Props = $props();
 
@@ -253,110 +238,8 @@
 	const split = $derived(page ? splitOutgoingTriples(page.outgoing) : null);
 	const propertyRows = $derived(split ? buildPropertyRows(split.literalTriples) : []);
 
-	// -- STORY-124: Edit identity ------------------------------------------------------------------
-	// Mirrors `identities/+page.svelte`'s "Add identity" (STORY-123) load-gate/relation-target-option
-	// pattern, plus the canvas's own standalone "Edit Individual" modal's assertions wiring
-	// (`routes/+page.svelte`'s `editIndividual*`/`ensureAssertionOptionsLoaded`) — adapted to this
-	// component's own `iri`/`page` state instead of a canvas node.
+	// Edit identity: the shared `IdentityEditDialog` loads its own data (spec/unify-instance-forms, STORY-003).
 	let editOpen = $state(false);
-	let editReady = $state(false);
-	let editGoverningClassIri = $state<string | null>(null);
-	let editAttributeValues = $state<Record<string, string | string[]>>({});
-	let editAssertions = $state<FetchedAssertion[]>([]);
-	let editRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
-
-	/** Edge case (STORY-124 AC): an identity with zero declared `rdf:type`s resolves a `null`
-	 *  governing class — `resolveEditFormSpec` then yields an empty spec, so the Edit button stays
-	 *  visible and always opens the modal (no hidden/disabled state), falling back to generic
-	 *  Assertions-only editing rather than a class-driven form. */
-	const editFormSpec = $derived(resolveEditFormSpec(entityNodeByClassIri, editGoverningClassIri));
-
-	/** Predicate/object typeahead options for the Assertions section, shared across every open of
-	 *  this modal (loaded lazily once) — mirrors `routes/+page.svelte`'s `ensureAssertionOptionsLoaded`. */
-	let assertionPredicateOptions = $state<{ iri: string; label: string }[]>([]);
-	let assertionObjectOptions = $state<NameableEntity[]>([]);
-	let assertionOptionsStatus = $state<'idle' | 'loading' | 'ready' | 'error'>('idle');
-
-	/** Starts the options load without being awaited: the Edit form must not wait for the 'full' schema
-	 *  (12 requests) that only feeds the Assertions typeahead (loop-issues STORY-315). A failure leaves
-	 *  the form usable and is retried on the next open. */
-	function ensureAssertionOptionsLoaded() {
-		if (assertionOptionsStatus === 'loading' || assertionOptionsStatus === 'ready') return;
-		assertionOptionsStatus = 'loading';
-		void (async () => {
-			try {
-				// One shared full load (cached in the store) for both lists instead of one each (STORY-297).
-				const schema = await schemaStore.ensureLoaded('full');
-				const [predicateOptions, objectOptions] = await Promise.all([
-					sparqlConnector.fetchRelationPredicateOptions(schema),
-					sparqlConnector.fetchNameableEntities(schema)
-				]);
-				assertionPredicateOptions = predicateOptions;
-				assertionObjectOptions = objectOptions;
-				assertionOptionsStatus = 'ready';
-			} catch {
-				assertionOptionsStatus = 'error';
-			}
-		})();
-	}
-
-	/** Mirrors `routes/+page.svelte`'s own `loadRelationTargetOptions` — scoped to this component
-	 *  instead of the canvas, with the same namespace-prefix-disambiguated label shape. */
-	async function loadRelationTargetOptions(
-		relationFields: CanvasRelationFieldSpec[]
-	): Promise<Record<string, RelationTargetOption[]>> {
-		const entries = await Promise.all(
-			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
-				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
-				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
-				return [
-					[
-						rel.iri,
-						options.map((o) => ({
-							iri: o.iri,
-							label: `[${namespacePrefixByBaseIri.get(o.namespaceBaseIri) ?? o.namespaceBaseIri}] ${o.label}`
-						}))
-					]
-				];
-			})
-		);
-		return Object.fromEntries(entries.flat());
-	}
-
-	async function reloadEditAssertions() {
-		editAssertions = await sparqlConnector.fetchAssertionsForIndividual(iri);
-	}
-
-	async function openEditModal() {
-		if (!header) return;
-		editGoverningClassIri = resolveGoverningClass(header.typeIris, activeClassFacet);
-		editReady = false;
-		editOpen = true;
-		const spec = resolveEditFormSpec(entityNodeByClassIri, editGoverningClassIri);
-		await Promise.all([
-			reloadEditAssertions(),
-			(async () => {
-				editAttributeValues =
-					spec.attributes.length > 0
-						? await sparqlConnector.fetchIndividualAttributeValues(iri, spec.attributes)
-						: {};
-			})(),
-			(async () => {
-				editRelationTargetOptions =
-					spec.relationFields.length > 0 ? await loadRelationTargetOptions(spec.relationFields) : {};
-			})()
-		]);
-		editReady = true;
-		// After the form's own reads: the connector runs 6 requests at a time, first come first served, so
-		// starting the 12-request schema load earlier queued the assertions query behind it.
-		ensureAssertionOptionsLoaded();
-	}
-
-	function closeEditModal() {
-		editOpen = false;
-		editGoverningClassIri = null;
-		editReady = false;
-	}
 
 	/** Refetches the whole resource page after a successful edit (research.md §4 item 6) rather than
 	 *  hand-patching `page` in place — the edit write surface (label + attributes + relations, all in
@@ -370,48 +253,8 @@
 		onLoaded?.({ iri, label: resolved.label });
 	}
 
-	/** Classes the edit form can assign: every entity class in the schema index, prefixed with its
-	 *  namespace to tell same-named classes apart. */
-	const editClassOptions = $derived(
-		[...entityNodeByClassIri.values()]
-			.map((c) => ({
-				iri: c.iri,
-				label: `[${namespacePrefixByBaseIri.get(c.namespace) ?? c.namespace}] ${c.name}`
-			}))
-			.sort((a, b) => a.label.localeCompare(b.label))
-	);
-	/** An identity with several `rdf:type`s has no single class to change, and a synced one is
-	 *  machine-owned: both leave the selector out / disabled. */
-	const editClassLocked = $derived(
-		(page?.outgoing ?? []).some((t) => t.predicateIri === SYNC_SOURCE_PREDICATE_IRI)
-	);
-
-	function fieldsOfClass(classIriValue: string): { iri: string; name: string }[] {
-		const spec = entityNodeByClassIri.get(classIriValue);
-		return [...(spec?.attributes ?? []), ...(spec?.relationFields ?? [])].map((f) => ({ iri: f.iri, name: f.name }));
-	}
-
-	async function handleEditSubmit(
-		label: string,
-		_namespaceBaseIri?: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		_identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = [],
-		classChange?: { classIri: string; dropPredicateIris: string[] }
-	) {
-		if (!header) return;
-		if (classChange) {
-			// retype first, so the writes below land on the new class; dropped values were just deleted
-			await sparqlConnector.changeIndividualClass(iri, classChange.classIri, {
-				dropPredicateIris: classChange.dropPredicateIris
-			});
-			const dropped = new Set(classChange.dropPredicateIris);
-			attributeSubmissions = attributeSubmissions.filter((a) => !dropped.has(a.attributeIri));
-			relationSubmissions = relationSubmissions.filter((r) => !dropped.has(r.predicateIri));
-		}
-		await editIdentity(iri, label, header.label, attributeSubmissions, relationSubmissions);
-		if (classChange) onClassChanged?.(iri, classChange.classIri);
-		closeEditModal();
+	async function handleEditSaved(result: { label: string; classIri?: string }) {
+		if (result.classIri) onClassChanged?.(iri, result.classIri);
 		await refetchAfterEdit();
 	}
 </script>
@@ -484,7 +327,7 @@
 					<button type="button" class="explore-btn" onclick={() => (isExploring = true)}>
 						Explore
 					</button>
-					<button type="button" class="edit-btn" onclick={() => void openEditModal()}>
+					<button type="button" class="edit-btn" onclick={() => (editOpen = true)}>
 						Edit
 					</button>
 					<button
@@ -654,41 +497,7 @@
 {/if}
 
 {#if editOpen}
-	<Modal isOpen={true} title="Edit identity" onClose={closeEditModal} dismissible={false}>
-		{#if editReady}
-			<MemberForm
-				mode="edit"
-				initialLabel={header?.label ?? ''}
-				submitLabel="Save"
-				onCancel={closeEditModal}
-				onSubmit={handleEditSubmit}
-				individualIri={iri}
-				assertions={editAssertions}
-				predicateOptions={assertionPredicateOptions}
-				objectOptions={assertionObjectOptions}
-				optionsStatus={assertionOptionsStatus === 'idle' ? 'loading' : assertionOptionsStatus}
-				attributes={editFormSpec.attributes}
-				attributeValues={editAttributeValues}
-				labelRequired={editFormSpec.labelRequired}
-				relationFields={editFormSpec.relationFields}
-				relationTargetOptions={editRelationTargetOptions}
-				classOptions={header && header.typeIris.length > 1 ? undefined : editClassOptions}
-				classIri={header?.typeIris[0] ?? ''}
-				classLocked={editClassLocked}
-				onPlanClassChange={fieldsOfClass}
-				onAddAssertion={async (predicateLabel, objectIri) => {
-					await sparqlConnector.insertAssertion(iri, predicateLabel, objectIri);
-					await reloadEditAssertions();
-				}}
-				onDeleteAssertion={async (predicateIri, objectIri) => {
-					await sparqlConnector.deleteAssertion(iri, predicateIri, objectIri);
-					await reloadEditAssertions();
-				}}
-			/>
-		{:else}
-			<p class="muted">Loading…</p>
-		{/if}
-	</Modal>
+	<IdentityEditDialog {iri} {activeClassFacet} onClose={() => (editOpen = false)} onSaved={handleEditSaved} />
 {/if}
 
 {#if isDeleteConfirmOpen}

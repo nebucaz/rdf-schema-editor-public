@@ -1,5 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createIdentity, editIdentity, resolveDefaultNamespace, type IdentityMutationConnector } from './identity-mutations';
+import {
+	createIdentity,
+	editIdentity,
+	addRelation,
+	removeRelation,
+	resolveDefaultNamespace,
+	type IdentityMutationConnector,
+	type IdentityMutationHooks
+} from './identity-mutations';
 import type { AttributeValueSubmission } from './attribute-values';
 import type { RelationValueSubmission } from './relation-values';
 
@@ -150,5 +158,101 @@ describe('resolveDefaultNamespace', () => {
 		const lookup = new Map([[classIri, { namespace: 'http://ex.org' }]]);
 
 		expect(await resolveDefaultNamespace(classIri, lookup, connector)).toBe('http://ex.org');
+	});
+});
+
+describe('host hooks', () => {
+	const subject = 'http://ex.org/instances#new';
+
+	it('createIdentity fires onCreated then onRelationAdded/Removed after the matching writes, in order', async () => {
+		const order: string[] = [];
+		const connector = fakeConnector({
+			insertIndividual: vi.fn(async () => {
+				order.push('write:create');
+				return { iri: subject };
+			}),
+			insertAssertion: vi.fn(async () => {
+				order.push('write:add');
+				return { predicateIri: 'http://ex.org/schema#rel' };
+			}),
+			deleteAssertion: vi.fn(async () => {
+				order.push('write:remove');
+			})
+		});
+		const hooks: IdentityMutationHooks = {
+			onCreated: vi.fn(() => void order.push('hook:created')),
+			onRelationAdded: vi.fn(() => void order.push('hook:added')),
+			onRelationRemoved: vi.fn(() => void order.push('hook:removed'))
+		};
+		await createIdentity('c', 'Alice', 'http://ex.org', [], undefined, [relationAdd, relationRemove], connector, hooks);
+
+		expect(order).toEqual(['write:create', 'hook:created', 'write:add', 'hook:added', 'write:remove', 'hook:removed']);
+		expect(hooks.onCreated).toHaveBeenCalledWith(subject, 'Alice');
+		expect(hooks.onRelationAdded).toHaveBeenCalledWith(subject, 'http://ex.org/schema#rel', 'http://ex.org/instances#acme', relationAdd.predicateLabel);
+		expect(hooks.onRelationRemoved).toHaveBeenCalledWith(subject, relationRemove.predicateIri, 'http://ex.org/instances#acme');
+	});
+
+	it('editIdentity fires onRenamed only when the label changed, then relation hooks', async () => {
+		const hooks: IdentityMutationHooks = { onRenamed: vi.fn(), onRelationAdded: vi.fn() };
+		const connector = fakeConnector();
+		await editIdentity(subject, 'Bob', 'Alice', [], [relationAdd], connector, hooks);
+		expect(hooks.onRenamed).toHaveBeenCalledWith(subject, 'Bob');
+		expect(hooks.onRelationAdded).toHaveBeenCalledTimes(1);
+
+		const hooks2: IdentityMutationHooks = { onRenamed: vi.fn() };
+		const connector2 = fakeConnector();
+		await editIdentity(subject, 'Alice', 'Alice', [], [], connector2, hooks2);
+		expect(connector2.renameIndividual).not.toHaveBeenCalled();
+		expect(hooks2.onRenamed).not.toHaveBeenCalled();
+	});
+
+	it('a throwing hook does not undo or abort the write (sync and async)', async () => {
+		const connector = fakeConnector();
+		const hooks: IdentityMutationHooks = {
+			onCreated: vi.fn(() => {
+				throw new Error('boom');
+			}),
+			onRelationAdded: vi.fn(async () => {
+				throw new Error('async boom');
+			})
+		};
+		const { iri } = await createIdentity('c', 'Alice', 'http://ex.org', [], undefined, [relationAdd], connector, hooks);
+		expect(iri).toBe(subject);
+		expect(connector.insertAssertion).toHaveBeenCalledTimes(1);
+		expect(hooks.onRelationAdded).toHaveBeenCalled();
+	});
+
+	it('without hooks behaviour is unchanged', async () => {
+		const connector = fakeConnector();
+		await expect(createIdentity('c', 'A', 'http://ex.org', [], undefined, [relationAdd], connector)).resolves.toEqual({ iri: subject });
+	});
+});
+
+describe('addRelation / removeRelation', () => {
+	const subject = 'http://ex.org/instances#p';
+	const obj = 'http://ex.org/instances#acme';
+
+	it('addRelation writes one triple through insertAssertion and fires onRelationAdded with the resolved predicate IRI', async () => {
+		const connector = fakeConnector();
+		const hooks: IdentityMutationHooks = { onRelationAdded: vi.fn() };
+		const result = await addRelation(subject, 'works for', obj, connector, hooks);
+		expect(connector.insertAssertion).toHaveBeenCalledWith(subject, 'works for', obj);
+		expect(result).toEqual({ predicateIri: 'http://ex.org/schema#rel' });
+		expect(hooks.onRelationAdded).toHaveBeenCalledWith(subject, 'http://ex.org/schema#rel', obj, 'works for');
+	});
+
+	it('removeRelation writes one deleteAssertion and fires onRelationRemoved', async () => {
+		const connector = fakeConnector();
+		const hooks: IdentityMutationHooks = { onRelationRemoved: vi.fn() };
+		await removeRelation(subject, 'http://ex.org/schema#rel', obj, connector, hooks);
+		expect(connector.deleteAssertion).toHaveBeenCalledWith(subject, 'http://ex.org/schema#rel', obj);
+		expect(hooks.onRelationRemoved).toHaveBeenCalledWith(subject, 'http://ex.org/schema#rel', obj);
+	});
+
+	it('a failing write throws and fires no hook', async () => {
+		const connector = fakeConnector({ deleteAssertion: vi.fn(async () => { throw new Error('nope'); }) });
+		const hooks: IdentityMutationHooks = { onRelationRemoved: vi.fn() };
+		await expect(removeRelation(subject, 'p', obj, connector, hooks)).rejects.toThrow('nope');
+		expect(hooks.onRelationRemoved).not.toHaveBeenCalled();
 	});
 });

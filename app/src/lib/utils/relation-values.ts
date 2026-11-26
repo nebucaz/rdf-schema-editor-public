@@ -189,3 +189,24 @@ export function reconcileRelationValues(
 	}
 	return submissions;
 }
+
+/** Diffs the object IRIs a relation field held when the form opened against the IRIs it holds now. Unlike
+ *  `reconcileRelationValues` there is no label resolution: stored values are rows with an IRI, and the picker
+ *  has already resolved a new pick. A field with no net change is omitted. */
+export function reconcileRelationSelections(
+	relations: RelationFieldSpecLike[],
+	originalObjectIris: Record<string, string[]>,
+	currentObjectIris: Record<string, string[]>
+): RelationValueSubmission[] {
+	const submissions: RelationValueSubmission[] = [];
+	for (const rel of relations) {
+		const original = new Set(originalObjectIris[rel.iri] ?? []);
+		const current = new Set(currentObjectIris[rel.iri] ?? []);
+		const added = [...current].filter((iri) => !original.has(iri));
+		const removed = [...original].filter((iri) => !current.has(iri));
+		if (added.length > 0 || removed.length > 0) {
+			submissions.push({ predicateIri: rel.iri, predicateLabel: rel.name, added, removed });
+		}
+	}
+	return submissions;
+}

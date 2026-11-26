@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addIndividualToSchema, removeIndividualFromSchema, renameIndividualInSchema, setIndividualClassInSchema } from './individual-cache';
+import { addIndividualToSchema, removeIndividualFromSchema, renameIndividualInSchema } from './individual-cache';
 import type { FetchedIndividual, FetchedSchema } from './sparql-connector';
 
 const individual = (iri: string, over: Partial<FetchedIndividual> = {}): FetchedIndividual => ({
@@ -97,45 +97,12 @@ describe('untyped individuals in the cache helpers', () => {
 	});
 });
 
-describe('setIndividualClassInSchema', () => {
-	const untyped = { iri: 'http://x#u', label: 'U', namespaceBaseIri: 'http://x' };
-
-	it('moves an untyped individual into individuals with the class', () => {
-		const schema: FetchedSchema = { ...schemaWith([]), untypedIndividuals: [untyped] };
-		const next = setIndividualClassInSchema(schema, 'http://x#u', 'http://x/C');
-		expect(next.untypedIndividuals).toEqual([]);
-		expect(next.individuals).toEqual([
-			{ iri: 'http://x#u', label: 'U', classIri: 'http://x/C', namespaceBaseIri: 'http://x', syncSource: null, syncStatus: null }
-		]);
-	});
-
-	it('retypes a typed individual and drops relations on the dropped predicates', () => {
-		const schema: FetchedSchema = {
-			...schemaWith([individual('http://x#a')]),
-			individualClassRelations: [
-				{ individualIri: 'http://x#a', predicateIri: 'http://x/p', name: 'p', classIri: 'http://x/C', namespaceBaseIri: 'http://x' }
-			],
-			individualIndividualRelations: [
-				{ individualIri: 'http://x#a', predicateIri: 'http://x/q', name: 'q', targetIndividualIri: 'http://x#b', namespaceBaseIri: 'http://x' }
-			]
-		};
-		const next = setIndividualClassInSchema(schema, 'http://x#a', 'http://x/D', ['http://x/p']);
-		expect(next.individuals[0].classIri).toBe('http://x/D');
-		expect(next.individualClassRelations).toEqual([]);
-		expect(next.individualIndividualRelations).toHaveLength(1);
-	});
-});
-
 describe('untypedTotal stays in step with local edits', () => {
 	const untyped = { iri: 'http://x#u', label: 'U', namespaceBaseIri: 'http://x' };
 	const base = (): FetchedSchema => ({ ...schemaWith([]), untypedIndividuals: [untyped], untypedTotal: 500 });
 
 	it('removing an Unclassified individual decrements it', () => {
 		expect(removeIndividualFromSchema(base(), 'http://x#u').untypedTotal).toBe(499);
-	});
-
-	it('assigning a class to an Unclassified individual decrements it', () => {
-		expect(setIndividualClassInSchema(base(), 'http://x#u', 'http://x/C').untypedTotal).toBe(499);
 	});
 
 	it('removing a typed individual leaves it alone', () => {

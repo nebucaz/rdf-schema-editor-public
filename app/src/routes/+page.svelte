@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { erdSourceMarkerStore } from '#lib/stores/erd-source-marker-store.svelte.js';
-	import { conceptOptionEntries, memberFormFields } from '#lib/services/concept-value-options.js';
-	import { onMount, untrack } from 'svelte';
+		import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { mode } from 'mode-watcher';
 	import {
@@ -50,6 +49,9 @@
 	import ConceptPropertyForm from '#lib/components/ConceptPropertyForm.svelte';
 	import { conceptSchemeStore } from '#lib/stores/concept-scheme-store.svelte.js';
 	import ManageMembersModal from '#lib/components/ManageMembersModal.svelte';
+	import IdentityCreateDialog from '#lib/components/IdentityCreateDialog.svelte';
+	import IdentityEditDialog from '#lib/components/IdentityEditDialog.svelte';
+	import type { IdentityMutationHooks } from '#lib/utils/identity-mutations.js';
 	import MemberForm from '#lib/components/MemberForm.svelte';
 	import RelationForm from '#lib/components/RelationForm.svelte';
 	import IndividualRelationForm from '#lib/components/IndividualRelationForm.svelte';
@@ -89,8 +91,7 @@
 	import ViewModeToggle from '#lib/components/ViewModeToggle.svelte';
 	import CanvasViewToggles from '#lib/components/CanvasViewToggles.svelte';
 	import { schemaStore } from '#lib/stores/schema-store.js';
-	import { createLatestRun, relationOptionsKey } from '#lib/utils/latest-run.js';
-	import { loadAssertionOptions } from '#lib/services/assertion-options.js';
+		import { loadAssertionOptions } from '#lib/services/assertion-options.js';
 	import { externalVocabStore } from '#lib/stores/external-vocab-store.svelte.js';
 	import { settingsStore } from '#lib/stores/settings-store.svelte.js';
 	import { buildCanvasModel, type CanvasModel, type CanvasClassLevelAttributeSpec } from '#lib/services/canvas-model.js';
@@ -103,13 +104,7 @@
 		NEW_NODE_SIZE
 	} from '#lib/stores/layout-store.js';
 	import { NOTE_PASTEL_COLORS } from '#lib/utils/color-palette.js';
-	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
-	import {
-		relationTargetOptionsFromIndividuals,
-		type RelationTargetOption,
-		type RelationValueSubmission
-	} from '#lib/utils/relation-values.js';
-	import { nodeColorStore } from '#lib/stores/node-color-store.js';
+		import { nodeColorStore } from '#lib/stores/node-color-store.js';
 	import { viewFrameStore } from '#lib/stores/view-frame-store.js';
 	import { activeNamespaceStore, resolveWorkspaceDefaultNamespace } from '#lib/stores/active-namespace-store.js';
 	import { activeWorkspaceStore } from '#lib/stores/active-workspace-store.js';
@@ -127,8 +122,7 @@
 	import {
 		addIndividualToSchema,
 		removeIndividualFromSchema,
-		renameIndividualInSchema,
-		setIndividualClassInSchema
+		renameIndividualInSchema
 	} from '#lib/services/individual-cache.js';
 
 	type CanvasNode = EntityNodeType | ExternalClassNodeType | IndividualNodeType | NoteNodeType;
@@ -790,12 +784,6 @@
 			},
 			onManageInstances: () => {
 				manageMembersClassIri = classIriValue;
-				manageMembersConceptNamespace = null;
-				manageMembersConceptNamespaceLoaded = false;
-				void sparqlConnector.resolveEffectiveClassNamespace(classIriValue).then((effectiveNamespace) => {
-					manageMembersConceptNamespace = effectiveNamespace?.baseIri ?? null;
-					manageMembersConceptNamespaceLoaded = true;
-				});
 			},
 			onViewTriples: () => {
 				openNodeTriples(classIriValue, namespaceBaseIri);
@@ -1226,46 +1214,14 @@
 	 *  `isAssociationClass`, STORY-020's marker), so this is only ever set for a plain entity. */
 	let manageMembersClassIri = $state<string | null>(null);
 	const manageMembersNode = $derived(findEntityNode(manageMembersClassIri));
-	/** `manageMembersClassIri`'s effective Concept Namespace (own or inherited `rse:namespace`),
-	 *  fetched when the modal opens (`onManageInstances` below) — pre-selects "Add member"'s own
-	 *  "Namespace" field so a hand-typed identifier visibly lands where `insertIndividual`'s
-	 *  identifier path actually mints it (STORY-113's Concept-Namespace override), instead of
-	 *  defaulting to whatever namespace happens to be active and silently diverging from it. `null`
-	 *  when the class declares none (own or inherited) — the form then falls back to
-	 *  `activeNamespaceBaseIri()` as before. `manageMembersConceptNamespaceLoaded` gates the modal's
-	 *  render (mirroring `onEdit`'s own `editEntityBackstageKindLoaded` gate below) since
-	 *  `ManageMembersModal`/`MemberForm` only capture `initialNamespaceBaseIri` once at mount — an
-	 *  ungated render risks the "Add member" form mounting (and capturing `null`'s fallback) before
-	 *  this fetch resolves. */
-	let manageMembersConceptNamespace = $state<string | null>(null);
-	let manageMembersConceptNamespaceLoaded = $state(false);
+	/** The shared dialogs opened on top of Manage instances (spec/unify-instance-forms, STORY-005). */
+	let addMemberOpen = $state(false);
+	let editMemberIri = $state<string | null>(null);
 
-	async function handleAddMember(
-		label: string,
-		namespaceBaseIri?: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = []
-	) {
-		if (!manageMembersClassIri) return;
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? activeNamespaceBaseIri();
-		const { iri } = await sparqlConnector.insertIndividual(
-			manageMembersClassIri,
-			label,
-			resolvedNamespaceBaseIri,
-			identifier
-		);
-		if (attributeSubmissions.length > 0) {
-			// Not `resolvedNamespaceBaseIri`: a hand-typed `identifier` can make `insertIndividual`
-			// redirect the actual mint to the class's Concept Namespace instead (STORY-113's override),
-			// which `insertIndividual` doesn't report back — so `iri`'s own namespace is resolved fresh
-			// here (`findNamespaceOfIndividual`, since `iri` now exists) rather than reusing a guess
-			// that may not match where it actually landed.
-			await sparqlConnector.applyAttributeSubmissions(iri, attributeSubmissions);
-		}
-		if (relationSubmissions.length > 0) {
-			await applyRelationSubmissions(iri, relationSubmissions);
-		}
+	/** Canvas side effects of the shared create/edit dialogs: they know nothing of the workspace or the edges. */
+	async function placeCreatedMemberOnCanvas(iri: string, label: string) {
+		const classIri = manageMembersClassIri;
+		if (!classIri) return;
 		const position = nextPosition();
 		await sparqlConnector.addWorkspaceMember(currentWorkspaceIri(), iri, position.x, position.y);
 		graphDbLayoutStore.setPosition(iri, position.x, position.y);
@@ -1278,7 +1234,7 @@
 			lastFetchedSchema = addIndividualToSchema(lastFetchedSchema, {
 				iri,
 				label,
-				classIri: manageMembersClassIri,
+				classIri,
 				namespaceBaseIri: landedNamespaceBaseIri,
 				syncSource: null,
 				syncStatus: null
@@ -1286,40 +1242,33 @@
 			buildAndApplyCanvasModel(lastFetchedSchema);
 			applyNoteNodesAndEdges();
 		} else {
-			updateNodeData(manageMembersClassIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
+			updateNodeData(classIri, (d) => ({ ...d, members: [...d.members, { iri, label }] }));
 		}
 	}
 
-	async function handleEditMember(
-		member: EntityMemberVM,
-		label: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		relationSubmissions: RelationValueSubmission[] = []
-	) {
-		if (!manageMembersClassIri) return;
-		// Member's own namespace, not manageMembersClassIri's — an individual can be minted into a
-		// namespace different from its class's (STORY-099/100's Concept Namespace override), so
-		// `sparqlConnector` resolves it itself (`findNamespaceOfIndividual`) rather than trusting a
-		// guess based on the class; passing the class's namespace here previously risked silently
-		// writing to the wrong graph, matching nothing.
-		await sparqlConnector.renameIndividual(member.iri, label);
-		if (attributeSubmissions.length > 0) {
-			await sparqlConnector.applyAttributeSubmissions(member.iri, attributeSubmissions);
-		}
-		if (relationSubmissions.length > 0) {
-			await applyRelationSubmissions(member.iri, relationSubmissions);
-		}
+	function renameIndividualOnCanvas(iri: string, label: string) {
 		if (lastFetchedSchema) {
-			lastFetchedSchema = renameIndividualInSchema(lastFetchedSchema, member.iri, label);
+			lastFetchedSchema = renameIndividualInSchema(lastFetchedSchema, iri, label);
 			buildAndApplyCanvasModel(lastFetchedSchema);
 			applyNoteNodesAndEdges();
-		} else {
+			return;
+		}
+		if (manageMembersClassIri) {
 			updateNodeData(manageMembersClassIri, (d) => ({
 				...d,
-				members: d.members.map((m) => (m.iri === member.iri ? { ...m, label } : m))
+				members: d.members.map((m) => (m.iri === iri ? { ...m, label } : m))
 			}));
 		}
+		nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
 	}
+
+	const canvasInstanceHooks: IdentityMutationHooks = {
+		onRenamed: renameIndividualOnCanvas,
+		onRelationAdded: (subjectIri, predicateIri, objectIri, predicateLabel) =>
+			addAssertionEdgeIfVisible(subjectIri, predicateIri, predicateLabel, objectIri),
+		onRelationRemoved: removeAssertionEdgeIfVisible
+	};
+	const canvasCreateHooks: IdentityMutationHooks = { ...canvasInstanceHooks, onCreated: placeCreatedMemberOnCanvas };
 
 	async function handleDeleteMember(member: EntityMemberVM) {
 		if (!manageMembersClassIri) return;
@@ -1364,7 +1313,6 @@
 		deleteIndividualError = null;
 		try {
 			await deleteIndividualAndSync(target.iri, target.classIri);
-			if (editIndividualId === target.iri) editIndividualId = null;
 			deleteIndividualTarget = null;
 		} catch (e) {
 			deleteIndividualError = e instanceof Error ? e.message : 'Failed to delete';
@@ -1481,223 +1429,6 @@
 		removeAssertionEdgeIfVisible(individualIri, predicateIri, objectIri);
 	}
 
-	/**
-	 * Applies a `MemberForm` relation-field diff (STORY-114) by reusing the exact same
-	 * `insertAssertion`/`deleteAssertion` triple mechanism the generic Assertions section already
-	 * writes through (the confirmed "no new triple shape" decision) — sequentially, matching
-	 * `applyAttributeSubmissions`'s own "don't race writes to the same individual" rationale. Runs
-	 * through `handleAddAssertion`/`handleDeleteAssertion` rather than the connector directly so the
-	 * canvas edge these draw stays in sync exactly as it would for a hand-added assertion.
-	 */
-	async function applyRelationSubmissions(individualIri: string, submissions: RelationValueSubmission[]) {
-		for (const s of submissions) {
-			for (const objectIri of s.added) {
-				await handleAddAssertion(individualIri, s.predicateLabel, objectIri);
-			}
-			for (const objectIri of s.removed) {
-				await handleDeleteAssertion(individualIri, s.predicateIri, objectIri);
-			}
-		}
-	}
-
-	/** Which standalone individual (an `IndividualNode` on canvas, not an entity-owned enumerated
-	 *  member) is currently open for editing — drives the "Edit Individual" modal below, a thin
-	 *  wrapper around `MemberForm` (Story 019), not a reuse of `ManageMembersModal`, which stays
-	 *  scoped to entity-owned members. */
-	let editIndividualId = $state<string | null>(null);
-	const editIndividualNode = $derived.by(() => {
-		const n = findNode(editIndividualId);
-		return n && n.type === 'individual' ? n : undefined;
-	});
-	let editIndividualAssertions = $state<FetchedAssertion[]>([]);
-
-	async function reloadEditIndividualAssertions() {
-		if (!editIndividualId) return;
-		editIndividualAssertions = await sparqlConnector.fetchAssertionsForIndividual(editIndividualId);
-	}
-
-	/** The individual's owning class's own+inherited attribute list (STORY-111) — already merged by
-	 *  `buildCanvasModel`/`mergeAncestorAttributes`, read straight off that class's own `EntityNodeType`
-	 *  rather than re-computing the merge here. */
-	const editIndividualAttributes = $derived.by(() => {
-		const n = editIndividualNode;
-		return n ? (findEntityNode(n.data.classIri)?.data.attributes ?? []) : [];
-	});
-	let editIndividualAttributeValues = $state<Record<string, string | string[]>>({});
-
-	async function reloadEditIndividualAttributeValues() {
-		if (!editIndividualId || editIndividualAttributes.length === 0) {
-			editIndividualAttributeValues = {};
-			return;
-		}
-		// editIndividualId's own namespace, resolved by the connector (`findNamespaceOfIndividual`),
-		// not guessed from `nodeNamespaces` — see handleEditMember's identical comment.
-		editIndividualAttributeValues = await sparqlConnector.fetchIndividualAttributeValues(
-			editIndividualId,
-			editIndividualAttributes
-		);
-	}
-
-	/** See `editIndividualAttributes` above — same "read straight off the class's own EntityNodeType"
-	 *  rationale, for STORY-114's relation fields instead of attributes. */
-	const editIndividualRelationFields = $derived.by(() => {
-		const n = editIndividualNode;
-		return n ? memberFormFields(findEntityNode(n.data.classIri)?.data) : [];
-	});
-
-	/**
-	 * Candidate target individuals for each relation field's typeahead (STORY-114), keyed by relation
-	 * IRI — one `fetchIndividualsOfClass` call per field, scoped to that field's own `targetClassIri`
-	 * and searching every namespace (not just the one declaring `targetClassIri`), since a target
-	 * individual can be minted into a different namespace via a Concept Namespace override. Each
-	 * option's `label` is prefixed `[prefix]` via `namespacePrefixFor`, mirroring
-	 * `loadGenericRelationOptions`'s own disambiguation — without it, two individuals sharing a label
-	 * across namespaces (e.g. two identifier-minted `core:Schnittstelle`s) would be visually
-	 * indistinguishable in the datalist *and* would collide in `resolveRelationTargetIri`'s exact-label
-	 * lookup, silently resolving to whichever one happens to come first. Shared by both `MemberForm`
-	 * entry points below.
-	 */
-	async function loadRelationTargetOptions(
-		relationFields: EntityConceptFieldVM[]
-	): Promise<Record<string, RelationTargetOption[]>> {
-		const entries = await Promise.all(
-			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
-				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
-				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
-				return [[rel.iri, relationTargetOptionsFromIndividuals(options, namespacePrefixFor)]];
-			})
-		);
-		return Object.fromEntries(entries.flat());
-	}
-
-	let editIndividualRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
-
-	// Latest wins, and no refetch while the fields and the connector's write count are unchanged
-	// (every canvas rebuild re-runs the effects below): spec/instance-mgmt-issue STORY-614.
-	const editRelationOptionsRun = createLatestRun();
-	const manageRelationOptionsRun = createLatestRun();
-
-	async function reloadRelationTargetOptions(
-		run: ReturnType<typeof createLatestRun>,
-		fields: EntityConceptFieldVM[],
-		assign: (options: Record<string, RelationTargetOption[]>) => void
-	) {
-		if (fields.length === 0) {
-			run.reset();
-			assign({});
-			return;
-		}
-		const token = run.begin(relationOptionsKey(fields, sparqlConnector.writeCount));
-		if (!token) return;
-		try {
-			const options = await loadRelationTargetOptions(fields);
-			if (token.isCurrent()) assign(options);
-		} catch (error) {
-			token.fail();
-			throw error;
-		}
-	}
-
-	$effect(() => {
-		if (editIndividualId) {
-			void ensureAssertionOptionsLoaded();
-			void reloadEditIndividualAssertions();
-			void reloadEditIndividualAttributeValues();
-			void reloadRelationTargetOptions(
-				editRelationOptionsRun,
-				editIndividualRelationFields,
-				(o) => (editIndividualRelationTargetOptions = o)
-			);
-		} else {
-			editRelationOptionsRun.reset();
-			editIndividualAssertions = [];
-			editIndividualAttributeValues = {};
-			editIndividualRelationTargetOptions = {};
-		}
-	});
-
-	let manageMembersRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
-
-	$effect(() => {
-		if (manageMembersClassIri) {
-			void ensureAssertionOptionsLoaded();
-			void reloadRelationTargetOptions(
-				manageRelationOptionsRun,
-				memberFormFields(manageMembersNode?.data),
-				(o) => (manageMembersRelationTargetOptions = o)
-			);
-		} else {
-			manageRelationOptionsRun.reset();
-			manageMembersRelationTargetOptions = {};
-		}
-	});
-
-	async function handleRenameIndividualNode(
-		label: string,
-		_namespaceBaseIri?: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		_identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = [],
-		classChange?: { classIri: string; dropPredicateIris: string[] }
-	) {
-		if (!editIndividualId) return;
-		// editIndividualId's own namespace, resolved by the connector — see handleEditMember's
-		// identical comment.
-		const untypedNamespace = lastFetchedSchema?.untypedIndividuals?.find(
-			(i) => i.iri === editIndividualId
-		)?.namespaceBaseIri;
-		if (classChange) {
-			// retype first, so the value writes below land on the individual's new class; values the new
-			// class lacks were just deleted and must not be written back
-			await sparqlConnector.changeIndividualClass(editIndividualId, classChange.classIri, {
-				dropPredicateIris: classChange.dropPredicateIris
-			});
-			const dropped = new Set(classChange.dropPredicateIris);
-			attributeSubmissions = attributeSubmissions.filter((a) => !dropped.has(a.attributeIri));
-			relationSubmissions = relationSubmissions.filter((r) => !dropped.has(r.predicateIri));
-		}
-		await sparqlConnector.renameIndividual(editIndividualId, label, untypedNamespace);
-		if (attributeSubmissions.length > 0) {
-			await sparqlConnector.applyAttributeSubmissions(editIndividualId, attributeSubmissions);
-		}
-		if (relationSubmissions.length > 0) {
-			await applyRelationSubmissions(editIndividualId, relationSubmissions);
-		}
-		const iri = editIndividualId;
-		if (lastFetchedSchema) {
-			lastFetchedSchema = renameIndividualInSchema(lastFetchedSchema, iri, label);
-			if (classChange) {
-				lastFetchedSchema = setIndividualClassInSchema(
-					lastFetchedSchema,
-					iri,
-					classChange.classIri,
-					classChange.dropPredicateIris
-				);
-			}
-			buildAndApplyCanvasModel(lastFetchedSchema);
-			applyNoteNodesAndEdges();
-		} else {
-			nodes = nodes.map((n) => (n.id === iri && n.type === 'individual' ? { ...n, data: { ...n.data, label } } : n));
-		}
-		// `MemberForm` captures its field baseline at mount, so a retyped individual reopens fresh
-		if (classChange) editIndividualId = null;
-	}
-
-	/** Classes the Individual edit form can assign: every non-association class of every namespace,
-	 *  prefixed with its namespace to tell same-named classes apart. */
-	const individualClassOptions = $derived.by(() =>
-		(lastFetchedSchema?.classes ?? [])
-			.filter((c) => !lastAssociationClassIris.has(c.iri))
-			.map((c) => ({ iri: c.iri, label: `[${namespacePrefixFor(c.namespaceBaseIri)}] ${c.label}` }))
-			.sort((a, b) => a.label.localeCompare(b.label))
-	);
-
-	/** Own+inherited attribute and relation fields of `classIri`, from the merged canvas model. */
-	function fieldsOfClass(classIriValue: string): { iri: string; name: string }[] {
-		const data = findEntityNode(classIriValue)?.data;
-		return [...(data?.attributes ?? []), ...memberFormFields(data)].map((f) => ({ iri: f.iri, name: f.name }));
-	}
-
 	// -- Unified relation edit modal (change relation + assertions), any node-type combination ---
 	// One modal now covers all three relation shapes drawn on canvas — class→class (`relation`
 	// edges), individual→class, and individual→individual (both `individualRelation` edges) —
@@ -1746,10 +1477,15 @@
 	 *  still in flight, or when the modal is closed. */
 	let editRelationAssertionSubjectIri = $state<string | null>(null);
 	let editRelationAssertions = $state<FetchedAssertion[]>([]);
+	/** `MemberForm` seeds from `assertions` once at mount, so the assertion form below only mounts after they loaded
+	 *  (spec/unify-instance-forms: same gate as `IdentityEditDialog`; it stays a separate variant because a reified
+	 *  statement has no name or class to edit). */
+	let editRelationAssertionsLoaded = $state(false);
 
 	async function reloadEditRelationAssertions() {
 		if (!editRelationAssertionSubjectIri) return;
 		editRelationAssertions = await sparqlConnector.fetchAssertionsForIndividual(editRelationAssertionSubjectIri);
+		editRelationAssertionsLoaded = true;
 	}
 
 	$effect(() => {
@@ -1778,7 +1514,8 @@
 	});
 
 	$effect(() => {
-		if (editRelationAssertionSubjectIri) void reloadEditRelationAssertions();
+		editRelationAssertionsLoaded = false;
+		if (editRelationAssertionSubjectIri) void reloadEditRelationAssertions().catch(() => (editRelationAssertionsLoaded = true));
 		else editRelationAssertions = [];
 	});
 
@@ -2994,7 +2731,7 @@
 						unclassified: spec.unclassified,
 						isStale: spec.isStale,
 						onEdit: () => {
-							editIndividualId = spec.iri;
+							editMemberIri = spec.iri;
 						},
 						onDelete: () => {
 							deleteIndividualError = null;
@@ -4083,68 +3820,23 @@
 	onClose={() => (manageMembersClassIri = null)}
 	dismissible={false}
 >
-	{#if manageMembersNode && manageMembersConceptNamespaceLoaded}
+	{#if manageMembersNode}
 		<ManageMembersModal
 			members={manageMembersNode.data.members}
-			namespaceOptions={namespaceStore.namespaces}
-			initialNamespaceBaseIri={manageMembersConceptNamespace ?? activeNamespaceBaseIri()}
-			attributes={manageMembersNode.data.attributes}
-			labelRequired={lastLabelRequiredClassIris.has(manageMembersNode.data.classIri)}
-			onAdd={handleAddMember}
-			onEdit={handleEditMember}
+			onAdd={() => (addMemberOpen = true)}
+			onEdit={(member) => (editMemberIri = member.iri)}
 			onDelete={handleDeleteMember}
-			predicateOptions={assertionPredicateOptions}
-			objectOptions={assertionObjectOptions}
-			onLoadAssertions={(iri) => sparqlConnector.fetchAssertionsForIndividual(iri)}
-			onAddAssertion={handleAddAssertion}
-			onDeleteAssertion={handleDeleteAssertion}
-			onLoadAttributeValues={(iri) =>
-				sparqlConnector.fetchIndividualAttributeValues(iri, manageMembersNode.data.attributes)}
-			relationFields={memberFormFields(manageMembersNode.data)}
-			relationTargetOptions={manageMembersRelationTargetOptions}
 		/>
 	{/if}
 </Modal>
 
-<Modal
-	isOpen={editIndividualId !== null}
-	title="Edit Individual"
-	onClose={() => (editIndividualId = null)}
-	dismissible={false}
->
-	{#if editIndividualNode}
-		<MemberForm
-			mode="edit"
-			initialLabel={editIndividualNode.data.label}
-			submitLabel="Save"
-			onCancel={() => (editIndividualId = null)}
-			onSubmit={handleRenameIndividualNode}
-			individualIri={editIndividualId ?? undefined}
-			assertions={editIndividualAssertions}
-			predicateOptions={assertionPredicateOptions}
-			objectOptions={assertionObjectOptions}
-			attributes={editIndividualAttributes}
-			attributeValues={editIndividualAttributeValues}
-			labelRequired={lastLabelRequiredClassIris.has(editIndividualNode.data.classIri)}
-			relationFields={editIndividualRelationFields}
-			relationTargetOptions={editIndividualRelationTargetOptions}
-			classOptions={individualClassOptions}
-			classIri={editIndividualNode.data.classIri}
-			classLocked={editIndividualNode.data.syncSource !== null}
-			onPlanClassChange={fieldsOfClass}
-			onAddAssertion={async (predicateLabel, objectIri) => {
-				if (!editIndividualId) return;
-				await handleAddAssertion(editIndividualId, predicateLabel, objectIri);
-				await reloadEditIndividualAssertions();
-			}}
-			onDeleteAssertion={async (predicateIri, objectIri) => {
-				if (!editIndividualId) return;
-				await handleDeleteAssertion(editIndividualId, predicateIri, objectIri);
-				await reloadEditIndividualAssertions();
-			}}
-		/>
-	{/if}
-</Modal>
+{#if addMemberOpen && manageMembersClassIri}
+	<IdentityCreateDialog classIri={manageMembersClassIri} hooks={canvasCreateHooks} onClose={() => (addMemberOpen = false)} />
+{/if}
+
+{#if editMemberIri}
+	<IdentityEditDialog iri={editMemberIri} allowClassChange={false} hooks={canvasInstanceHooks} onClose={() => (editMemberIri = null)} />
+{/if}
 
 <Modal
 	isOpen={deleteIndividualTarget !== null}
@@ -4231,7 +3923,7 @@
 			onCancel={() => (editRelationTarget = null)}
 			onSubmit={handleEditRelationFormSubmit}
 		/>
-		{#if editRelationAssertionSubjectIri}
+		{#if editRelationAssertionSubjectIri && editRelationAssertionsLoaded}
 			<MemberForm
 				mode="edit"
 				hideNameForm

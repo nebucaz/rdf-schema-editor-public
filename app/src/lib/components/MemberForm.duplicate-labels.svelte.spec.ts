@@ -25,7 +25,11 @@ function setup(over: Record<string, unknown> = {}) {
 	return { onSubmit };
 }
 
-const inputs = () => screen.getAllByPlaceholderText(/^Select a/) as HTMLInputElement[];
+const input = () => screen.getByPlaceholderText(/^Select a/) as HTMLInputElement;
+const add = async (label: string) => {
+	await fireEvent.input(input(), { target: { value: label } });
+	await fireEvent.click(screen.getByRole('button', { name: 'Add consumes value' }));
+};
 
 describe('MemberForm relation field with same-label targets', () => {
 	it('shows the disambiguated label of a value the individual already holds', () => {
@@ -34,13 +38,11 @@ describe('MemberForm relation field with same-label targets', () => {
 				{ individualIri: 'urn:i/App', predicateIri: FIELD, predicateLabel: 'consumes', objectIri: second.iri, objectLabel: 'DelayMeter Public API' }
 			]
 		});
-		expect(inputs().map((i) => i.value)).toEqual([second.label]);
+		expect(screen.getByRole('link', { name: second.label })).toBeTruthy();
 	});
 
-	it('"Add another" renders without error and lists both targets once, in a single datalist', async () => {
+	it('adding a value renders without error and lists both targets once, in a single datalist', async () => {
 		setup();
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
 		const lists = document.querySelectorAll('datalist[id]');
 		const ids = [...lists].map((l) => l.id).filter((id) => id.includes('rel'));
 		expect(new Set(ids).size).toBe(ids.length);
@@ -51,10 +53,8 @@ describe('MemberForm relation field with same-label targets', () => {
 
 	it('each typed label resolves to its own IRI on submit', async () => {
 		const { onSubmit } = setup();
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
-		await fireEvent.input(inputs()[0], { target: { value: first.label } });
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
-		await fireEvent.input(inputs()[1], { target: { value: second.label } });
+		await add(first.label);
+		await add(second.label);
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 		await waitFor(() => expect(onSubmit).toHaveBeenCalled());
 		const subs = (onSubmit.mock.calls[0] as unknown[])[4] as { predicateIri: string; added: string[] }[];
@@ -64,9 +64,7 @@ describe('MemberForm relation field with same-label targets', () => {
 	it('an exact duplicate label (helper bypassed) is rejected, never linked to the first', async () => {
 		const dup = { iri: 'urn:i/Meter2', label: first.label };
 		const { onSubmit } = setup({ relationTargetOptions: { [FIELD]: [first, dup] } });
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
-		await fireEvent.input(inputs()[0], { target: { value: first.label } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await add(first.label);
 		expect(await screen.findByText('consumes must be selected from the list.')).toBeTruthy();
 		expect(onSubmit).not.toHaveBeenCalled();
 	});
@@ -91,8 +89,8 @@ describe('MemberForm concept field with colliding concept labels', () => {
 				assertions: [], objectOptions: [], relationFields: [conceptField], relationTargetOptions: { [FIELD]: options }
 			}
 		});
-		await fireEvent.click(screen.getByRole('button', { name: /Add another/ }));
 		await fireEvent.input(screen.getAllByPlaceholderText('Select a concept…')[0], { target: { value: options[1].label } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Add consumes value' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 		await waitFor(() => expect(onSubmit).toHaveBeenCalled());
 		const subs = (onSubmit.mock.calls[0] as unknown[])[4] as { added: string[] }[];

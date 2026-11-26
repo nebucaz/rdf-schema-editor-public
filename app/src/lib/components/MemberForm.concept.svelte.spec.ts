@@ -40,6 +40,7 @@ describe('MemberForm concept field (STORY-438)', () => {
 	it('accepts a listed label and asserts that concept', async () => {
 		const { onSubmit } = setup();
 		await fireEvent.input(input(), { target: { value: 'Planned' } });
+		await fireEvent.click(screen.getByRole('button', { name: 'Add lifecycleStage value' }));
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 		await waitFor(() => expect(onSubmit).toHaveBeenCalled());
 		const submissions = (onSubmit.mock.calls[0] as unknown[])[4] as { predicateIri: string; added: string[]; removed: string[] }[];
@@ -49,7 +50,7 @@ describe('MemberForm concept field (STORY-438)', () => {
 	it('rejects a label that is not in the list with the existing message', async () => {
 		const { onSubmit } = setup();
 		await fireEvent.input(input(), { target: { value: 'Nonsense' } });
-		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+		await fireEvent.click(screen.getByRole('button', { name: 'Add lifecycleStage value' }));
 		expect(await screen.findByText('lifecycleStage must be selected from the list.')).toBeTruthy();
 		expect(onSubmit).not.toHaveBeenCalled();
 	});
@@ -59,8 +60,8 @@ describe('MemberForm concept field (STORY-438)', () => {
 			relationTargetOptions: { [FIELD]: [planned] },
 			assertions: [assertion('urn:c/Retired', 'Retired stage')]
 		});
-		expect(input().value).toBe('Retired stage');
-		expect(listed()).toContain('Retired stage');
+		expect(screen.getByRole('link', { name: 'Retired stage' })).toBeTruthy();
+		expect(screen.queryByPlaceholderText('Select a concept…')).toBeNull();
 		await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
 		await waitFor(() => expect(onSubmit).toHaveBeenCalled());
 		const submissions = (onSubmit.mock.calls[0] as unknown[])[4] as { added: string[]; removed: string[] }[];

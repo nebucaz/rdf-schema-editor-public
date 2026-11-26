@@ -12,13 +12,11 @@
 	} from '#lib/utils/attribute-values.js';
 	import {
 		findUniqueByLabel,
-		mergeRelationFormValues,
-		reconcileRelationValues,
-		validateRelationSelections,
-		type RelationFormValues,
+		reconcileRelationSelections,
 		type RelationTargetOption,
 		type RelationValueSubmission
 	} from '#lib/utils/relation-values.js';
+	import { appUrl } from '#lib/utils/urls.js';
 
 	import { CONCEPT_OPTION_LIMIT, conceptOptionsMoreKey, mergeKeptValues } from '#lib/services/concept-value-options.js';
 	import { planClassChange, type ClassChangeField } from '#lib/services/class-change.js';
@@ -59,6 +57,11 @@
 		optionsStatus?: 'loading' | 'ready' | 'error';
 		onAddAssertion?: (predicateLabel: string, objectIri: string) => Promise<void>;
 		onDeleteAssertion?: (predicateIri: string, objectIri: string) => Promise<void>;
+		/** Immediate relation writes (spec/unify-instance-forms): when BOTH are given in edit mode, adding from the
+		 *  picker and removing a value write at once and the form submits no relation changes. Without them (create
+		 *  mode, or a host that has not adopted them) values are collected locally and returned by `onSubmit`. */
+		onAddRelation?: (predicateLabel: string, objectIri: string) => Promise<void>;
+		onRemoveRelation?: (predicateIri: string, objectIri: string) => Promise<void>;
 		/** The individual's class's own+inherited attribute list (STORY-111, STORY-109's merge
 		 *  output) — one input rendered per entry below. Empty (default) renders no Attributes
 		 *  section at all, e.g. the reified-statement `hideNameForm` use above. */
@@ -107,6 +110,8 @@
 		optionsStatus = 'ready',
 		onAddAssertion,
 		onDeleteAssertion,
+		onAddRelation,
+		onRemoveRelation,
 		attributes = [],
 		attributeValues = {},
 		labelRequired = false,
@@ -158,48 +163,95 @@
 	// Assertions add-form and list, per the confirmed "one canonical way to set it" decision.
 	const relationFieldIris = new Set(relationFields.map((r) => r.iri));
 	const originalRelationObjectIris: Record<string, string[]> = {};
-	const relationAssertedLabels: Record<string, string[]> = {};
+	// Values already held are read-only rows (label, class, link): never edited in place, only removed.
+	// A concept field keeps the values the individual already holds listed under the label shown for them, even
+	// when the concept is no longer offered (deprecated, retired), so they stay visible and re-pickable (STORY-438).
+	const keptConceptValues: Record<string, RelationTargetOption[]> = {};
 	for (const rel of relationFields) {
 		const matches = assertions.filter((a) => a.predicateIri === rel.iri);
 		originalRelationObjectIris[rel.iri] = matches.map((a) => a.objectIri);
-		// The label the field's own option list shows for the object wins, so a value that collides with another
-		// target is seeded under its disambiguated label (resolvable), not the plain one (ambiguous).
-		const fieldOptions = relationTargetOptions[rel.iri] ?? [];
-		relationAssertedLabels[rel.iri] = matches.map((a) => fieldOptions.find((o) => o.iri === a.objectIri)?.label ?? objectDisplayLabel(a));
-	}
-	// A concept field keeps the values the individual already holds selectable under the label shown for them, even
-	// when the concept is no longer offered (deprecated, retired), so editing never drops one (STORY-438).
-	const keptConceptValues: Record<string, RelationTargetOption[]> = {};
-	for (const rel of relationFields) {
-		if (!rel.valueSchemeIri) continue;
-		keptConceptValues[rel.iri] = assertions
-			.filter((a) => a.predicateIri === rel.iri)
-			.map((a) => ({ iri: a.objectIri, label: objectDisplayLabel(a) }));
-	}
-	const effectiveRelationTargetOptions = $derived(mergeKeptValues(relationTargetOptions, keptConceptValues));
-	const originalRelationFormValues: RelationFormValues = mergeRelationFormValues(relationFields, relationAssertedLabels);
-	let relationFormValues = $state<RelationFormValues>(structuredClone(originalRelationFormValues));
-	let missingRelationFields = $state<Set<string>>(new Set());
-	let invalidRelationFields = $state<Set<string>>(new Set());
-
-	function setRelationValue(relIri: string, rowIndex: number | null, value: string) {
-		if (rowIndex === null) {
-			relationFormValues = { ...relationFormValues, [relIri]: value };
-		} else {
-			const rows = [...((relationFormValues[relIri] as string[] | undefined) ?? [])];
-			rows[rowIndex] = value;
-			relationFormValues = { ...relationFormValues, [relIri]: rows };
+		if (rel.valueSchemeIri) {
+			keptConceptValues[rel.iri] = matches.map((a) => ({ iri: a.objectIri, label: objectDisplayLabel(a) }));
 		}
 	}
+	const effectiveRelationTargetOptions = $derived(mergeKeptValues(relationTargetOptions, keptConceptValues));
+	/** The label the field's own option list shows wins, so a value that collides with another target shows its
+	 *  disambiguated label (`instance-mgmt-issue`), not the plain one. */
+	const initialRelationValues: Record<string, RelationTargetOption[]> = {};
+	for (const rel of relationFields) {
+		const fieldOptions = relationTargetOptions[rel.iri] ?? [];
+		initialRelationValues[rel.iri] = assertions
+			.filter((a) => a.predicateIri === rel.iri)
+			.map((a) => ({ iri: a.objectIri, label: fieldOptions.find((o) => o.iri === a.objectIri)?.label ?? objectDisplayLabel(a) }));
+	}
+	let relationValues = $state<Record<string, RelationTargetOption[]>>(structuredClone(initialRelationValues));
+	let relationPickerText = $state<Record<string, string>>({});
+	let relationErrors = $state<Record<string, string>>({});
+	let relationBusy = $state<Set<string>>(new Set());
+	let missingRelationFields = $state<Set<string>>(new Set());
+	const immediateRelations = $derived(mode === 'edit' && !!individualIri && !!onAddRelation && !!onRemoveRelation);
 
-	function addRelationRow(relIri: string) {
-		const rows = [...((relationFormValues[relIri] as string[] | undefined) ?? []), ''];
-		relationFormValues = { ...relationFormValues, [relIri]: rows };
+	function setRelationError(relIri: string, message: string | null) {
+		const next = { ...relationErrors };
+		if (message === null) delete next[relIri];
+		else next[relIri] = message;
+		relationErrors = next;
 	}
 
-	function removeRelationRow(relIri: string, rowIndex: number) {
-		const rows = ((relationFormValues[relIri] as string[] | undefined) ?? []).filter((_, i) => i !== rowIndex);
-		relationFormValues = { ...relationFormValues, [relIri]: rows };
+	/** Targets of the field not held yet (a held value is a row, not a pick). */
+	function pickableTargets(rel: CanvasRelationFieldSpec): RelationTargetOption[] {
+		const held = new Set((relationValues[rel.iri] ?? []).map((v) => v.iri));
+		return (effectiveRelationTargetOptions[rel.iri] ?? []).filter((o) => !held.has(o.iri));
+	}
+
+	async function addRelationValue(rel: CanvasRelationFieldSpec) {
+		const text = (relationPickerText[rel.iri] ?? '').trim();
+		if (!text) return;
+		const match = findUniqueByLabel(pickableTargets(rel), text);
+		if (!match) {
+			setRelationError(rel.iri, `${rel.name} must be selected from the list.`);
+			return;
+		}
+		setRelationError(rel.iri, null);
+		if (immediateRelations) {
+			relationBusy = new Set(relationBusy).add(rel.iri);
+			try {
+				await onAddRelation!(rel.name, match.iri);
+			} catch (err) {
+				setRelationError(rel.iri, err instanceof Error ? err.message : 'Something went wrong');
+				return;
+			} finally {
+				const next = new Set(relationBusy);
+				next.delete(rel.iri);
+				relationBusy = next;
+			}
+		}
+		relationValues = { ...relationValues, [rel.iri]: [...(relationValues[rel.iri] ?? []), match] };
+		relationPickerText = { ...relationPickerText, [rel.iri]: '' };
+		missingRelationFields = new Set([...missingRelationFields].filter((i) => i !== rel.iri));
+	}
+
+	async function removeRelationValue(rel: CanvasRelationFieldSpec, value: RelationTargetOption) {
+		const held = relationValues[rel.iri] ?? [];
+		if (immediateRelations) {
+			if (rel.required && held.length <= 1) {
+				setRelationError(rel.iri, `${rel.name} is required: add another value before removing the last one.`);
+				return;
+			}
+			relationBusy = new Set(relationBusy).add(rel.iri);
+			try {
+				await onRemoveRelation!(rel.iri, value.iri);
+			} catch (err) {
+				setRelationError(rel.iri, err instanceof Error ? err.message : 'Something went wrong');
+				return;
+			} finally {
+				const next = new Set(relationBusy);
+				next.delete(rel.iri);
+				relationBusy = next;
+			}
+		}
+		setRelationError(rel.iri, null);
+		relationValues = { ...relationValues, [rel.iri]: held.filter((v) => v.iri !== value.iri) };
 	}
 
 	const inputTypeByDatatype: Record<XsdDatatype, string> = {
@@ -242,8 +294,8 @@
 		const newFields = onPlanClassChange?.(selectedClassIri) ?? [];
 		const oldFields = [...attributes, ...relationFields].map((f) => ({ iri: f.iri, name: f.name }));
 		const currentValues: Record<string, string | string[]> = { ...originalAttributeValues };
-		for (const [relIri, objectIris] of Object.entries(originalRelationObjectIris)) {
-			currentValues[relIri] = objectIris;
+		for (const [relIri, values] of Object.entries(relationValues)) {
+			currentValues[relIri] = values.map((v) => v.iri);
 		}
 		return { classIri: selectedClassIri, dropped: planClassChange(oldFields, newFields, currentValues).dropped };
 	}
@@ -271,19 +323,20 @@
 			return;
 		}
 		missingRequiredAttributes = new Set();
-		const { missing: missingRelations, invalid: invalidRelations } = validateRelationSelections(
-			relationFields,
-			relationFormValues,
-			effectiveRelationTargetOptions
-		);
-		if (missingRelations.length > 0 || invalidRelations.length > 0) {
+		// A value picked in a relation typeahead but not yet confirmed with Add is added now, so Save does what the
+		// user expects. Text that matches no target stays in the field and is reported below.
+		for (const r of relationFields) {
+			if ((relationPickerText[r.iri] ?? '').trim() !== '') await addRelationValue(r);
+		}
+		const missingRelations = relationFields.filter((r) => r.required && (relationValues[r.iri] ?? []).length === 0).map((r) => r.iri);
+		const unadded = relationFields.filter((r) => (relationPickerText[r.iri] ?? '').trim() !== '');
+		if (missingRelations.length > 0 || unadded.length > 0) {
 			missingRelationFields = new Set(missingRelations);
-			invalidRelationFields = new Set(invalidRelations);
+			for (const r of unadded) setRelationError(r.iri, `Add the ${r.name} value you typed, or clear it.`);
 			error = 'Please fill in all required fields.';
 			return;
 		}
 		missingRelationFields = new Set();
-		invalidRelationFields = new Set();
 		if (!onSubmit) return;
 		const classChange = classChangeFor();
 		if (classChange && classChange.dropped.length > 0 && !confirmed) {
@@ -295,12 +348,14 @@
 		submitting = true;
 		try {
 			const attributeSubmissions = reconcileAttributeValues(attributes, originalAttributeValues, formValues);
-			const relationSubmissions = reconcileRelationValues(
-				relationFields,
-				originalRelationObjectIris,
-				relationFormValues,
-				effectiveRelationTargetOptions
-			);
+			// Immediate hosts have already written every relation change; others get the diff.
+			const relationSubmissions = immediateRelations
+				? []
+				: reconcileRelationSelections(
+						relationFields,
+						originalRelationObjectIris,
+						Object.fromEntries(Object.entries(relationValues).map(([k, v]) => [k, v.map((x) => x.iri)]))
+					);
 			await onSubmit(
 				label.trim(),
 				mode === 'create' ? namespaceBaseIri : undefined,
@@ -396,22 +451,61 @@
 	{/if}
 {/snippet}
 
-{#snippet relationInput(rel: CanvasRelationFieldSpec, rowIndex: number | null)}
-	{@const rawValue = rowIndex === null ? (relationFormValues[rel.iri] as string | undefined) : ((relationFormValues[rel.iri] as string[] | undefined)?.[rowIndex])}
-	<input
-		type="text"
-		value={rawValue ?? ''}
-		list={relationListId(rel)}
-		placeholder={rel.valueSchemeIri ? 'Select a concept…' : `Select a ${rel.targetClassName}…`}
-		oninput={(e) => setRelationValue(rel.iri, rowIndex, (e.currentTarget as HTMLInputElement).value)}
-	/>
+{#snippet relationRows(rel: CanvasRelationFieldSpec)}
+	{#each relationValues[rel.iri] ?? [] as value (value.iri)}
+		<div class="relation-row">
+			<a class="relation-label" href={appUrl(`/identities?node=${encodeURIComponent(value.iri)}`)} title={value.iri}>{value.label}</a>
+			{#if !rel.valueSchemeIri && rel.targetClassName}
+				<span class="relation-class">{rel.targetClassName}</span>
+			{/if}
+			<button
+				type="button"
+				class="icon-button"
+				onclick={() => removeRelationValue(rel, value)}
+				disabled={relationBusy.has(rel.iri)}
+				aria-label={`Remove ${rel.name} ${value.label}`}
+				title="Remove"
+			>
+				<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+					<polyline points="3 6 5 6 21 6" />
+					<path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+					<path d="M10 11v6" />
+					<path d="M14 11v6" />
+					<path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+				</svg>
+			</button>
+		</div>
+	{/each}
+{/snippet}
+
+{#snippet relationPicker(rel: CanvasRelationFieldSpec)}
+	{#if rel.repeatable || (relationValues[rel.iri] ?? []).length === 0}
+		<div class="repeatable-row">
+			<input
+				type="text"
+				value={relationPickerText[rel.iri] ?? ''}
+				list={relationListId(rel)}
+				placeholder={rel.valueSchemeIri ? 'Select a concept…' : `Select a ${rel.targetClassName}…`}
+				oninput={(e) => (relationPickerText = { ...relationPickerText, [rel.iri]: (e.currentTarget as HTMLInputElement).value })}
+			/>
+			<button
+				type="button"
+				class="add-member"
+				onclick={() => addRelationValue(rel)}
+				disabled={relationBusy.has(rel.iri)}
+				aria-label={`Add ${rel.name} value`}
+			>
+				Add
+			</button>
+		</div>
+	{/if}
 {/snippet}
 
 <!-- One datalist per field, not per row: "Add another" must not repeat the DOM id. Keyed by IRI, which is
      unique; the label is the resolution key and is kept unique by `disambiguateOptionLabels`. -->
 {#snippet relationDatalist(rel: CanvasRelationFieldSpec)}
 	<datalist id={relationListId(rel)}>
-		{#each effectiveRelationTargetOptions[rel.iri] ?? [] as option (option.iri)}
+		{#each pickableTargets(rel) as option (option.iri)}
 			<option value={option.label}></option>
 		{/each}
 	</datalist>
@@ -524,33 +618,14 @@
 								<span class="attr-inherited-from">from {rel.inheritedFrom.className}</span>
 							{/if}
 						</span>
-						{#if rel.repeatable}
-							{#each (relationFormValues[rel.iri] as string[] | undefined) ?? [] as _, i}
-								<div class="repeatable-row">
-									{@render relationInput(rel, i)}
-									<button
-										type="button"
-										class="icon-button"
-										onclick={() => removeRelationRow(rel.iri, i)}
-										aria-label={`Remove ${rel.name} value`}
-										title="Remove"
-									>
-										×
-									</button>
-								</div>
-							{/each}
-							<button type="button" class="add-member" onclick={() => addRelationRow(rel.iri)}>
-								+ Add another
-							</button>
-						{:else}
-							{@render relationInput(rel, null)}
-						{/if}
+						{@render relationRows(rel)}
+						{@render relationPicker(rel)}
 						{@render relationDatalist(rel)}
 						{#if missingRelationFields.has(rel.iri)}
 							<p class="error attribute-error">{rel.name} is required.</p>
 						{/if}
-						{#if invalidRelationFields.has(rel.iri)}
-							<p class="error attribute-error">{rel.name} must be selected from the list.</p>
+						{#if relationErrors[rel.iri]}
+							<p class="error attribute-error" role="alert">{relationErrors[rel.iri]}</p>
 						{/if}
 					</div>
 				{/each}
@@ -691,6 +766,40 @@
 		background: var(--color-bg-secondary);
 	}
 
+	.relation-row {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.relation-label {
+		color: var(--color-text);
+	}
+
+	/* Delete button sits at the row's right edge, in line with the Add button below. */
+	.relation-row .icon-button {
+		margin-left: auto;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0.25rem 0.75rem;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
+		color: var(--color-text-muted);
+		flex-shrink: 0;
+	}
+
+	.relation-row .icon-button:hover:not(:disabled) {
+		background: var(--color-hover);
+		color: var(--color-error);
+	}
+
+	.relation-class {
+		font-size: 0.75rem;
+		color: var(--color-text-muted);
+	}
+
 	.error {
 		color: var(--color-error);
 		font-size: 0.85rem;
@@ -767,6 +876,15 @@
 
 	.repeatable-row input {
 		flex: 1;
+		min-width: 0;
+	}
+
+	/* The Add button next to a typeahead takes only the width of its label; the input gets the rest. */
+	.repeatable-row .add-member {
+		width: auto;
+		flex: 0 0 auto;
+		padding: 0.5rem 0.75rem;
+		white-space: nowrap;
 	}
 
 	.repeatable-row .icon-button {

@@ -23,34 +23,70 @@ export interface IdentityMutationConnector {
 }
 
 /**
- * Applies a `RelationValueSubmission[]` diff via the same `insertAssertion`/`deleteAssertion`
- * mechanism the canvas's own `applyRelationSubmissions` (`routes/+page.svelte:1162-1171`) uses —
- * intentionally **not** a port of that helper, since its every call goes through
- * `handleAddAssertion`/`handleDeleteAssertion`, which also draw/remove a canvas edge
- * (`addAssertionEdgeIfVisible`/`removeAssertionEdgeIfVisible`). This module has no canvas/Svelte Flow
- * awareness at all, so it calls the connector methods directly instead.
+ * Optional host side effects (spec/unify-instance-forms, STORY-002). The shared create/edit flow knows
+ * nothing about the canvas; a host that needs more (join the workspace, draw/remove an edge, refresh a
+ * label) passes hooks. Each runs after its write succeeded, in write order, and a hook that throws or
+ * rejects never undoes the write nor stops the following ones.
  */
+export interface IdentityMutationHooks {
+	onCreated?(iri: string, label: string): void | Promise<void>;
+	onRenamed?(iri: string, label: string): void | Promise<void>;
+	onRelationAdded?(subjectIri: string, predicateIri: string, objectIri: string, predicateLabel: string): void | Promise<void>;
+	onRelationRemoved?(subjectIri: string, predicateIri: string, objectIri: string): void | Promise<void>;
+}
+
+async function runHook(fn: (() => void | Promise<void>) | undefined): Promise<void> {
+	if (!fn) return;
+	try {
+		await fn();
+	} catch {
+		// The write already happened; a host hook failure must not look like a failed edit.
+	}
+}
+
+/** Writes one relation triple (immediate add from the picker) and fires `onRelationAdded`. */
+export async function addRelation(
+	subjectIri: string,
+	predicateLabel: string,
+	objectIri: string,
+	connector: IdentityMutationConnector = sparqlConnector,
+	hooks: IdentityMutationHooks = {}
+): Promise<{ predicateIri: string }> {
+	const { predicateIri } = await connector.insertAssertion(subjectIri, predicateLabel, objectIri);
+	await runHook(() => hooks.onRelationAdded?.(subjectIri, predicateIri, objectIri, predicateLabel));
+	return { predicateIri };
+}
+
+/** Deletes one relation triple (immediate remove) and fires `onRelationRemoved`. */
+export async function removeRelation(
+	subjectIri: string,
+	predicateIri: string,
+	objectIri: string,
+	connector: IdentityMutationConnector = sparqlConnector,
+	hooks: IdentityMutationHooks = {}
+): Promise<void> {
+	await connector.deleteAssertion(subjectIri, predicateIri, objectIri);
+	await runHook(() => hooks.onRelationRemoved?.(subjectIri, predicateIri, objectIri));
+}
+
+/** Applies a `RelationValueSubmission[]` diff through `addRelation`/`removeRelation`, so hooks fire per triple. */
 async function applyRelationDiff(
 	connector: IdentityMutationConnector,
 	individualIri: string,
-	submissions: RelationValueSubmission[]
+	submissions: RelationValueSubmission[],
+	hooks: IdentityMutationHooks
 ): Promise<void> {
 	for (const submission of submissions) {
 		for (const objectIri of submission.added) {
-			await connector.insertAssertion(individualIri, submission.predicateLabel, objectIri);
+			await addRelation(individualIri, submission.predicateLabel, objectIri, connector, hooks);
 		}
 		for (const objectIri of submission.removed) {
-			await connector.deleteAssertion(individualIri, submission.predicateIri, objectIri);
+			await removeRelation(individualIri, submission.predicateIri, objectIri, connector, hooks);
 		}
 	}
 }
 
-/**
- * Non-canvas equivalent of `routes/+page.svelte`'s `handleAddMember` (research.md §3.2) — creates a
- * new individual and applies its attribute/relation submissions, deliberately **without** the
- * canvas-only `addWorkspaceMember` call (research.md §6 decision 3): identities created from the
- * Identities route never become canvas nodes.
- */
+/** Creates an individual and applies its attribute/relation submissions; workspace-agnostic (hosts use `onCreated`). */
 export async function createIdentity(
 	classIri: string,
 	label: string,
@@ -58,39 +94,39 @@ export async function createIdentity(
 	attributeSubmissions: AttributeValueSubmission[] = [],
 	identifier?: string,
 	relationSubmissions: RelationValueSubmission[] = [],
-	connector: IdentityMutationConnector = sparqlConnector
+	connector: IdentityMutationConnector = sparqlConnector,
+	hooks: IdentityMutationHooks = {}
 ): Promise<{ iri: string }> {
 	const { iri } = await connector.insertIndividual(classIri, label, namespaceBaseIri, identifier);
+	await runHook(() => hooks.onCreated?.(iri, label));
 	if (attributeSubmissions.length > 0) {
 		await connector.applyAttributeSubmissions(iri, attributeSubmissions);
 	}
 	if (relationSubmissions.length > 0) {
-		await applyRelationDiff(connector, iri, relationSubmissions);
+		await applyRelationDiff(connector, iri, relationSubmissions, hooks);
 	}
 	return { iri };
 }
 
-/**
- * Non-canvas equivalent of `routes/+page.svelte`'s `handleEditMember` — renames (only when the label
- * actually changed, unlike the canvas's own unconditional `renameIndividual` call), applies attribute
- * submissions, then the same relation diff `createIdentity` uses.
- */
+/** Renames (only when the label changed), applies attribute submissions, then the relation diff. */
 export async function editIdentity(
 	iri: string,
 	label: string,
 	originalLabel: string,
 	attributeSubmissions: AttributeValueSubmission[] = [],
 	relationSubmissions: RelationValueSubmission[] = [],
-	connector: IdentityMutationConnector = sparqlConnector
+	connector: IdentityMutationConnector = sparqlConnector,
+	hooks: IdentityMutationHooks = {}
 ): Promise<void> {
 	if (label !== originalLabel) {
 		await connector.renameIndividual(iri, label);
+		await runHook(() => hooks.onRenamed?.(iri, label));
 	}
 	if (attributeSubmissions.length > 0) {
 		await connector.applyAttributeSubmissions(iri, attributeSubmissions);
 	}
 	if (relationSubmissions.length > 0) {
-		await applyRelationDiff(connector, iri, relationSubmissions);
+		await applyRelationDiff(connector, iri, relationSubmissions, hooks);
 	}
 }
 

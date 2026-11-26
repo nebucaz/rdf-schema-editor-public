@@ -1,131 +1,22 @@
 <script lang="ts">
-	import MemberForm from './MemberForm.svelte';
 	import type { EntityMemberVM } from './EntityNode.svelte';
-	import type { FetchedNamespace, FetchedAssertion, NameableEntity } from '#lib/services/sparql-connector.js';
-	import type { CanvasAttributeSpec, CanvasRelationFieldSpec } from '#lib/services/canvas-model.js';
-	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
-	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
 
-	interface PredicateOption {
-		iri: string;
-		label: string;
-	}
-
+	/**
+	 * The list of an entity's members with delete and the Add/Edit entry points. Adding and editing happen in the
+	 * shared `IdentityCreateDialog`/`IdentityEditDialog`, opened by the host (spec/unify-instance-forms, STORY-005).
+	 */
 	interface Props {
 		members: EntityMemberVM[];
-		namespaceOptions?: FetchedNamespace[];
-		initialNamespaceBaseIri?: string;
-		onAdd: (
-			label: string,
-			namespaceBaseIri?: string,
-			attributeSubmissions?: AttributeValueSubmission[],
-			identifier?: string,
-			relationSubmissions?: RelationValueSubmission[]
-		) => Promise<void>;
-		onEdit: (
-			member: EntityMemberVM,
-			label: string,
-			attributeSubmissions?: AttributeValueSubmission[],
-			relationSubmissions?: RelationValueSubmission[]
-		) => Promise<void>;
+		onAdd: () => void;
+		onEdit: (member: EntityMemberVM) => void;
 		onDelete: (member: EntityMemberVM) => Promise<void>;
-		/** data-catalog Story 019: an enumerated member is an individual too, so it gets the same
-		 *  Assertions section as a standalone `IndividualNode` — falls out of both entry points
-		 *  sharing `MemberForm`, not a separate implementation. */
-		predicateOptions?: PredicateOption[];
-		objectOptions?: NameableEntity[];
-		onLoadAssertions?: (individualIri: string) => Promise<FetchedAssertion[]>;
-		onAddAssertion?: (individualIri: string, predicateLabel: string, objectIri: string) => Promise<void>;
-		onDeleteAssertion?: (individualIri: string, predicateIri: string, objectIri: string) => Promise<void>;
-		/** This entity class's own+inherited attribute list (STORY-111) — the same class for every
-		 *  member here (`ManageMembersModal` is always scoped to one entity), so it's a plain prop
-		 *  rather than looked up per member. */
-		attributes?: CanvasAttributeSpec[];
-		/** Whether the owning class's `rdfs:label` is shape-required (STORY-112) — see `MemberForm`. */
-		labelRequired?: boolean;
-		onLoadAttributeValues?: (individualIri: string) => Promise<Record<string, string | string[]>>;
-		/** See `MemberForm`'s own `relationFields`/`relationTargetOptions` props (STORY-114) — same
-		 *  "one class for every member here" rationale as `attributes` above. */
-		relationFields?: CanvasRelationFieldSpec[];
-		relationTargetOptions?: Record<string, RelationTargetOption[]>;
 	}
 
-	let {
-		members,
-		namespaceOptions = [],
-		initialNamespaceBaseIri = '',
-		onAdd,
-		onEdit,
-		onDelete,
-		predicateOptions = [],
-		objectOptions = [],
-		onLoadAssertions,
-		onAddAssertion,
-		onDeleteAssertion,
-		attributes = [],
-		labelRequired = false,
-		onLoadAttributeValues,
-		relationFields = [],
-		relationTargetOptions = {}
-	}: Props = $props();
+	let { members, onAdd, onEdit, onDelete }: Props = $props();
 
-	/** `MemberForm` (per Decision 5) is wrapped inline here rather than opened as a second stacked
-	 *  `Modal` — exactly one of `showAddForm`/`editTarget` is truthy while the add/edit form is
-	 *  showing; both `false`/`null` means the list view. */
-	let showAddForm = $state(false);
-	let editTarget = $state<EntityMemberVM | null>(null);
 	let deleteTarget = $state<EntityMemberVM | null>(null);
 	let deleteBusy = $state(false);
 	let error = $state<string | null>(null);
-	let assertions = $state<FetchedAssertion[]>([]);
-	let attributeValues = $state<Record<string, string | string[]>>({});
-
-	async function reloadAssertions(individualIri: string) {
-		if (!onLoadAssertions) return;
-		assertions = await onLoadAssertions(individualIri);
-	}
-
-	async function reloadAttributeValues(individualIri: string) {
-		if (!onLoadAttributeValues) return;
-		attributeValues = await onLoadAttributeValues(individualIri);
-	}
-
-	$effect(() => {
-		if (editTarget && onLoadAssertions) {
-			void reloadAssertions(editTarget.iri);
-		} else {
-			assertions = [];
-		}
-	});
-
-	$effect(() => {
-		if (editTarget && onLoadAttributeValues) {
-			void reloadAttributeValues(editTarget.iri);
-		} else {
-			attributeValues = {};
-		}
-	});
-
-	async function handleAddSubmit(
-		label: string,
-		namespaceBaseIri?: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = []
-	) {
-		await onAdd(label, namespaceBaseIri, attributeSubmissions, identifier, relationSubmissions);
-		showAddForm = false;
-	}
-
-	async function handleEditSubmit(
-		member: EntityMemberVM,
-		label: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		relationSubmissions: RelationValueSubmission[] = []
-	) {
-		await onEdit(member, label, attributeSubmissions, relationSubmissions);
-		editTarget = null;
-	}
 
 	async function handleDeleteConfirm() {
 		if (!deleteTarget) return;
@@ -142,97 +33,51 @@
 	}
 </script>
 
-{#if showAddForm}
-	<MemberForm
-		mode="create"
-		{namespaceOptions}
-		{initialNamespaceBaseIri}
-		submitLabel="Add"
-		onCancel={() => (showAddForm = false)}
-		onSubmit={handleAddSubmit}
-		{attributes}
-		{labelRequired}
-		{relationFields}
-		{relationTargetOptions}
-	/>
-{:else if editTarget}
-	{@const target = editTarget}
-	<MemberForm
-		mode="edit"
-		initialLabel={target.label}
-		submitLabel="Save"
-		onCancel={() => (editTarget = null)}
-		onSubmit={(label, _namespaceBaseIri, attributeSubmissions, _identifier, relationSubmissions) =>
-			handleEditSubmit(target, label, attributeSubmissions, relationSubmissions)}
-		individualIri={target.iri}
-		{assertions}
-		{predicateOptions}
-		{objectOptions}
-		{attributes}
-		{attributeValues}
-		{labelRequired}
-		{relationFields}
-		{relationTargetOptions}
-		onAddAssertion={onAddAssertion
-			? async (predicateLabel, objectIri) => {
-					await onAddAssertion(target.iri, predicateLabel, objectIri);
-					await reloadAssertions(target.iri);
-				}
-			: undefined}
-		onDeleteAssertion={onDeleteAssertion
-			? async (predicateIri, objectIri) => {
-					await onDeleteAssertion(target.iri, predicateIri, objectIri);
-					await reloadAssertions(target.iri);
-				}
-			: undefined}
-	/>
-{:else}
-	<ul class="members">
-		{#each members as member (member.iri)}
-			<li>
-				<span class="member-name">{member.label}</span>
-				<span class="member-actions">
-					<button
-						class="icon-button"
-						onclick={() => (editTarget = member)}
-						aria-label={`Edit ${member.label}`}
-						title="Edit"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
-					</button>
-					<button
-						class="icon-button"
-						onclick={() => (deleteTarget = member)}
-						aria-label={`Delete ${member.label}`}
-						title="Delete"
-					>
-						<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-					</button>
-				</span>
-			</li>
-		{:else}
-			<li class="empty">No members yet.</li>
-		{/each}
-	</ul>
-
-	{#if deleteTarget}
-		<div class="delete-confirm">
-			<p>Delete member <strong>{deleteTarget.label}</strong>? This cannot be undone.</p>
-			{#if error}
-				<p class="error">{error}</p>
-			{/if}
-			<div class="actions">
-				<button type="button" class="secondary" onclick={() => (deleteTarget = null)} disabled={deleteBusy}>
-					Cancel
+<ul class="members">
+	{#each members as member (member.iri)}
+		<li>
+			<span class="member-name">{member.label}</span>
+			<span class="member-actions">
+				<button
+					class="icon-button"
+					onclick={() => onEdit(member)}
+					aria-label={`Edit ${member.label}`}
+					title="Edit"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg>
 				</button>
-				<button type="button" class="danger" onclick={handleDeleteConfirm} disabled={deleteBusy}>
-					{deleteBusy ? 'Deleting…' : 'Delete'}
+				<button
+					class="icon-button"
+					onclick={() => (deleteTarget = member)}
+					aria-label={`Delete ${member.label}`}
+					title="Delete"
+				>
+					<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
 				</button>
-			</div>
-		</div>
+			</span>
+		</li>
 	{:else}
-		<button type="button" class="add-member" onclick={() => (showAddForm = true)}>+ Add member</button>
-	{/if}
+		<li class="empty">No members yet.</li>
+	{/each}
+</ul>
+
+{#if deleteTarget}
+	<div class="delete-confirm">
+		<p>Delete member <strong>{deleteTarget.label}</strong>? This cannot be undone.</p>
+		{#if error}
+			<p class="error">{error}</p>
+		{/if}
+		<div class="actions">
+			<button type="button" class="secondary" onclick={() => (deleteTarget = null)} disabled={deleteBusy}>
+				Cancel
+			</button>
+			<button type="button" class="danger" onclick={handleDeleteConfirm} disabled={deleteBusy}>
+				{deleteBusy ? 'Deleting…' : 'Delete'}
+			</button>
+		</div>
+	</div>
+{:else}
+	<button type="button" class="add-member" onclick={() => onAdd()}>+ Add member</button>
 {/if}
 
 <style>

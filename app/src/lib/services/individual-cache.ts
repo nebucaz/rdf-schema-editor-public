@@ -42,36 +42,3 @@ export function renameIndividualInSchema(schema: FetchedSchema, iri: string, lab
 		untypedIndividuals: schema.untypedIndividuals?.map((i) => (i.iri === iri ? { ...i, label } : i))
 	};
 }
-
-/**
- * Gives the individual `classIri`, moving it out of `untypedIndividuals` if it was Unclassified, and
- * drops its relations on `dropPredicateIris` (the values a class change loses).
- */
-export function setIndividualClassInSchema(
-	schema: FetchedSchema,
-	iri: string,
-	classIri: string,
-	dropPredicateIris: string[] = []
-): FetchedSchema {
-	const drop = new Set(dropPredicateIris);
-	const untyped = schema.untypedIndividuals?.find((i) => i.iri === iri);
-	const typed = schema.individuals.find((i) => i.iri === iri);
-	const retyped: FetchedIndividual | null = typed
-		? { ...typed, classIri }
-		: untyped
-			? { iri, label: untyped.label, classIri, namespaceBaseIri: untyped.namespaceBaseIri, syncSource: null, syncStatus: null }
-			: null;
-	if (!retyped) return schema;
-	return {
-		...schema,
-		individuals: [...schema.individuals.filter((i) => i.iri !== iri), retyped],
-		untypedIndividuals: schema.untypedIndividuals?.filter((i) => i.iri !== iri),
-		...untypedTotalAfterLeaving(schema, iri),
-		individualClassRelations: schema.individualClassRelations.filter(
-			(r) => !(r.individualIri === iri && drop.has(r.predicateIri))
-		),
-		individualIndividualRelations: schema.individualIndividualRelations.filter(
-			(r) => !(r.individualIri === iri && drop.has(r.predicateIri))
-		)
-	};
-}

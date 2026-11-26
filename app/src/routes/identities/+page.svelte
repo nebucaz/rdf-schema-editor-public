@@ -9,15 +9,13 @@
 	 * split as the ported original).
 	 */
 	import { appUrl } from '#lib/utils/urls.js';
-	import { conceptOptionEntries, memberFormFields } from '#lib/services/concept-value-options.js';
-	import { onMount, untrack } from 'svelte';
+		import { onMount, untrack } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import IdentitySearchBar, { type IdentityFacetValues } from '#lib/components/IdentitySearchBar.svelte';
 	import IdentityResultsList from '#lib/components/IdentityResultsList.svelte';
 	import IdentityResourcePage, { type IdentityRef } from '#lib/components/IdentityResourcePage.svelte';
-	import Modal from '#lib/components/Modal.svelte';
-	import MemberForm from '#lib/components/MemberForm.svelte';
+		import IdentityCreateDialog from '#lib/components/IdentityCreateDialog.svelte';
 	import UnclassifiedBulkBar from '#lib/components/UnclassifiedBulkBar.svelte';
 	import { BULK_UNDO_LIMIT } from '#lib/services/sparql-connector.js';
 	import { schemaStore } from '#lib/stores/schema-store.js';
@@ -28,8 +26,7 @@
 		type FetchedSubClassOf,
 		type IndividualSearchResult
 	} from '#lib/services/sparql-connector.js';
-	import type { CanvasRelationFieldSpec, EntityNodeSpec } from '#lib/services/canvas-model.js';
-	import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
+		import { namespaceStore } from '#lib/stores/namespace-store.svelte.js';
 	import { isUnclassifiedQueryTooShort, keysetAfter } from '#lib/utils/unclassified-search.js';
 	import {
 		UNCLASSIFIED_FACET,
@@ -40,11 +37,7 @@
 	} from '#lib/utils/identity-search-url.js';
 	import { prettifyLocalName } from '#lib/utils/resource-page-format.js';
 	import { buildClassHierarchyIndex, type ClassHierarchyIndex } from '#lib/utils/namespace-color.js';
-	import { buildEntityNodeIndex } from '#lib/utils/identity-schema-index.js';
-	import { createIdentity, resolveDefaultNamespace } from '#lib/utils/identity-mutations.js';
-	import type { AttributeValueSubmission } from '#lib/utils/attribute-values.js';
-	import type { RelationTargetOption, RelationValueSubmission } from '#lib/utils/relation-values.js';
-	import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
+					import { DEFAULT_NAMESPACE_BASE_IRI } from '#lib/config.js';
 
 	const PAGE_SIZE = 50;
 	const BREADCRUMB_MAX = 3;
@@ -175,9 +168,6 @@
 	/** Namespace-default color resolution (mirrors `IdentityNeighborhoodGraph`'s Explore-graph node
 	 *  coloring) for `IdentityResourcePage`'s type-badge chips. */
 	const classHierarchyIndex = $derived<ClassHierarchyIndex>(buildClassHierarchyIndex(classes, subClassOf));
-	/** STORY-121: `buildCanvasModel(fullSchema)`'s entity nodes, indexed by class IRI — O(1) lookup of
-	 *  a class's `{attributes, relationFields, labelRequired}` for the Add/Edit identity forms. */
-	const entityNodeByClassIri = $derived<Map<string, EntityNodeSpec>>(buildEntityNodeIndex(fullSchema));
 	const namespaceColorByBaseIri = $derived(
 		new Map(namespaceStore.namespaces.filter((ns) => ns.color).map((ns) => [ns.baseIri, ns.color as string]))
 	);
@@ -185,91 +175,25 @@
 	// -- STORY-123: "Add identity" from the class filter -----------------------------------------
 	// Gated on `lastFacets.classIri` per research.md §5.1 — the button itself stays visible but
 	// disabled until a class facet is active, matching the seed request's own framing.
-	let addIdentityOpen = $state(false);
 	let addIdentityClassIri = $state<string | null>(null);
-	/** Guards rendering `MemberForm` until both the default namespace (STORY-122's
-	 *  `resolveDefaultNamespace`) and the relation-field target options below have resolved —
-	 *  mirrors the canvas's own `manageMembersConceptNamespaceLoaded` gate. */
-	let addIdentityReady = $state(false);
-	let addIdentityNamespaceBaseIri = $state<string>(DEFAULT_NAMESPACE_BASE_IRI);
-	let addIdentityRelationTargetOptions = $state<Record<string, RelationTargetOption[]>>({});
 
 	function namespacePrefixFor(namespaceBaseIri: string): string {
 		return namespaceStore.namespaces.find((ns) => ns.baseIri === namespaceBaseIri)?.prefix ?? namespaceBaseIri;
 	}
 
-	/** `prefix:ClassName` for the class currently open in the Add-identity modal — shown in the
-	 *  modal's title so the user can double-check they picked the class they meant to before filling
-	 *  out the form, same disambiguation `IdentityResourcePage`'s type-badge chips use. */
-	const addIdentityClassLabel = $derived.by(() => {
-		if (!addIdentityClassIri) return null;
-		const cls = classes.find((c) => c.iri === addIdentityClassIri);
-		if (!cls) return null;
-		return `${namespacePrefixFor(cls.namespaceBaseIri)}:${cls.label}`;
-	});
-
-	/** Mirrors `routes/+page.svelte`'s own `loadRelationTargetOptions` (canvas-scoped there) — scoped
-	 *  to this route instead, with the same namespace-prefix-disambiguated label shape. */
-	async function loadRelationTargetOptions(
-		relationFields: CanvasRelationFieldSpec[]
-	): Promise<Record<string, RelationTargetOption[]>> {
-		const entries = await Promise.all(
-			relationFields.map(async (rel): Promise<[string, RelationTargetOption[]][]> => {
-				if (rel.valueSchemeIri) return conceptOptionEntries(sparqlConnector, rel);
-				const options = await sparqlConnector.fetchIndividualsOfClass(rel.targetClassIri);
-				return [
-					[rel.iri, options.map((o) => ({ iri: o.iri, label: `[${namespacePrefixFor(o.namespaceBaseIri)}] ${o.label}` }))]
-				];
-			})
-		);
-		return Object.fromEntries(entries.flat());
-	}
-
-	async function openAddIdentityModal() {
+	function openAddIdentityModal() {
 		const classIriValue = lastFacets.classIri;
 		if (!classIriValue || classIriValue === UNCLASSIFIED_FACET) return;
 		addIdentityClassIri = classIriValue;
-		addIdentityReady = false;
-		addIdentityOpen = true;
-		const relationFields = memberFormFields(entityNodeByClassIri.get(classIriValue));
-		const [namespaceBaseIri, relationTargetOptions] = await Promise.all([
-			resolveDefaultNamespace(classIriValue, entityNodeByClassIri),
-			loadRelationTargetOptions(relationFields)
-		]);
-		addIdentityNamespaceBaseIri = namespaceBaseIri ?? DEFAULT_NAMESPACE_BASE_IRI;
-		addIdentityRelationTargetOptions = relationTargetOptions;
-		addIdentityReady = true;
 	}
 
 	function closeAddIdentityModal() {
-		addIdentityOpen = false;
 		addIdentityClassIri = null;
-		addIdentityReady = false;
 	}
 
-	/** `MemberForm`'s create-mode `onSubmit` — calls STORY-122's `createIdentity` (no
-	 *  `addWorkspaceMember`, research.md §6 decision 3), then re-runs the current search and
-	 *  navigates to the new identity's resource page (research.md §5.1/§7) so the user immediately
-	 *  sees what they just created. A thrown error (e.g. a duplicate label) propagates back to
-	 *  `MemberForm`'s own `catch`, which displays it inline without closing the modal. */
-	async function handleAddIdentitySubmit(
-		label: string,
-		namespaceBaseIri?: string,
-		attributeSubmissions: AttributeValueSubmission[] = [],
-		identifier?: string,
-		relationSubmissions: RelationValueSubmission[] = []
-	) {
-		if (!addIdentityClassIri) return;
-		const resolvedNamespaceBaseIri = namespaceBaseIri ?? addIdentityNamespaceBaseIri;
-		const { iri } = await createIdentity(
-			addIdentityClassIri,
-			label,
-			resolvedNamespaceBaseIri,
-			attributeSubmissions,
-			identifier,
-			relationSubmissions
-		);
-		closeAddIdentityModal();
+	/** Re-runs the current search and opens the new identity's resource page (research.md §5.1/§7). No
+	 *  `addWorkspaceMember` here (research.md §6 decision 3): only the canvas joins the workspace. */
+	async function handleIdentityCreated(iri: string, label: string) {
 		await runSearch(lastFacets);
 		selectNode({ iri, label });
 	}
@@ -627,7 +551,6 @@
 					namespaces={namespaceStore.namespaces}
 					{classHierarchyIndex}
 					{namespaceColorByBaseIri}
-					{entityNodeByClassIri}
 					activeClassFacet={lastFacets.classIri}
 					onNavigate={selectNode}
 					onBreadcrumbSelect={selectNode}
@@ -646,29 +569,9 @@
 	</div>
 </div>
 
-<Modal
-	isOpen={addIdentityOpen}
-	title={addIdentityClassLabel ? `Add ${addIdentityClassLabel} Identity` : 'Add Identity'}
-	onClose={closeAddIdentityModal}
-	dismissible={false}
->
-	{#if addIdentityReady && addIdentityClassIri}
-		<MemberForm
-			mode="create"
-			namespaceOptions={namespaceStore.namespaces}
-			initialNamespaceBaseIri={addIdentityNamespaceBaseIri}
-			submitLabel="Add"
-			onCancel={closeAddIdentityModal}
-			onSubmit={handleAddIdentitySubmit}
-			attributes={entityNodeByClassIri.get(addIdentityClassIri)?.attributes ?? []}
-			labelRequired={entityNodeByClassIri.get(addIdentityClassIri)?.labelRequired ?? false}
-			relationFields={memberFormFields(entityNodeByClassIri.get(addIdentityClassIri))}
-			relationTargetOptions={addIdentityRelationTargetOptions}
-		/>
-	{:else}
-		<p class="muted">Loading…</p>
-	{/if}
-</Modal>
+{#if addIdentityClassIri}
+	<IdentityCreateDialog classIri={addIdentityClassIri} onClose={closeAddIdentityModal} onCreated={handleIdentityCreated} />
+{/if}
 
 <style>
 	.identities-page {
